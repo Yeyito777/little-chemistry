@@ -11,6 +11,26 @@ The current first milestone provides:
 - A blue/purple wand based on Minecraft's stick texture.
 - Right-clicking the wand sends **Behold!** in green chat text.
 - Image-generated chemistry artwork for the mod and Prism instance branding.
+- A private in-game AI command backed by `gpt-5.6-luna`:
+
+  ```mcfunction
+  /littlechemistry llm "How do brewing stands work?"
+  ```
+
+  Only the invoking player receives the answer. Requests offer the model no tools and use no reasoning for fast responses.
+
+## AI authentication
+
+Subscription authentication is the default. Little Chemistry re-reads credentials for every request, prioritizing an Exocortex OpenAI session and then a Codex CLI session. This allows either external program to refresh its token without restarting Minecraft.
+
+Server administrators can switch the backend authentication mode:
+
+```mcfunction
+/littlechemistry auth subscription
+/littlechemistry auth apikey <openai-api-key>
+```
+
+API keys are stored outside the world in Fabric's `config/little-chemistry/api-key.txt`, with owner-only permissions where the filesystem supports them. Authentication commands require administrator permission and never echo the key.
 
 ## Requirements
 

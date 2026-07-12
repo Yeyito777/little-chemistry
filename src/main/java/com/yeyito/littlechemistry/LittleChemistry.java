@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry;
 
 import com.yeyito.littlechemistry.item.WandOfCreationItem;
+import com.yeyito.littlechemistry.command.LittleChemistryCommands;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
 import net.minecraft.core.Registry;
@@ -37,6 +38,8 @@ public final class LittleChemistry implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		LittleChemistryCommands.register();
+
 		Registry.register(
 				BuiltInRegistries.CREATIVE_MODE_TAB,
 				CREATIVE_TAB_KEY,
