@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "little_chemistry",
+  "version": "${version}",
+  "name": "Little Chemistry",
+  "description": "AI-powered crafting that invents and caches recipes when Minecraft does not already know one.",
+  "authors": [
+    "yeyito"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Yeyito777/little-chemistry",
+    "sources": "https://github.com/Yeyito777/little-chemistry",
+    "issues": "https://github.com/Yeyito777/little-chemistry/issues"
+  },
+  "license": "MIT",
+  "icon": "assets/little_chemistry/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.yeyito.littlechemistry.LittleChemistry"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

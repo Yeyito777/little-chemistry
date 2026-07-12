@@ -1,0 +1,84 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+	id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+	archivesName = 'little-chemistry'
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+processResources {
+	inputs.property 'version', project.version
+
+	filesMatching('fabric.mod.json') {
+		expand version: project.version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = file('local.properties')
+
+if (localPropertiesFile.exists()) {
+	localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+
+def prismModsPath = providers.gradleProperty('prism_mods_dir')
+		.orElse(providers.provider { localProperties.getProperty('prism_mods_dir') })
+def prismModsDir = prismModsPath.map { file(it) }
+
+tasks.register('installToPrism') {
+	group = 'distribution'
+	description = 'Installs the production mod JAR when prism_mods_dir is configured.'
+	dependsOn 'jar'
+	onlyIf {
+		if (!prismModsPath.isPresent()) {
+			logger.lifecycle('Skipping Prism install: prism_mods_dir is not configured')
+			return false
+		}
+		return true
+	}
+
+	doLast {
+		def destination = prismModsDir.get()
+		destination.mkdirs()
+		fileTree(destination) {
+			include 'little-chemistry-*.jar'
+		}.files.each { it.delete() }
+		copy {
+			from layout.buildDirectory.file("libs/little-chemistry-${project.version}.jar")
+			into destination
+		}
+		logger.lifecycle("Installed Little Chemistry to ${new File(destination, "little-chemistry-${project.version}.jar")}")
+	}
+}
+
+tasks.named('build') {
+	dependsOn tasks.named('installToPrism')
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			from components.java
+		}
+	}
+}

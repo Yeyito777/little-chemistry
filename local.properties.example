@@ -1,0 +1,3 @@
+# Copy this file to local.properties and use your own Prism instance path.
+# local.properties is ignored by Git.
+prism_mods_dir=/path/to/PrismLauncher/instances/LittleChemistry/.minecraft/mods
