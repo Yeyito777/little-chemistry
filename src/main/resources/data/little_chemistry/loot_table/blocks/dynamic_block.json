@@ -1,0 +1,24 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "include": [
+                "little_chemistry:content_id"
+              ],
+              "source": "block_entity"
+            }
+          ],
+          "name": "little_chemistry:dynamic_block"
+        }
+      ],
+      "rolls": 1.0
+    }
+  ],
+  "random_sequence": "little_chemistry:blocks/dynamic_block"
+}

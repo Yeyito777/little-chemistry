@@ -1,0 +1,128 @@
+package com.yeyito.littlechemistry.client;
+
+import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.content.DynamicContentCatalog;
+import com.yeyito.littlechemistry.content.DynamicContentJson;
+import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.mixin.CreativeModeTabsAccessor;
+import com.yeyito.littlechemistry.network.DynamicAssetPayload;
+import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
+import com.yeyito.littlechemistry.network.DynamicContentPayload;
+import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
+import net.minecraft.client.renderer.special.SpecialModelRenderers;
+import net.minecraft.network.chat.Component;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.UUID;
+
+public final class LittleChemistryClient implements ClientModInitializer {
+	private static UUID activeServer;
+
+	@Override
+	public void onInitializeClient() {
+		SpecialModelRenderers.ID_MAPPER.put(
+				LittleChemistry.id("dynamic"),
+				DynamicSpecialItemRenderer.Unbaked.MAP_CODEC
+		);
+		BlockEntityRenderers.register(
+				DynamicContentObjects.BLOCK_ENTITY_TYPE,
+				context -> new DynamicBlockEntityRenderer()
+		);
+		ClientPlayNetworking.registerGlobalReceiver(DynamicContentPayload.TYPE,
+				(payload, context) -> apply(context.client(), payload));
+		ClientPlayNetworking.registerGlobalReceiver(DynamicAssetPayload.TYPE,
+					(payload, context) -> applyAsset(context.client(), payload));
+		ClientPlayNetworking.registerGlobalReceiver(OpenCreationScreenPayload.TYPE,
+					(payload, context) -> context.client().gui.setScreen(new WandCreationScreen()));
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			DynamicContentCatalog.clear();
+			RuntimeTextureStore.clear(client);
+			activeServer = null;
+		});
+	}
+
+	private static void apply(Minecraft client, DynamicContentPayload payload) {
+		try {
+			DynamicContentJson.Decoded decoded = DynamicContentJson.decode(payload.definitionsJson());
+			if (!decoded.serverId().equals(payload.serverId()) || decoded.revision() != payload.revision()) {
+				throw new IOException("The synchronized definitions do not match their packet metadata");
+			}
+
+			Path directory = FabricLoader.getInstance().getConfigDir()
+					.resolve("little-chemistry")
+					.resolve("cache")
+					.resolve(payload.serverId().toString());
+			Files.createDirectories(directory);
+			Path definitions = directory.resolve("definitions.json");
+			Path temporary = definitions.resolveSibling("definitions.json.tmp");
+			Files.write(temporary, payload.definitionsJson());
+			Files.move(temporary, definitions, StandardCopyOption.REPLACE_EXISTING);
+
+			activeServer = payload.serverId();
+			DynamicContentCatalog.replace(decoded.definitions());
+			refreshCreativeTabs(client);
+
+			RuntimeTextureStore.prepare(client, payload.serverId(), decoded.definitions())
+					.whenComplete((missing, error) -> client.execute(() -> {
+						if (error != null) {
+							LittleChemistry.LOGGER.error("Could not inspect the Little Chemistry asset cache", error);
+							return;
+						}
+						for (int start = 0; start < missing.size(); start += DynamicAssetRequestPayload.MAX_HASHES) {
+							int end = Math.min(missing.size(), start + DynamicAssetRequestPayload.MAX_HASHES);
+							ClientPlayNetworking.send(new DynamicAssetRequestPayload(missing.subList(start, end)));
+						}
+						LittleChemistry.LOGGER.info("Little Chemistry catalog revision {} is ready; requesting {} assets",
+								payload.revision(), missing.size());
+					}));
+			LittleChemistry.LOGGER.info("Applied Little Chemistry catalog revision {} with {} entries",
+					payload.revision(), decoded.definitions().size());
+		} catch (Exception error) {
+			LittleChemistry.LOGGER.error("Could not apply synchronized Little Chemistry content", error);
+			if (client.player != null) {
+				client.player.sendSystemMessage(Component.literal("[Little Chemistry] Could not install server content: "
+						+ safeMessage(error)).withStyle(ChatFormatting.RED));
+			}
+		}
+	}
+
+	private static void applyAsset(Minecraft client, DynamicAssetPayload payload) {
+		if (activeServer == null) {
+			return;
+		}
+		try {
+			RuntimeTextureStore.accept(client, activeServer, payload.hash(), payload.pngBytes());
+		} catch (IOException error) {
+			LittleChemistry.LOGGER.error("Could not cache Little Chemistry runtime asset {}", payload.hash(), error);
+		}
+	}
+
+	private static void refreshCreativeTabs(Minecraft client) {
+		CreativeModeTabsAccessor.littleChemistry$setCachedParameters(null);
+		if (client.level != null && client.player != null) {
+			net.minecraft.world.item.CreativeModeTabs.tryRebuildTabContents(
+					client.level.enabledFeatures(),
+					client.player.canUseGameMasterBlocks(),
+					client.level.registryAccess()
+			);
+		}
+	}
+
+	private static String safeMessage(Exception error) {
+		String message = error.getMessage();
+		if (message == null || message.isBlank()) {
+			return error.getClass().getSimpleName();
+		}
+		return message.replaceAll("[\\r\\n]+", " ");
+	}
+}

@@ -9,8 +9,9 @@ The current first milestone provides:
 - A dedicated **Little Chemistry** creative-mode tab.
 - One item: `little_chemistry:wand_of_creation`.
 - A blue/purple wand based on Minecraft's stick texture.
-- Right-clicking the wand sends **Behold!** in green chat text.
+- Right-clicking the wand opens an in-game creation screen for naming a new item or block.
 - Image-generated chemistry artwork for the mod and Prism instance branding.
+- Server-owned dynamic items and blocks, including synchronized generated textures.
 - A private in-game AI command backed by `gpt-5.6-luna`:
 
   ```mcfunction
@@ -31,6 +32,23 @@ Server administrators can switch the backend authentication mode:
 ```
 
 API keys are stored outside the world in Fabric's `config/little-chemistry/api-key.txt`, with owner-only permissions where the filesystem supports them. Authentication commands require administrator permission and never echo the key.
+
+## Dynamic server content
+
+Server administrators can create content while the server is running:
+
+```mcfunction
+/littlechemistry item create cobalt dust
+/littlechemistry block create quantum stone
+```
+
+The Wand of Creation provides the same operation without typing a command: hold it, right-click, enter a name, choose **Item** or **Block**, and press **Done**. **Cancel** or Escape closes the screen without creating anything. Creation still uses the server's `little_chemistry:command.create` permission (administrator level by default), and the server validates that the requester is holding the wand.
+
+Definitions are saved in the current world's `little-chemistry/dynamic-content.json`. Created entries appear in the **Little Chemistry** creative tab and are represented by virtual content IDs carried in synchronized item components and block entities. There is no fixed number of item or block slots.
+
+The server first synchronizes lightweight definitions. Clients immediately show the new entry with Minecraft's missing-texture fallback, request only texture hashes absent from their cache, verify each received PNG with SHA-256, decode it off-thread, and upload it directly as a runtime GPU texture. Assets are cached under `config/little-chemistry/cache/<server-id>/assets/`. This does not install a resource pack, stitch Minecraft's texture atlases, or trigger a global texture, shader, sound, or language reload.
+
+Minecraft's built-in item and block registries remain immutable after bootstrap. Little Chemistry registers only one carrier item and one carrier block as engine infrastructure; arbitrary logical content is created in the server-owned virtual registry at runtime.
 
 ## Requirements
 

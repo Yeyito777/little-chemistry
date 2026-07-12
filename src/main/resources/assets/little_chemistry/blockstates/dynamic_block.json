@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "little_chemistry:block/dynamic_block"
+    }
+  }
+}

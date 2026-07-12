@@ -6,6 +6,9 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
+import com.yeyito.littlechemistry.content.DynamicContentDefinition;
+import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.content.DynamicContentType;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.permission.v1.PermissionNode;
 import net.fabricmc.fabric.api.permission.v1.PermissionPredicates;
@@ -23,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Predicate;
 
 import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
@@ -34,6 +38,11 @@ public final class LittleChemistryCommands {
 	private static final PermissionNode<Boolean> AUTH_PERMISSION = PermissionNode.of(
 			LittleChemistry.id("command.auth")
 	);
+	private static final PermissionNode<Boolean> CREATE_PERMISSION = PermissionNode.of(
+			LittleChemistry.id("command.create")
+	);
+	private static final Predicate<CommandSourceStack> CREATE_PREDICATE =
+			PermissionPredicates.require(CREATE_PERMISSION, PermissionLevel.ADMINS);
 	private static final ExecutorService AI_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 	private static final Map<UUID, CompletableFuture<String>> ACTIVE_REQUESTS = new ConcurrentHashMap<>();
 	private static final AuthConfig AUTH_CONFIG = new AuthConfig();
@@ -55,7 +64,51 @@ public final class LittleChemistryCommands {
 								.then(literal("apikey")
 										.then(argument("api_key", StringArgumentType.word())
 												.executes(LittleChemistryCommands::useApiKey))))
+							.then(literal("item")
+									.requires(CREATE_PREDICATE)
+								.then(literal("create")
+										.then(argument("name", StringArgumentType.greedyString())
+												.executes(context -> createDynamicContent(context, DynamicContentType.ITEM)))))
+							.then(literal("block")
+									.requires(CREATE_PREDICATE)
+								.then(literal("create")
+										.then(argument("name", StringArgumentType.greedyString())
+												.executes(context -> createDynamicContent(context, DynamicContentType.BLOCK)))))
 		));
+	}
+
+	public static void createFromWand(ServerPlayer player, DynamicContentType type, String name) {
+		CommandSourceStack source = player.createCommandSourceStack();
+		if (!CREATE_PREDICATE.test(source)) {
+			player.sendSystemMessage(error("You do not have permission to create dynamic content."));
+			return;
+		}
+		createDynamicContent(source, type, name);
+	}
+
+	private static int createDynamicContent(CommandContext<CommandSourceStack> context, DynamicContentType type) {
+		return createDynamicContent(context.getSource(), type, StringArgumentType.getString(context, "name"));
+	}
+
+	private static int createDynamicContent(CommandSourceStack source, DynamicContentType type, String name) {
+		DynamicContentManager manager = DynamicContentManager.active();
+		if (manager == null) {
+			source.sendFailure(error("Dynamic content is not available yet."));
+			return 0;
+		}
+		try {
+			DynamicContentDefinition definition = manager.create(type, name);
+			source.sendSuccess(
+					() -> Component.literal("Created " + type.serializedName() + " '" + definition.displayName()
+							+ "' as little_chemistry:" + definition.idPath() + ".")
+							.withStyle(ChatFormatting.GREEN),
+					true
+			);
+			return 1;
+		} catch (IOException | IllegalArgumentException | IllegalStateException error) {
+			source.sendFailure(LittleChemistryCommands.error(rootMessage(error)));
+			return 0;
+		}
 	}
 
 	private static int askLlm(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {

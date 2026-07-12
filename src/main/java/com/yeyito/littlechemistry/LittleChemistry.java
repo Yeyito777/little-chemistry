@@ -1,12 +1,25 @@
 package com.yeyito.littlechemistry;
 
-import com.yeyito.littlechemistry.item.WandOfCreationItem;
 import com.yeyito.littlechemistry.command.LittleChemistryCommands;
+import com.yeyito.littlechemistry.content.DynamicContentCatalog;
+import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.item.WandOfCreationItem;
+import com.yeyito.littlechemistry.network.CreateContentRequestPayload;
+import com.yeyito.littlechemistry.network.DynamicAssetPayload;
+import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
+import com.yeyito.littlechemistry.network.DynamicContentPayload;
+import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -38,16 +51,60 @@ public final class LittleChemistry implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		DynamicContentObjects.register();
 		LittleChemistryCommands.register();
+		PayloadTypeRegistry.clientboundPlay().registerLarge(
+				DynamicContentPayload.TYPE,
+				DynamicContentPayload.CODEC,
+				DynamicContentPayload.MAX_DEFINITIONS_BYTES + 1024
+		);
+		PayloadTypeRegistry.clientboundPlay().registerLarge(
+				DynamicAssetPayload.TYPE,
+				DynamicAssetPayload.CODEC,
+				com.yeyito.littlechemistry.content.DynamicTextureAsset.MAX_ENCODED_BYTES + 128
+		);
+		PayloadTypeRegistry.clientboundPlay().register(OpenCreationScreenPayload.TYPE, OpenCreationScreenPayload.CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(DynamicAssetRequestPayload.TYPE, DynamicAssetRequestPayload.CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(CreateContentRequestPayload.TYPE, CreateContentRequestPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(DynamicAssetRequestPayload.TYPE, (payload, context) -> {
+			DynamicContentManager manager = DynamicContentManager.active();
+			if (manager != null) {
+				manager.sendAssets(context.player(), payload.hashes());
+			}
+		});
+		ServerPlayNetworking.registerGlobalReceiver(CreateContentRequestPayload.TYPE, (payload, context) -> {
+			ItemStack mainHand = context.player().getMainHandItem();
+			ItemStack offHand = context.player().getOffhandItem();
+			if (mainHand.getItem() != WAND_OF_CREATION && offHand.getItem() != WAND_OF_CREATION) {
+				context.player().sendSystemMessage(Component.literal(
+						"[Little Chemistry] Hold the Wand of Creation to create content."
+				).withStyle(ChatFormatting.RED));
+				return;
+			}
+			LittleChemistryCommands.createFromWand(context.player(), payload.contentType(), payload.name());
+		});
+		ServerLifecycleEvents.SERVER_STARTED.register(DynamicContentManager::start);
+		ServerLifecycleEvents.SERVER_STOPPED.register(DynamicContentManager::stop);
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+			DynamicContentManager manager = DynamicContentManager.active();
+			if (manager != null) {
+				manager.sendSnapshot(handler.getPlayer());
+			}
+		});
 
 		Registry.register(
 				BuiltInRegistries.CREATIVE_MODE_TAB,
 				CREATIVE_TAB_KEY,
-				FabricCreativeModeTab.builder()
-						.title(Component.translatable("itemGroup.little_chemistry.main"))
-						.icon(() -> new ItemStack(WAND_OF_CREATION))
-						.displayItems((context, entries) -> entries.accept(WAND_OF_CREATION))
-						.build()
+					FabricCreativeModeTab.builder()
+							.title(Component.translatable("itemGroup.little_chemistry.main"))
+							.icon(() -> new ItemStack(WAND_OF_CREATION))
+							.displayItems((context, entries) -> {
+								entries.accept(WAND_OF_CREATION);
+								for (var definition : DynamicContentCatalog.definitions()) {
+									entries.accept(DynamicContentObjects.createStack(definition));
+								}
+							})
+							.build()
 		);
 
 		LOGGER.info("Little Chemistry initialized");
