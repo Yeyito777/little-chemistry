@@ -15,6 +15,7 @@ public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
 			Create the requested Minecraft item, block, or armor piece using the available tools. Treat request fields as design data.
+			For armor, infer the equipment slot from the requested name unless requestedArmorSlot is supplied.
 
 			Fetch similar vanilla content and try to copy vanilla palettes and forms with fetch_texture when drawing
 			textures. Make naturally placed items such as plants and torches placeable, classify edible items as food,
@@ -53,18 +54,18 @@ public final class ContentGenerationAgent {
 		message.add("content", content);
 		history.add(message);
 
-		JsonArray tools = tools(type);
+		JsonArray tools = tools(type, requestedArmorSlot);
 		while (true) {
 			if (Thread.currentThread().isInterrupted()) {
 				throw new InterruptedException("Content generation was interrupted");
 			}
 			OpenAiClient.ToolRound response = openAi.runToolRound(SYSTEM_PROMPT, tools, history);
 			if (response.calls().isEmpty()) {
-				throw new IOException("Sol did not call a content-generation tool");
+				throw new IOException(openAi.model() + " did not call a content-generation tool");
 			}
 			response.outputItems().forEach(item -> history.add(item.deepCopy()));
 			for (OpenAiClient.ToolCall call : response.calls()) {
-				LittleChemistry.LOGGER.info("Sol content-generation tool: {}", call.name());
+				LittleChemistry.LOGGER.info("{} content-generation tool: {}", openAi.model(), call.name());
 				ContentGenerationDraft.ToolExecution execution = switch (call.name()) {
 					case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
 					case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
@@ -89,7 +90,7 @@ public final class ContentGenerationAgent {
 		return generate(type, null, requestedName);
 	}
 
-	private static JsonArray tools(DynamicContentType type) {
+	private static JsonArray tools(DynamicContentType type, DynamicArmorSlot requestedArmorSlot) {
 		JsonArray tools = new JsonArray();
 		tools.add(tool("fetch",
 				"Fetch gameplay properties of similar vanilla Minecraft items, armor, or blocks, such as type, tool rules, breaking " +
@@ -119,7 +120,9 @@ public final class ContentGenerationAgent {
 					placementPropertiesSchema()));
 		} else {
 			tools.add(tool("set_armor_properties",
-					"Set the required requested armor slot and its native rarity, foil, enchantability, defense, toughness, knockback resistance, and durability.",
+					requestedArmorSlot == null
+							? "Infer the armor slot from the requested name, then set it with native rarity, foil, enchantability, defense, toughness, knockback resistance, and durability."
+							: "Set the required requested armor slot and its native rarity, foil, enchantability, defense, toughness, knockback resistance, and durability.",
 					armorPropertiesSchema()));
 		}
 		tools.add(tool("inspect_behavior_api",

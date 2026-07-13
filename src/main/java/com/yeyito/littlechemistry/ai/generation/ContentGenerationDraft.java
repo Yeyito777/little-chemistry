@@ -72,6 +72,7 @@ final class ContentGenerationDraft {
 	private Double armorToughness;
 	private Double armorKnockbackResistance;
 	private Integer armorDurability;
+	private DynamicArmorSlot armorSlot;
 	private String behaviorSource;
 	private boolean behaviorCompiled;
 
@@ -83,8 +84,8 @@ final class ContentGenerationDraft {
 		this.type = type;
 		this.requestedName = requestedName;
 		this.requestedArmorSlot = requestedArmorSlot;
-		if ((type == DynamicContentType.ARMOR) != (requestedArmorSlot != null)) {
-			throw new IllegalArgumentException("Armor generation requires a head, chest, leggings, or boots slot");
+		if (type != DynamicContentType.ARMOR && requestedArmorSlot != null) {
+			throw new IllegalArgumentException("Only armor generation may specify an armor slot");
 		}
 	}
 
@@ -315,7 +316,7 @@ final class ContentGenerationDraft {
 		requireOnly(arguments, "slot", "rarity", "foil", "enchantability", "defense", "toughness",
 				"knockbackResistance", "durability");
 		DynamicArmorSlot slot = DynamicArmorSlot.parse(requiredString(arguments, "slot"));
-		if (slot != requestedArmorSlot) {
+		if (requestedArmorSlot != null && slot != requestedArmorSlot) {
 			throw new IllegalArgumentException("Armor slot must be " + requestedArmorSlot.serializedName());
 		}
 		Rarity candidateRarity = Rarity.valueOf(requiredString(arguments, "rarity").toUpperCase(Locale.ROOT));
@@ -325,8 +326,9 @@ final class ContentGenerationDraft {
 		double candidateToughness = requiredDouble(arguments, "toughness");
 		double candidateKnockbackResistance = requiredDouble(arguments, "knockbackResistance");
 		int candidateDurability = requiredInt(arguments, "durability");
-		new DynamicArmorProperties(requestedArmorSlot, candidateRarity, candidateFoil, candidateEnchantability,
+		new DynamicArmorProperties(slot, candidateRarity, candidateFoil, candidateEnchantability,
 				candidateDefense, candidateToughness, candidateKnockbackResistance, candidateDurability);
+		armorSlot = slot;
 		armorRarity = candidateRarity;
 		armorFoil = candidateFoil;
 		armorEnchantability = candidateEnchantability;
@@ -446,7 +448,7 @@ final class ContentGenerationDraft {
 			generated = new GeneratedContentSpec(texture, null, item, null, behaviorSource);
 		} else {
 			generated = new GeneratedContentSpec(texture, null, null,
-					new DynamicArmorProperties(requestedArmorSlot, armorRarity, armorFoil, armorEnchantability,
+					new DynamicArmorProperties(armorSlot, armorRarity, armorFoil, armorEnchantability,
 							armorDefense, armorToughness, armorKnockbackResistance, armorDurability),
 					behaviorSource);
 		}
@@ -495,7 +497,7 @@ final class ContentGenerationDraft {
 					|| damagePerBlock == null || damagePerAttack == null)) {
 				missing.add("toolProperties");
 			}
-		} else if (armorRarity == null || armorFoil == null || armorEnchantability == null || armorDefense == null
+		} else if (armorSlot == null || armorRarity == null || armorFoil == null || armorEnchantability == null || armorDefense == null
 				|| armorToughness == null || armorKnockbackResistance == null || armorDurability == null) {
 			missing.add("armorProperties");
 		}

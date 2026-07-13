@@ -103,7 +103,7 @@ public final class LittleChemistry implements ModInitializer {
 				return;
 			}
 			LittleChemistryCommands.createFromWand(
-					context.player(), payload.contentType(), payload.armorSlot(), payload.name());
+					context.player(), payload.contentType(), payload.generationModel(), payload.name());
 		});
 		ServerPlayNetworking.registerGlobalReceiver(DeleteContentRequestPayload.TYPE, (payload, context) -> {
 			ItemStack mainHand = context.player().getMainHandItem();

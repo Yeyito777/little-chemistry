@@ -21,7 +21,8 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 public final class OpenAiClient {
-	public static final String MODEL = "gpt-5.6-sol";
+	public static final String DEFAULT_MODEL = "gpt-5.6-sol";
+	public static final String DEFAULT_REASONING_EFFORT = "medium";
 
 	private static final Gson GSON = new Gson();
 	private static final URI SUBSCRIPTION_RESPONSES_URI = URI.create(
@@ -46,9 +47,21 @@ public final class OpenAiClient {
 			.build();
 
 	private final AuthConfig authConfig;
+	private final String model;
+	private final String reasoningEffort;
 
 	public OpenAiClient(AuthConfig authConfig) {
+		this(authConfig, DEFAULT_MODEL, DEFAULT_REASONING_EFFORT);
+	}
+
+	public OpenAiClient(AuthConfig authConfig, String model, String reasoningEffort) {
 		this.authConfig = authConfig;
+		this.model = model;
+		this.reasoningEffort = reasoningEffort;
+	}
+
+	public String model() {
+		return model;
 	}
 
 	public String ask(String question) throws IOException, InterruptedException {
@@ -76,7 +89,7 @@ public final class OpenAiClient {
 			throws IOException, InterruptedException {
 		OpenAiCredentials credentials = credentialsForCurrentMode();
 		JsonObject body = new JsonObject();
-		body.addProperty("model", MODEL);
+		body.addProperty("model", model);
 		body.addProperty("instructions", instructions);
 		body.addProperty("service_tier", "priority");
 		body.addProperty("tool_choice", "required");
@@ -87,7 +100,8 @@ public final class OpenAiClient {
 		include.add("reasoning.encrypted_content");
 		body.add("include", include);
 		JsonObject reasoning = new JsonObject();
-		reasoning.addProperty("effort", "medium");
+		reasoning.addProperty("effort", reasoningEffort);
+		reasoning.addProperty("summary", "detailed");
 		body.add("reasoning", reasoning);
 		if (credentials.mode() == AuthMode.SUBSCRIPTION) {
 			JsonObject clientMetadata = new JsonObject();
@@ -118,8 +132,9 @@ public final class OpenAiClient {
 		return SubscriptionCredentials.loadFresh();
 	}
 
-	private static HttpRequest buildRequest(OpenAiCredentials credentials, String question) {
-		return buildJsonRequest(credentials, GSON.fromJson(requestBody(question, credentials.mode()), JsonObject.class));
+	private HttpRequest buildRequest(OpenAiCredentials credentials, String question) {
+		return buildJsonRequest(credentials,
+				GSON.fromJson(requestBody(question, credentials.mode(), model, reasoningEffort), JsonObject.class));
 	}
 
 	private static HttpRequest buildJsonRequest(OpenAiCredentials credentials, JsonObject body) {
@@ -249,9 +264,9 @@ public final class OpenAiClient {
 		return new ToolRound(List.copyOf(calls), replayItems);
 	}
 
-	private static String requestBody(String question, AuthMode authMode) {
+	private static String requestBody(String question, AuthMode authMode, String model, String reasoningEffort) {
 		JsonObject root = new JsonObject();
-		root.addProperty("model", MODEL);
+		root.addProperty("model", model);
 		root.addProperty("instructions", SYSTEM_PROMPT);
 		root.addProperty("service_tier", "priority");
 		root.addProperty("tool_choice", "auto");
@@ -262,7 +277,8 @@ public final class OpenAiClient {
 		root.add("include", include);
 
 		JsonObject reasoning = new JsonObject();
-		reasoning.addProperty("effort", "medium");
+		reasoning.addProperty("effort", reasoningEffort);
+		reasoning.addProperty("summary", "detailed");
 		root.add("reasoning", reasoning);
 
 		JsonObject content = new JsonObject();

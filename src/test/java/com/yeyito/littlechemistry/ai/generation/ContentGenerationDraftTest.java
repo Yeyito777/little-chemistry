@@ -50,6 +50,16 @@ class ContentGenerationDraftTest {
 		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
 	}
 
+	@Test
+	void armorPropertiesInferSlotWhenNoneWasRequested() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ARMOR, "lunar boots");
+
+		ContentGenerationDraft.ToolExecution result = draft.execute(
+				"set_armor_properties", armorArguments("boots"));
+
+		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
+	}
+
 	private static JsonObject armorArguments(String slot) {
 		JsonObject arguments = new JsonObject();
 		arguments.addProperty("slot", slot);

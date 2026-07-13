@@ -7,6 +7,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
+import com.yeyito.littlechemistry.ai.generation.GenerationModel;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
@@ -92,18 +93,14 @@ public final class LittleChemistryCommands {
 		));
 	}
 
-	public static void createFromWand(ServerPlayer player, DynamicContentType type, DynamicArmorSlot armorSlot,
+	public static void createFromWand(ServerPlayer player, DynamicContentType type, GenerationModel generationModel,
 			String name) {
 		CommandSourceStack source = player.createCommandSourceStack();
 		if (!CREATE_PREDICATE.test(source)) {
 			player.sendSystemMessage(error("You do not have permission to create dynamic content."));
 			return;
 		}
-		ContentGenerationService.request(player, type, armorSlot, name);
-	}
-
-	public static void createFromWand(ServerPlayer player, DynamicContentType type, String name) {
-		createFromWand(player, type, null, name);
+		ContentGenerationService.request(player, type, null, name, generationModel);
 	}
 
 	public static void deleteFromWand(ServerPlayer player, java.util.List<String> names) {
@@ -165,7 +162,7 @@ public final class LittleChemistryCommands {
 
 		MinecraftServer server = context.getSource().getServer();
 		player.sendSystemMessage(Component.literal("[Little Chemistry] ").withStyle(ChatFormatting.AQUA)
-				.append(Component.literal("Thinking with " + OpenAiClient.MODEL + "…").withStyle(ChatFormatting.GRAY)));
+				.append(Component.literal("Thinking with " + OpenAiClient.DEFAULT_MODEL + "…").withStyle(ChatFormatting.GRAY)));
 
 		CompletableFuture<String> request = CompletableFuture.supplyAsync(() -> {
 			try {
@@ -231,7 +228,7 @@ public final class LittleChemistryCommands {
 		String normalized = response.length() <= MAX_RESPONSE_LENGTH
 				? response
 				: response.substring(0, MAX_RESPONSE_LENGTH) + "\n[Response truncated]";
-		player.sendSystemMessage(Component.literal("[Little Chemistry · " + OpenAiClient.MODEL + "]")
+		player.sendSystemMessage(Component.literal("[Little Chemistry · " + OpenAiClient.DEFAULT_MODEL + "]")
 				.withStyle(ChatFormatting.AQUA));
 
 		for (String paragraph : normalized.split("\\R", -1)) {
