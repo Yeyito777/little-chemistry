@@ -1,15 +1,25 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.ScheduledTickAccess;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.InsideBlockEffectApplier;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
+import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
@@ -20,13 +30,13 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import net.minecraft.core.Direction;
-
 import java.util.List;
 
 public final class DynamicCarrierBlock extends Block implements EntityBlock {
@@ -58,6 +68,36 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected SoundType getSoundType(BlockState state) {
 		return state.getValue(MATERIAL).soundType();
+	}
+
+	@Override
+	protected InteractionResult useItemOn(ItemStack heldStack, BlockState state, Level level, BlockPos position,
+			Player player, InteractionHand hand, BlockHitResult hit) {
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior()) {
+			if (level.isClientSide()) return InteractionResult.SUCCESS;
+			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
+				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
+						definition, serverLevel, serverPlayer, hand, heldStack, position, state, hit);
+				if (result != InteractionResult.PASS) return result;
+			}
+		}
+		return super.useItemOn(heldStack, state, level, position, player, hand, hit);
+	}
+
+	@Override
+	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos position,
+			Player player, BlockHitResult hit) {
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior()) {
+			if (level.isClientSide()) return InteractionResult.SUCCESS;
+			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
+				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
+						definition, serverLevel, serverPlayer, null, ItemStack.EMPTY, position, state, hit);
+				if (result != InteractionResult.PASS) return result;
+			}
+		}
+		return super.useWithoutItem(state, level, position, player, hit);
 	}
 
 	@Override
@@ -134,10 +174,101 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		if (definition == null || definition.block() == null || !definition.block().requiresCorrectTool()
 				|| definition.block().preferredTool().matches(destroyedWith)) {
 			super.playerDestroy(level, player, position, state, blockEntity, destroyedWith);
-			return;
+		} else {
+			player.awardStat(Stats.BLOCK_MINED.get(this));
+			player.causeFoodExhaustion(0.005F);
 		}
-		player.awardStat(Stats.BLOCK_MINED.get(this));
-		player.causeFoodExhaustion(0.005F);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel
+				&& player instanceof ServerPlayer serverPlayer) {
+			DynamicBehaviorRegistry.brokenBlock(definition, serverLevel, serverPlayer, position, state, destroyedWith);
+		}
+	}
+
+	@Override
+	public void setPlacedBy(Level level, BlockPos position, BlockState state, LivingEntity placer, ItemStack stack) {
+		super.setPlacedBy(level, position, state, placer, stack);
+		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+			DynamicBehaviorRegistry.placedBlock(definition, serverLevel, placer, position, state, stack);
+		}
+	}
+
+	@Override
+	protected void attack(BlockState state, Level level, BlockPos position, Player player) {
+		super.attack(state, level, position, player);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel
+				&& player instanceof ServerPlayer serverPlayer) {
+			DynamicBehaviorRegistry.attackPlacedBlock(definition, serverLevel, serverPlayer, position, state);
+		}
+	}
+
+	@Override
+	public void stepOn(Level level, BlockPos position, BlockState state, Entity entity) {
+		super.stepOn(level, position, state, entity);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+			DynamicBehaviorRegistry.stepOnBlock(definition, serverLevel, position, state, entity);
+		}
+	}
+
+	@Override
+	public void fallOn(Level level, BlockState state, BlockPos position, Entity entity, double fallDistance) {
+		super.fallOn(level, state, position, entity, fallDistance);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+			DynamicBehaviorRegistry.fallOnBlock(definition, serverLevel, position, state, entity, fallDistance);
+		}
+	}
+
+	@Override
+	protected void entityInside(BlockState state, Level level, BlockPos position, Entity entity,
+			InsideBlockEffectApplier effects, boolean isEntry) {
+		super.entityInside(state, level, position, entity, effects, isEntry);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+			DynamicBehaviorRegistry.entityInsideBlock(
+					definition, serverLevel, position, state, entity, effects, isEntry);
+		}
+	}
+
+	@Override
+	protected void randomTick(BlockState state, ServerLevel level, BlockPos position, RandomSource random) {
+		super.randomTick(state, level, position, random);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior()) {
+			DynamicBehaviorRegistry.randomTickBlock(definition, level, position, state, random);
+		}
+	}
+
+	@Override
+	protected void tick(BlockState state, ServerLevel level, BlockPos position, RandomSource random) {
+		super.tick(state, level, position, random);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior()) {
+			DynamicBehaviorRegistry.scheduledTickBlock(definition, level, position, state, random);
+		}
+	}
+
+	@Override
+	protected void neighborChanged(BlockState state, Level level, BlockPos position, Block neighbor,
+			Orientation orientation, boolean movedByPiston) {
+		super.neighborChanged(state, level, position, neighbor, orientation, movedByPiston);
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+			DynamicBehaviorRegistry.neighborChangedBlock(
+					definition, serverLevel, position, state, neighbor, orientation, movedByPiston);
+		}
+	}
+
+	@Override
+	protected void onProjectileHit(Level level, BlockState state, BlockHitResult hit, Projectile projectile) {
+		super.onProjectileHit(level, state, hit, projectile);
+		DynamicContentDefinition definition = definition(level, hit.getBlockPos());
+		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+			DynamicBehaviorRegistry.projectileHitBlock(
+					definition, serverLevel, hit.getBlockPos(), state, hit, projectile);
+		}
 	}
 
 	@Override

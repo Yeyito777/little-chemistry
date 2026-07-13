@@ -8,7 +8,8 @@ public record DynamicContentDefinition(
 		String textureHash,
 		DynamicTextureSpec texture,
 		DynamicBlockProperties block,
-		DynamicItemProperties item
+		DynamicItemProperties item,
+		String behaviorSource
 ) {
 	public DynamicContentDefinition {
 		if (name == null || !name.matches("[a-z0-9_]{1,64}")) {
@@ -20,6 +21,13 @@ public record DynamicContentDefinition(
 		}
 		if (textureHash == null || !textureHash.matches("[a-f0-9]{64}")) {
 			throw new IllegalArgumentException("Dynamic content texture hash is invalid");
+		}
+		if (behaviorSource != null) {
+			behaviorSource = behaviorSource.strip();
+			if (behaviorSource.isEmpty()) behaviorSource = null;
+			if (behaviorSource != null && (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0)) {
+				throw new IllegalArgumentException("Dynamic behavior source is invalid");
+			}
 		}
 		if (type == DynamicContentType.BLOCK) {
 			if (block == null || item != null) {
@@ -40,5 +48,9 @@ public record DynamicContentDefinition(
 
 	public String idPath() {
 		return name;
+	}
+
+	public boolean hasBehavior() {
+		return behaviorSource != null;
 	}
 }

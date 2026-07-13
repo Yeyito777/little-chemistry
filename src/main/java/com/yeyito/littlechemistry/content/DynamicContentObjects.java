@@ -71,6 +71,7 @@ public final class DynamicContentObjects {
 				new DynamicCarrierBlock(BlockBehaviour.Properties.of()
 						.setId(blockKey)
 						.strength(1.5F, 6.0F)
+						.randomTicks()
 						.noOcclusion()
 						.dynamicShape()
 						.lightLevel(state -> state.getValue(DynamicCarrierBlock.LIGHT_LEVEL)))

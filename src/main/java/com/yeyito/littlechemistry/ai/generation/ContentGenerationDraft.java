@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicBreakingPower;
@@ -59,6 +60,8 @@ final class ContentGenerationDraft {
 	private Integer durability;
 	private Integer damagePerBlock;
 	private Integer damagePerAttack;
+	private String behaviorSource;
+	private boolean behaviorCompiled;
 
 	ContentGenerationDraft(DynamicContentType type, String requestedName) {
 		this.type = type;
@@ -80,6 +83,10 @@ final class ContentGenerationDraft {
 				case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
 				case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
 				case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
+				case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
+				case "set_behavior_source" -> setBehaviorSource(arguments);
+				case "compile_behavior" -> compileBehavior(arguments);
+				case "inspect_behavior_source" -> inspectBehaviorSource(arguments);
 				case "inspect_draft" -> ToolExecution.success(inspect(), null);
 				case "submit" -> submit(arguments);
 				default -> ToolExecution.error("UNKNOWN_TOOL", "Unknown generation tool: " + tool);
@@ -282,6 +289,80 @@ final class ContentGenerationDraft {
 		return ToolExecution.success(message("Item placement properties were accepted."), null);
 	}
 
+	private ToolExecution inspectBehaviorApi(JsonObject arguments) {
+		requireOnly(arguments);
+		JsonObject details = new JsonObject();
+		details.addProperty("requiredClass", "public final class GeneratedBehaviorImpl implements DynamicBehavior");
+		details.addProperty("callbacks", "The API includes held-item use in air/on blocks/on entities, inventory ticks, attacks, mining, consumption, crafting, placed-block use/attack/placement/breaking, entity contact/falls, random and scheduled ticks, neighbor updates, and projectile hits.");
+		details.addProperty("inspection", "Call inspect_java_class for com.yeyito.littlechemistry.behavior.DynamicBehavior and its context records to get the exact current signatures.");
+		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
+		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
+		details.addProperty("semantics", "Callbacks run only on the authoritative server. Return PASS for normal placement/eating/block-item fallback, SUCCESS or CONSUME after handling, and FAIL to reject the use.");
+		details.addProperty("example", """
+				import com.yeyito.littlechemistry.behavior.*;
+				import net.minecraft.network.chat.Component;
+				import net.minecraft.world.InteractionResult;
+
+				public final class GeneratedBehaviorImpl implements DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+
+				    @Override
+				    public InteractionResult useAir(DynamicItemUseContext context) {
+				        context.player().sendSystemMessage(Component.literal("It works!"));
+				        return InteractionResult.SUCCESS;
+				    }
+
+				    @Override
+				    public InteractionResult useOnBlock(DynamicBlockUseContext context) {
+				        return InteractionResult.PASS;
+				    }
+				}
+				""");
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution inspectBehaviorSource(JsonObject arguments) {
+		requireOnly(arguments);
+		if (behaviorSource == null) {
+			return ToolExecution.error("MISSING_BEHAVIOR_SOURCE", "No Java behavior source is currently stored");
+		}
+		JsonObject details = new JsonObject();
+		details.addProperty("source", behaviorSource);
+		details.addProperty("compiled", behaviorCompiled);
+		details.addProperty("sourceCharacters", behaviorSource.length());
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setBehaviorSource(JsonObject arguments) {
+		requireOnly(arguments, "source");
+		String source = requiredString(arguments, "source").strip();
+		if (source.isEmpty() || source.length() > 60_000 || source.indexOf('\0') >= 0) {
+			throw new IllegalArgumentException("source must contain 1-60,000 valid text characters");
+		}
+		behaviorSource = source;
+		behaviorCompiled = false;
+		return ToolExecution.success(message("Behavior source was stored. Call compile_behavior before submitting."), null);
+	}
+
+	private ToolExecution compileBehavior(JsonObject arguments) {
+		requireOnly(arguments);
+		if (behaviorSource == null) {
+			return ToolExecution.error("MISSING_BEHAVIOR_SOURCE", "Call set_behavior_source before compile_behavior");
+		}
+		try {
+			DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(behaviorSource);
+			behaviorSource = compiled.source();
+			behaviorCompiled = true;
+			JsonObject details = message("Java behavior compiled successfully.");
+			details.addProperty("className", DynamicBehaviorCompiler.GENERATED_CLASS_NAME);
+			details.addProperty("sourceCharacters", behaviorSource.length());
+			return ToolExecution.success(details, null);
+		} catch (IllegalArgumentException error) {
+			behaviorCompiled = false;
+			return ToolExecution.error("JAVA_COMPILATION_FAILED", safeMessage(error));
+		}
+	}
+
 	private ToolExecution submit(JsonObject arguments) {
 		requireOnly(arguments);
 		List<String> missing = missing();
@@ -301,7 +382,8 @@ final class ContentGenerationDraft {
 					texture,
 					new DynamicBlockProperties(material, hardness, preferredTool, requiresCorrectTool,
 							blockShape, redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles),
-					null
+					null,
+					behaviorSource
 			);
 		} else {
 			DynamicItemProperties item = itemType == DynamicItemType.TOOL
@@ -312,7 +394,7 @@ final class ContentGenerationDraft {
 							DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
 							itemType == DynamicItemType.FOOD ? foodProperties : null,
 							itemType == DynamicItemType.ITEM && Boolean.TRUE.equals(placeable) ? placementProperties : null);
-			generated = new GeneratedContentSpec(texture, null, item);
+			generated = new GeneratedContentSpec(texture, null, item, behaviorSource);
 		}
 		JsonObject details = message("The draft passed validation and was submitted.");
 		details.addProperty("submitted", true);
@@ -328,12 +410,16 @@ final class ContentGenerationDraft {
 		missing().forEach(missing::add);
 		result.add("missing", missing);
 		result.addProperty("complete", missing.isEmpty());
+		result.addProperty("behaviorSourceSet", behaviorSource != null);
+		result.addProperty("behaviorCompiled", behaviorCompiled);
 		return result;
 	}
 
 	private List<String> missing() {
 		List<String> missing = new ArrayList<>();
 		if (texture == null) missing.add("texture");
+		if (behaviorSource == null) missing.add("behaviorSource");
+		else if (!behaviorCompiled) missing.add("behaviorCompilation");
 		if (type == DynamicContentType.BLOCK) {
 			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null || blockShape == null) missing.add("blockProperties");
 			if (redstonePower == null || comparatorPower == null) missing.add("redstone");

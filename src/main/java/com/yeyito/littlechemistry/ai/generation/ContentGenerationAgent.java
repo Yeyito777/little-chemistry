@@ -17,8 +17,9 @@ public final class ContentGenerationAgent {
 
 			Fetch similar vanilla content and try to copy vanilla palettes and forms with fetch_texture when drawing
 			textures. Make naturally placed items such as plants and torches placeable, classify edible items as food,
-			and give foods suitable status effects when implied. Set every applicable property, revise from tool feedback,
-			and finish with submit.
+			and give foods suitable status effects when implied. Define and compile its server-side Java behavior, returning
+			PASS where normal placement or eating should continue. Inspect relevant Minecraft and Little Chemistry Java
+			classes when useful. Set every applicable property and finish with submit.
 			""";
 
 	private final OpenAiClient openAi;
@@ -63,6 +64,8 @@ public final class ContentGenerationAgent {
 				ContentGenerationDraft.ToolExecution execution = switch (call.name()) {
 					case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
 					case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
+					case "search_java_classes" -> JavaCodeInspector.search(call.arguments());
+					case "inspect_java_class" -> JavaCodeInspector.inspect(call.arguments());
 					default -> draft.execute(call.name(), call.arguments());
 				};
 				if (execution.submitted() != null) {
@@ -106,6 +109,21 @@ public final class ContentGenerationAgent {
 					"Required only when itemType=item and placeable=true. Set cross-plant or upright-torch geometry and placed light. Prefer #minecraft:supports_vegetation for ordinary plants; supports may also use any_solid, block tags, or block IDs.",
 					placementPropertiesSchema()));
 		}
+		tools.add(tool("inspect_behavior_api",
+				"Inspect the exact hot-loaded Java class contract, callback contexts, and a compilable example.", emptySchema()));
+		tools.add(tool("search_java_classes",
+				"Search the running Minecraft, Fabric, and Little Chemistry class graph by concept or class-name fragment.",
+				javaClassSearchSchema()));
+		tools.add(tool("inspect_java_class",
+				"Inspect a runtime Java class's hierarchy, constructors, fields, nested classes, and source-like method signatures without initializing it. Recursively inspect relevant parameter and return classes when coding behavior.",
+				javaClassInspectSchema()));
+		tools.add(tool("set_behavior_source",
+				"Set the complete Java compilation unit for server-side behavior. With no package declaration, it must declare public final class GeneratedBehaviorImpl implementing DynamicBehavior with a public no-argument constructor. Imports are allowed; return InteractionResult.PASS to preserve normal placement or eating fallbacks.",
+				behaviorSourceSchema()));
+		tools.add(tool("compile_behavior",
+				"Compile the current Java behavior against the running Little Chemistry and Minecraft classes. Use the returned line/column diagnostics to revise set_behavior_source until compilation succeeds.", emptySchema()));
+		tools.add(tool("inspect_behavior_source",
+				"Read the complete Java behavior source currently stored in the draft.", emptySchema()));
 		tools.add(tool("inspect_draft", "Inspect missing required sections before submission.", emptySchema()));
 		tools.add(tool("submit", "Validate and submit the completed definition. This is the only successful finish.", emptySchema()));
 		return tools;
@@ -241,6 +259,40 @@ public final class ContentGenerationAgent {
 
 	private static JsonObject emptySchema() {
 		return objectSchema();
+	}
+
+	private static JsonObject behaviorSourceSchema() {
+		JsonObject schema = objectSchema("source");
+		JsonObject source = typeSchema("string");
+		source.addProperty("minLength", 1);
+		source.addProperty("maxLength", 60_000);
+		schema.getAsJsonObject("properties").add("source", source);
+		return schema;
+	}
+
+	private static JsonObject javaClassSearchSchema() {
+		JsonObject schema = objectSchema("query");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		JsonObject query = typeSchema("string");
+		query.addProperty("minLength", 1);
+		query.addProperty("maxLength", 120);
+		properties.add("query", query);
+		properties.add("scope", enumSchema("any", "minecraft", "little_chemistry", "fabric"));
+		return schema;
+	}
+
+	private static JsonObject javaClassInspectSchema() {
+		JsonObject schema = objectSchema("className");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		JsonObject className = typeSchema("string");
+		className.addProperty("minLength", 1);
+		className.addProperty("maxLength", 240);
+		properties.add("className", className);
+		JsonObject memberQuery = typeSchema("string");
+		memberQuery.addProperty("maxLength", 120);
+		properties.add("memberQuery", memberQuery);
+		properties.add("includeInherited", typeSchema("boolean"));
+		return schema;
 	}
 
 	private static JsonObject objectSchema(String... required) {

@@ -3,7 +3,8 @@ package com.yeyito.littlechemistry.content;
 public record GeneratedContentSpec(
 		DynamicTextureSpec texture,
 		DynamicBlockProperties block,
-		DynamicItemProperties item
+		DynamicItemProperties item,
+		String behaviorSource
 ) {
 	public GeneratedContentSpec {
 		if (texture == null) {
@@ -14,6 +15,9 @@ public record GeneratedContentSpec(
 		}
 		if (block != null) {
 			texture.requireOpaque();
+		}
+		if (behaviorSource == null || behaviorSource.isBlank()) {
+			throw new IllegalArgumentException("Generated content requires compiled Java behavior source");
 		}
 	}
 }

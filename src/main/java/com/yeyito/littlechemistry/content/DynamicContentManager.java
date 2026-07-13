@@ -1,6 +1,9 @@
 package com.yeyito.littlechemistry.content;
 
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.behavior.DynamicBehavior;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -64,7 +67,7 @@ public final class DynamicContentManager {
 			DynamicContentManager manager;
 			if (Files.isRegularFile(dataFile)) {
 				DynamicContentJson.Decoded decoded = DynamicContentJson.decode(Files.readAllBytes(dataFile));
-				if (decoded.format() < 3) {
+				if (decoded.format() < 4) {
 					backupLegacyCatalog(dataFile, decoded.format());
 				}
 				manager = new DynamicContentManager(server, dataFile, decoded.serverId(), decoded.revision(), decoded.definitions());
@@ -75,6 +78,7 @@ public final class DynamicContentManager {
 			manager.rebuildPayload();
 			active = manager;
 			DynamicContentCatalog.replace(manager.definitions);
+			DynamicBehaviorRegistry.replace(manager.definitions);
 			LittleChemistry.LOGGER.info("Loaded {} dynamic Little Chemistry entries", manager.definitions.size());
 		} catch (Exception error) {
 			throw new IllegalStateException("Could not load Little Chemistry dynamic content", error);
@@ -86,6 +90,7 @@ public final class DynamicContentManager {
 		if (manager != null && manager.server == server) {
 			active = null;
 			DynamicContentCatalog.clear();
+			DynamicBehaviorRegistry.clear();
 		}
 	}
 
@@ -110,9 +115,10 @@ public final class DynamicContentManager {
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				type, name, displayName, textureSeed, textureHash, null,
 				type == DynamicContentType.BLOCK ? DynamicBlockProperties.DEFAULT : null,
-				type == DynamicContentType.ITEM ? DynamicItemProperties.DEFAULT : null
+				type == DynamicContentType.ITEM ? DynamicItemProperties.DEFAULT : null,
+				null
 		);
-		return commit(definition, textureBytes);
+		return commit(definition, textureBytes, null, null);
 	}
 
 	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName, GeneratedContentSpec generated)
@@ -128,6 +134,8 @@ public final class DynamicContentManager {
 		}
 		byte[] textureBytes = generated.texture().renderPng();
 		String textureHash = DynamicTextureAsset.sha256(textureBytes);
+		DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
+		DynamicBehavior behavior = compiledBehavior.instantiate();
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				type,
 				name,
@@ -136,12 +144,14 @@ public final class DynamicContentManager {
 				textureHash,
 				generated.texture(),
 				generated.block(),
-				generated.item()
+				generated.item(),
+				compiledBehavior.source()
 		);
-		return commit(definition, textureBytes);
+		return commit(definition, textureBytes, compiledBehavior, behavior);
 	}
 
-	private DynamicContentDefinition commit(DynamicContentDefinition definition, byte[] textureBytes) throws IOException {
+	private DynamicContentDefinition commit(DynamicContentDefinition definition, byte[] textureBytes,
+			DynamicBehaviorCompiler.Compiled compiledBehavior, DynamicBehavior behavior) throws IOException {
 		List<DynamicContentDefinition> updatedDefinitions = new ArrayList<>(definitions);
 		updatedDefinitions.add(definition);
 		long updatedRevision = revision + 1;
@@ -153,6 +163,9 @@ public final class DynamicContentManager {
 		revision = updatedRevision;
 		cachedPayload = updatedPayload;
 		DynamicContentCatalog.replace(definitions);
+		if (compiledBehavior != null) {
+			DynamicBehaviorRegistry.install(definition.name(), compiledBehavior, behavior);
+		}
 		broadcast();
 		return definition;
 	}
@@ -183,6 +196,7 @@ public final class DynamicContentManager {
 		revision = updatedRevision;
 		cachedPayload = updatedPayload;
 		DynamicContentCatalog.replace(definitions);
+		DynamicBehaviorRegistry.remove(names);
 		purgeLoadedReferences(names);
 		removeUnusedAssets();
 		broadcast();

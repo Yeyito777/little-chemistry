@@ -136,6 +136,10 @@ public final class RuntimeTextureStore {
 	}
 
 	public static void clear(Minecraft client) {
+		if (!client.isSameThread()) {
+			client.execute(() -> clear(client));
+			return;
+		}
 		DynamicParticleTextures.clear();
 		for (Identifier texture : loadedTextures.values()) {
 			client.getTextureManager().release(texture);

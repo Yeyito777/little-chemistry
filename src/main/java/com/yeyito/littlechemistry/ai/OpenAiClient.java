@@ -39,7 +39,7 @@ public final class OpenAiClient {
 	private static final String CODEX_INSTALLATION_ID = UUID.randomUUID().toString();
 	private static final String CODEX_USER_AGENT = "codex_cli_rs/" + CODEX_CLIENT_VERSION + " (" +
 			System.getProperty("os.name").toLowerCase() + " " + System.getProperty("os.version") + "; " +
-			System.getProperty("os.arch") + ") little-chemistry/1.1";
+			System.getProperty("os.arch") + ") little-chemistry/1.2";
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 			.connectTimeout(Duration.ofSeconds(15))
 			.followRedirects(HttpClient.Redirect.NORMAL)
@@ -141,7 +141,7 @@ public final class OpenAiClient {
 				builder.header("ChatGPT-Account-ID", credentials.accountId());
 			}
 		} else {
-			builder.header("User-Agent", "little-chemistry/1.1");
+			builder.header("User-Agent", "little-chemistry/1.2");
 		}
 		return builder.build();
 	}

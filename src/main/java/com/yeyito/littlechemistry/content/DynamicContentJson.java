@@ -23,7 +23,7 @@ public final class DynamicContentJson {
 
 	public static byte[] encode(UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", 3);
+		root.addProperty("format", 4);
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
@@ -42,6 +42,9 @@ public final class DynamicContentJson {
 			} else {
 				entry.add("item", encodeItem(definition.item()));
 			}
+			if (definition.hasBehavior()) {
+				entry.addProperty("behaviorSource", definition.behaviorSource());
+			}
 			entries.add(entry);
 		}
 		root.add("definitions", entries);
@@ -51,7 +54,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = root.get("format").getAsInt();
-		if (format < 1 || format > 3) {
+		if (format < 1 || format > 4) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -92,8 +95,10 @@ public final class DynamicContentJson {
 			DynamicItemProperties item = type == DynamicContentType.ITEM
 					? format >= 3 && entry.has("item") ? decodeItem(entry.getAsJsonObject("item")) : DynamicItemProperties.DEFAULT
 					: null;
+			String behaviorSource = format >= 4 && entry.has("behaviorSource")
+					? entry.get("behaviorSource").getAsString() : null;
 			definitions.add(new DynamicContentDefinition(
-					type, name, displayName, textureSeed, textureHash, texture, block, item
+					type, name, displayName, textureSeed, textureHash, texture, block, item, behaviorSource
 			));
 		}
 		validateUniqueNames(definitions);
