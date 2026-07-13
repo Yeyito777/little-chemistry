@@ -3,7 +3,8 @@
   "package": "com.yeyito.littlechemistry.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
-    "CreativeModeTabsAccessor"
+    "CreativeModeTabsAccessor",
+    "ItemCooldownsMixin"
   ],
   "client": [
     "ClientLevelParticleMixin",

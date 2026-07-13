@@ -4,6 +4,7 @@ import net.minecraft.world.item.Rarity;
 
 public record DynamicItemProperties(
 		DynamicItemType itemType,
+		DynamicHeldType heldType,
 		int maxStack,
 		Rarity rarity,
 		boolean foil,
@@ -23,8 +24,8 @@ public record DynamicItemProperties(
 	public static final DynamicItemProperties DEFAULT = ordinary(64, Rarity.COMMON, false, 0, 0.0);
 
 	public DynamicItemProperties {
-		if (itemType == null || rarity == null || tool == null || breakingPower == null) {
-			throw new IllegalArgumentException("Item type, rarity, tool, and breaking power are required");
+		if (itemType == null || heldType == null || rarity == null || tool == null || breakingPower == null) {
+			throw new IllegalArgumentException("Item type, held type, rarity, tool, and breaking power are required");
 		}
 		if (maxStack < 1 || maxStack > 64) throw new IllegalArgumentException("Item stack size must be between 1 and 64");
 		if (enchantability < 0 || enchantability > 255) throw new IllegalArgumentException("Enchantability must be between 0 and 255");
@@ -56,7 +57,8 @@ public record DynamicItemProperties(
 	}
 
 	public static DynamicItemProperties ordinary(int maxStack, Rarity rarity, boolean foil, int enchantability, double reach) {
-		return new DynamicItemProperties(DynamicItemType.ITEM, maxStack, rarity, foil, enchantability, reach,
+		return new DynamicItemProperties(DynamicItemType.ITEM, DynamicHeldType.REGULAR,
+				maxStack, rarity, foil, enchantability, reach,
 				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0, null, null);
 	}
 }

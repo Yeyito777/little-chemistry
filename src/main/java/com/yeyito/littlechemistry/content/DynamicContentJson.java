@@ -23,7 +23,7 @@ public final class DynamicContentJson {
 
 	public static byte[] encode(UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", 4);
+		root.addProperty("format", 5);
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
@@ -54,7 +54,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = root.get("format").getAsInt();
-		if (format < 1 || format > 4) {
+		if (format < 1 || format > 5) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -181,6 +181,7 @@ public final class DynamicContentJson {
 	private static JsonObject encodeItem(DynamicItemProperties item) {
 		JsonObject encoded = new JsonObject();
 		encoded.addProperty("itemType", item.itemType().serializedName());
+		encoded.addProperty("heldType", item.heldType().serializedName());
 		encoded.addProperty("maxStack", item.maxStack());
 		encoded.addProperty("rarity", item.rarity().getSerializedName());
 		encoded.addProperty("foil", item.foil());
@@ -241,6 +242,9 @@ public final class DynamicContentJson {
 		DynamicItemType itemType = encoded.has("itemType")
 				? DynamicItemType.parse(encoded.get("itemType").getAsString())
 				: tool == DynamicTool.NONE ? DynamicItemType.ITEM : DynamicItemType.TOOL;
+		DynamicHeldType heldType = encoded.has("heldType")
+				? DynamicHeldType.parse(encoded.get("heldType").getAsString())
+				: DynamicHeldType.legacyDefaultFor(itemType);
 		JsonObject encodedFood = encoded.get("food") instanceof JsonObject value ? value
 				: encoded.get("consumable") instanceof JsonObject legacy ? legacy : null;
 		if (itemType == DynamicItemType.ITEM && encodedFood != null) itemType = DynamicItemType.FOOD;
@@ -275,11 +279,11 @@ public final class DynamicContentJson {
 						value.has("lightLevel") ? value.get("lightLevel").getAsInt() : 0,
 						value.has("visuallyEmissive") && value.get("visuallyEmissive").getAsBoolean());
 			}
-			return new DynamicItemProperties(itemType, maxStack, rarity, foil, enchantability, reach,
+			return new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
 					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0, food, placement);
 		}
 		return new DynamicItemProperties(
-				DynamicItemType.TOOL, 1, rarity, foil, enchantability, reach,
+				DynamicItemType.TOOL, heldType, 1, rarity, foil, enchantability, reach,
 				tool,
 				encoded.has("breakingPower") ? DynamicBreakingPower.parse(encoded.get("breakingPower").getAsString()) : DynamicBreakingPower.WOOD,
 				encoded.has("breakingSpeed") ? encoded.get("breakingSpeed").getAsFloat() : 2.0F,

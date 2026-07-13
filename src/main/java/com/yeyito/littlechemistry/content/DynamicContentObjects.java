@@ -32,7 +32,7 @@ import java.util.List;
 public final class DynamicContentObjects {
 	public static DataComponentType<Identifier> CONTENT_ID;
 	public static DynamicCarrierItem ITEM;
-	public static DynamicCarrierItem TOOL_ITEM;
+	public static DynamicCarrierItem TOOL_HELD_ITEM;
 	public static DynamicCarrierBlock BLOCK;
 	public static DynamicCarrierBlockItem BLOCK_ITEM;
 	public static BlockEntityType<DynamicBlockEntity> BLOCK_ENTITY_TYPE;
@@ -58,7 +58,7 @@ public final class DynamicContentObjects {
 		);
 
 		ResourceKey<Item> toolItemKey = ResourceKey.create(Registries.ITEM, LittleChemistry.id("dynamic_tool"));
-		TOOL_ITEM = Registry.register(
+		TOOL_HELD_ITEM = Registry.register(
 				BuiltInRegistries.ITEM,
 				toolItemKey,
 				new DynamicCarrierItem(new Item.Properties().setId(toolItemKey).stacksTo(1))
@@ -94,7 +94,7 @@ public final class DynamicContentObjects {
 	public static ItemStack createStack(DynamicContentDefinition definition) {
 		Item carrier = definition.type() == DynamicContentType.BLOCK
 				? BLOCK_ITEM
-				: definition.item().itemType() == DynamicItemType.TOOL ? TOOL_ITEM : ITEM;
+				: definition.item().heldType() == DynamicHeldType.TOOL ? TOOL_HELD_ITEM : ITEM;
 		ItemStack stack = new ItemStack(carrier);
 		stack.set(CONTENT_ID, LittleChemistry.id(definition.name()));
 		if (definition.item() != null) {

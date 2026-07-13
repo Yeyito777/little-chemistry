@@ -24,7 +24,7 @@ import java.util.concurrent.Semaphore;
 public final class ContentGenerationService {
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 	private static final Semaphore PROVIDER_SLOTS = new Semaphore(2);
-	private static final Map<UUID, ActiveJob> ACTIVE = new ConcurrentHashMap<>();
+	private static final Map<GenerationKey, ActiveJob> ACTIVE = new ConcurrentHashMap<>();
 
 	private ContentGenerationService() {
 	}
@@ -36,11 +36,12 @@ public final class ContentGenerationService {
 			return false;
 		}
 		String displayName;
+		String contentName;
 		try {
 			displayName = DynamicContentManager.normalizeDisplayName(requestedName);
+			contentName = DynamicContentManager.normalizeIdentifier(displayName);
 			if (manager.containsName(displayName)) {
-				player.sendSystemMessage(error("Dynamic content named '" +
-						DynamicContentManager.normalizeIdentifier(displayName) + "' already exists."));
+				player.sendSystemMessage(error("Dynamic content named '" + contentName + "' already exists."));
 				return false;
 			}
 		} catch (IllegalArgumentException invalid) {
@@ -49,15 +50,16 @@ public final class ContentGenerationService {
 		}
 
 		UUID playerId = player.getUUID();
-		if (!PROVIDER_SLOTS.tryAcquire()) {
-			player.sendSystemMessage(error("The server is already running the maximum number of content-generation jobs."));
+		MinecraftServer server = player.level().getServer();
+		GenerationKey generationKey = new GenerationKey(server, contentName);
+		ActiveJob job = new ActiveJob(server);
+		if (ACTIVE.putIfAbsent(generationKey, job) != null) {
+			player.sendSystemMessage(error("Dynamic content named '" + contentName + "' is already being generated."));
 			return false;
 		}
-		MinecraftServer server = player.level().getServer();
-		ActiveJob job = new ActiveJob(server);
-		if (ACTIVE.putIfAbsent(playerId, job) != null) {
-			PROVIDER_SLOTS.release();
-			player.sendSystemMessage(error("Your previous content-generation request is still running."));
+		if (!PROVIDER_SLOTS.tryAcquire()) {
+			ACTIVE.remove(generationKey, job);
+			player.sendSystemMessage(error("The server is already running the maximum number of content-generation jobs."));
 			return false;
 		}
 
@@ -82,7 +84,7 @@ public final class ContentGenerationService {
 				}
 			});
 		} catch (Throwable submissionFailure) {
-			ACTIVE.remove(playerId, job);
+			ACTIVE.remove(generationKey, job);
 			PROVIDER_SLOTS.release();
 			player.sendSystemMessage(error("Could not start the generation job."));
 			LittleChemistry.LOGGER.error("Could not submit a Little Chemistry generation job", submissionFailure);
@@ -90,17 +92,23 @@ public final class ContentGenerationService {
 		}
 
 		job.promise.whenComplete((generated, failure) -> {
-			ACTIVE.remove(playerId, job);
 			if (!server.isRunning()) {
+				ACTIVE.remove(generationKey, job);
 				return;
 			}
-			server.execute(() -> completeOnServer(server, playerId, type, displayName, generated, failure));
+			server.execute(() -> {
+				try {
+					completeOnServer(server, playerId, type, displayName, generated, failure);
+				} finally {
+					ACTIVE.remove(generationKey, job);
+				}
+			});
 		});
 		return true;
 	}
 
 	public static void cancelForServer(MinecraftServer server) {
-		for (Map.Entry<UUID, ActiveJob> entry : ACTIVE.entrySet()) {
+		for (Map.Entry<GenerationKey, ActiveJob> entry : ACTIVE.entrySet()) {
 			ActiveJob job = entry.getValue();
 			if (job.server == server && ACTIVE.remove(entry.getKey(), job)) {
 				job.promise.completeExceptionally(new IllegalStateException("Server stopped during content generation"));
@@ -150,6 +158,9 @@ public final class ContentGenerationService {
 		if (message == null || message.isBlank()) return current.getClass().getSimpleName();
 		String safe = message.replaceAll("[\\r\\n]+", " ").trim();
 		return safe.length() <= 500 ? safe : safe.substring(0, 500) + "…";
+	}
+
+	private record GenerationKey(MinecraftServer server, String contentName) {
 	}
 
 	private static final class ActiveJob {

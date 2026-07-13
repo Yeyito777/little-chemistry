@@ -97,7 +97,7 @@ public final class ContentGenerationAgent {
 			tools.add(tool("set_block_particles", "Replace the block's particle emitters; use an empty array for none.", particlesSchema()));
 		} else {
 			tools.add(tool("set_item_properties",
-					"Choose itemType=item, food, or tool and set stack, rarity, foil, enchantability, reach, and placeable properties.",
+					"Choose gameplay itemType=item, food, or tool independently from heldType=regular or tool. heldType controls only the first/third-person pose, so ordinary items such as rods, staffs, and weapons may use heldType=tool. Also set stack, rarity, foil, enchantability, reach, and placeable properties.",
 					itemPropertiesSchema()));
 			tools.add(tool("set_tool_properties",
 					"Required only for itemType=tool. Set tool category, breaking power/speed, native total attack damage and attack speed shown in the tooltip, durability, and durability costs.",
@@ -199,9 +199,10 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject itemPropertiesSchema() {
-		JsonObject schema = objectSchema("itemType", "maxStack", "rarity", "foil", "enchantability", "reach", "placeable");
+		JsonObject schema = objectSchema("itemType", "heldType", "maxStack", "rarity", "foil", "enchantability", "reach", "placeable");
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("itemType", enumSchema("item", "food", "tool"));
+		properties.add("heldType", enumSchema("regular", "tool"));
 		properties.add("maxStack", integerSchema(1, 64));
 		properties.add("rarity", enumSchema("common", "uncommon", "rare", "epic"));
 		properties.add("foil", typeSchema("boolean"));
