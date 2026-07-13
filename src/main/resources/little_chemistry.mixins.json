@@ -5,6 +5,10 @@
   "mixins": [
     "CreativeModeTabsAccessor"
   ],
+  "client": [
+    "ClientLevelParticleMixin",
+    "ParticleEngineMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

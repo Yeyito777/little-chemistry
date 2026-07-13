@@ -28,8 +28,21 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 			float partialTick, Vec3 cameraPosition, ModelFeatureRenderer.CrumblingOverlay breakProgress) {
 		net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState.extractBase(blockEntity, state, breakProgress);
 		Identifier contentId = blockEntity.contentId();
-		DynamicContentDefinition definition = contentId == null ? null : DynamicContentCatalog.find(contentId.getPath());
+		DynamicContentDefinition definition = DynamicContentCatalog.find(contentId);
 		state.textureHash = definition == null ? null : definition.textureHash();
+		if (state.textureHash != null && blockEntity.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
+			DynamicParticleTextures.remember(clientLevel, blockEntity.getBlockPos(), state.textureHash);
+		}
+		var placement = definition == null || definition.item() == null ? null : definition.item().placement();
+		state.placedShape = placement == null ? null : placement.shape();
+		state.visuallyEmissive = definition != null && definition.block() != null && definition.block().visuallyEmissive()
+				|| placement != null && placement.visuallyEmissive();
+		state.shape = definition == null || definition.block() == null
+				? com.yeyito.littlechemistry.content.DynamicBlockShape.FULL_CUBE : definition.block().shape();
+		if (state.visuallyEmissive) {
+			Arrays.fill(state.faceLightCoords, LightCoordsUtil.FULL_BRIGHT);
+			return;
+		}
 		if (blockEntity.getLevel() == null) {
 			Arrays.fill(state.faceLightCoords, LightCoordsUtil.FULL_BRIGHT);
 			return;
@@ -54,12 +67,17 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		nodes.order(0).submitCustomGeometry(
 					poseStack,
 					RenderTypes.entityCutout(texture),
-					(pose, vertices) -> DynamicGeometry.cube(
-							pose,
-							vertices,
-							state.faceLightCoords,
-							OverlayTexture.NO_OVERLAY
-					)
+						(pose, vertices) -> {
+							if (state.placedShape == com.yeyito.littlechemistry.content.DynamicPlacedShape.CROSS) {
+								DynamicGeometry.cross(pose, vertices, state.faceLightCoords, OverlayTexture.NO_OVERLAY);
+							} else if (state.placedShape == com.yeyito.littlechemistry.content.DynamicPlacedShape.TORCH) {
+								DynamicGeometry.torch(pose, vertices, state.faceLightCoords, OverlayTexture.NO_OVERLAY);
+							} else if (state.shape == com.yeyito.littlechemistry.content.DynamicBlockShape.SLAB) {
+								DynamicGeometry.slab(pose, vertices, state.faceLightCoords, OverlayTexture.NO_OVERLAY);
+							} else {
+								DynamicGeometry.cube(pose, vertices, state.faceLightCoords, OverlayTexture.NO_OVERLAY);
+							}
+						}
 		);
 	}
 }

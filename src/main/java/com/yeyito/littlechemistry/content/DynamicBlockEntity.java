@@ -1,5 +1,6 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.LittleChemistry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.component.DataComponentGetter;
@@ -14,15 +15,57 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import java.util.WeakHashMap;
+
 public final class DynamicBlockEntity extends BlockEntity {
+	private static final Set<DynamicBlockEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 	private Identifier contentId;
 
 	public DynamicBlockEntity(BlockPos position, BlockState state) {
 		super(DynamicContentObjects.BLOCK_ENTITY_TYPE, position, state);
+		synchronized (LIVE) {
+			LIVE.add(this);
+		}
 	}
 
 	public Identifier contentId() {
 		return contentId;
+	}
+
+	public static int removeLoaded(net.minecraft.server.MinecraftServer server, Set<String> names) {
+		List<DynamicBlockEntity> snapshot;
+		synchronized (LIVE) {
+			snapshot = new ArrayList<>(LIVE);
+		}
+		int removed = 0;
+		for (DynamicBlockEntity blockEntity : snapshot) {
+			if (!(blockEntity.level instanceof net.minecraft.server.level.ServerLevel serverLevel)
+					|| serverLevel.getServer() != server || blockEntity.contentId == null
+					|| !LittleChemistry.MOD_ID.equals(blockEntity.contentId.getNamespace())
+					|| !names.contains(blockEntity.contentId.getPath())) continue;
+			if (serverLevel.removeBlock(blockEntity.worldPosition, false)) removed++;
+		}
+		return removed;
+	}
+
+	@Override
+	public void setRemoved() {
+		super.setRemoved();
+		synchronized (LIVE) {
+			LIVE.remove(this);
+		}
+	}
+
+	@Override
+	public void clearRemoved() {
+		super.clearRemoved();
+		synchronized (LIVE) {
+			LIVE.add(this);
+		}
 	}
 
 	@Override

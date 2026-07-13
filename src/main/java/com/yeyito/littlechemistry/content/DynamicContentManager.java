@@ -7,6 +7,8 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.entity.item.ItemEntity;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +21,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -60,6 +64,9 @@ public final class DynamicContentManager {
 			DynamicContentManager manager;
 			if (Files.isRegularFile(dataFile)) {
 				DynamicContentJson.Decoded decoded = DynamicContentJson.decode(Files.readAllBytes(dataFile));
+				if (decoded.format() < 3) {
+					backupLegacyCatalog(dataFile, decoded.format());
+				}
 				manager = new DynamicContentManager(server, dataFile, decoded.serverId(), decoded.revision(), decoded.definitions());
 			} else {
 				manager = new DynamicContentManager(server, dataFile, UUID.randomUUID(), 0, List.of());
@@ -86,6 +93,10 @@ public final class DynamicContentManager {
 		return active;
 	}
 
+	public boolean belongsTo(MinecraftServer candidate) {
+		return server == candidate;
+	}
+
 	public DynamicContentDefinition create(DynamicContentType type, String requestedName) throws IOException {
 		String displayName = normalizeDisplayName(requestedName);
 		String name = normalizeIdentifier(displayName);
@@ -97,13 +108,45 @@ public final class DynamicContentManager {
 		byte[] textureBytes = DynamicTextureAsset.generate(textureSeed);
 		String textureHash = DynamicTextureAsset.sha256(textureBytes);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
-				type, name, displayName, textureSeed, textureHash
+				type, name, displayName, textureSeed, textureHash, null,
+				type == DynamicContentType.BLOCK ? DynamicBlockProperties.DEFAULT : null,
+				type == DynamicContentType.ITEM ? DynamicItemProperties.DEFAULT : null
 		);
+		return commit(definition, textureBytes);
+	}
+
+	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName, GeneratedContentSpec generated)
+			throws IOException {
+		String displayName = normalizeDisplayName(requestedName);
+		String name = normalizeIdentifier(displayName);
+		if (definitions.stream().anyMatch(definition -> definition.name().equals(name))) {
+			throw new IllegalArgumentException("Dynamic content named '" + name + "' already exists.");
+		}
+		if ((type == DynamicContentType.BLOCK && generated.block() == null)
+				|| (type == DynamicContentType.ITEM && generated.item() == null)) {
+			throw new IllegalArgumentException("Generated properties do not match the requested content type");
+		}
+		byte[] textureBytes = generated.texture().renderPng();
+		String textureHash = DynamicTextureAsset.sha256(textureBytes);
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				type,
+				name,
+				displayName,
+				RANDOM.nextLong(),
+				textureHash,
+				generated.texture(),
+				generated.block(),
+				generated.item()
+		);
+		return commit(definition, textureBytes);
+	}
+
+	private DynamicContentDefinition commit(DynamicContentDefinition definition, byte[] textureBytes) throws IOException {
 		List<DynamicContentDefinition> updatedDefinitions = new ArrayList<>(definitions);
 		updatedDefinitions.add(definition);
 		long updatedRevision = revision + 1;
 		DynamicContentPayload updatedPayload = buildPayload(updatedRevision, updatedDefinitions);
-		storeAsset(textureHash, textureBytes);
+		storeAsset(definition.textureHash(), textureBytes);
 		save(updatedRevision, updatedDefinitions);
 
 		definitions.add(definition);
@@ -112,6 +155,78 @@ public final class DynamicContentManager {
 		DynamicContentCatalog.replace(definitions);
 		broadcast();
 		return definition;
+	}
+
+	public boolean containsName(String requestedName) {
+		String name = normalizeIdentifier(normalizeDisplayName(requestedName));
+		return definitions.stream().anyMatch(definition -> definition.name().equals(name));
+	}
+
+	public int delete(List<String> requestedNames) throws IOException {
+		Set<String> names = new HashSet<>(requestedNames);
+		if (names.isEmpty() || names.stream().anyMatch(name -> !name.matches("[a-z0-9_]{1,64}"))) {
+			throw new IllegalArgumentException("Invalid dynamic content deletion selection");
+		}
+		List<DynamicContentDefinition> updatedDefinitions = definitions.stream()
+				.filter(definition -> !names.contains(definition.name()))
+				.toList();
+		int deleted = definitions.size() - updatedDefinitions.size();
+		if (deleted == 0) {
+			throw new IllegalArgumentException("None of the selected content still exists");
+		}
+
+		long updatedRevision = revision + 1;
+		DynamicContentPayload updatedPayload = buildPayload(updatedRevision, updatedDefinitions);
+		save(updatedRevision, updatedDefinitions);
+		definitions.clear();
+		definitions.addAll(updatedDefinitions);
+		revision = updatedRevision;
+		cachedPayload = updatedPayload;
+		DynamicContentCatalog.replace(definitions);
+		purgeLoadedReferences(names);
+		removeUnusedAssets();
+		broadcast();
+		return deleted;
+	}
+
+	private void purgeLoadedReferences(Set<String> names) {
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			for (var slot : player.containerMenu.slots) {
+				if (matchesDeleted(slot.getItem(), names)) slot.set(ItemStack.EMPTY);
+			}
+			if (matchesDeleted(player.containerMenu.getCarried(), names)) {
+				player.containerMenu.setCarried(ItemStack.EMPTY);
+			}
+			player.containerMenu.broadcastChanges();
+		}
+		for (var level : server.getAllLevels()) {
+			for (var entity : level.getAllEntities()) {
+				if (entity instanceof ItemEntity itemEntity && matchesDeleted(itemEntity.getItem(), names)) {
+					itemEntity.discard();
+				}
+			}
+		}
+		DynamicBlockEntity.removeLoaded(server, names);
+	}
+
+	private static boolean matchesDeleted(ItemStack stack, Set<String> names) {
+		var contentId = stack.get(DynamicContentObjects.CONTENT_ID);
+		return contentId != null && LittleChemistry.MOD_ID.equals(contentId.getNamespace()) && names.contains(contentId.getPath());
+	}
+
+	private void removeUnusedAssets() {
+		Set<String> retained = definitions.stream().map(DynamicContentDefinition::textureHash).collect(java.util.stream.Collectors.toSet());
+		var iterator = assets.entrySet().iterator();
+		while (iterator.hasNext()) {
+			var entry = iterator.next();
+			if (retained.contains(entry.getKey())) continue;
+			iterator.remove();
+			try {
+				Files.deleteIfExists(entry.getValue());
+			} catch (IOException error) {
+				LittleChemistry.LOGGER.warn("Could not delete unused Little Chemistry asset {}", entry.getKey(), error);
+			}
+		}
 	}
 
 	public void sendSnapshot(ServerPlayer player) {
@@ -178,7 +293,9 @@ public final class DynamicContentManager {
 				return;
 			}
 		}
-		byte[] generated = DynamicTextureAsset.generate(definition.textureSeed());
+		byte[] generated = definition.texture() == null
+				? DynamicTextureAsset.generate(definition.textureSeed())
+				: definition.texture().renderPng();
 		if (!definition.textureHash().equals(DynamicTextureAsset.sha256(generated))) {
 			throw new IOException("Texture hash mismatch for " + definition.name());
 		}
@@ -220,7 +337,7 @@ public final class DynamicContentManager {
 		return new DynamicContentPayload(serverId, payloadRevision, json);
 	}
 
-	private static String normalizeDisplayName(String raw) {
+	public static String normalizeDisplayName(String raw) {
 		String displayName = raw == null ? "" : raw.trim();
 		if (displayName.length() >= 2 && displayName.startsWith("\"") && displayName.endsWith("\"")) {
 			displayName = displayName.substring(1, displayName.length() - 1).trim();
@@ -231,7 +348,7 @@ public final class DynamicContentManager {
 		return displayName;
 	}
 
-	private static String normalizeIdentifier(String displayName) {
+	public static String normalizeIdentifier(String displayName) {
 		String normalized = displayName.toLowerCase(Locale.ROOT)
 				.replaceAll("[^a-z0-9]+", "_")
 				.replaceAll("^_+|_+$", "");
@@ -239,6 +356,14 @@ public final class DynamicContentManager {
 			throw new IllegalArgumentException("Name must contain at least one ASCII letter or number.");
 		}
 		return normalized.length() <= 64 ? normalized : normalized.substring(0, 64).replaceAll("_+$", "");
+	}
+
+	private static void backupLegacyCatalog(Path dataFile, int format) throws IOException {
+		Path backup = dataFile.resolveSibling("dynamic-content.format-" + format + ".backup.json");
+		if (!Files.exists(backup)) {
+			Files.copy(dataFile, backup);
+			LittleChemistry.LOGGER.info("Backed up legacy Little Chemistry catalog to {} before format migration", backup);
+		}
 	}
 
 }

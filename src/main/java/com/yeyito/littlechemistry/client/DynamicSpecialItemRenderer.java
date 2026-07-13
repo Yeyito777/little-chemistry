@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.serialization.MapCodec;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.special.SpecialModelRenderer;
@@ -22,13 +23,28 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 			return;
 		}
 		Identifier texture = RuntimeTextureStore.texture(argument.textureHash());
-		nodes.order(0).submitCustomGeometry(poseStack, RenderTypes.entityCutout(texture), (pose, vertices) -> {
+		boolean[] opaquePixels = RuntimeTextureStore.opaquePixels(argument.textureHash());
+		var baseRenderType = argument.block()
+				? RenderTypes.entityCutout(texture)
+				: RenderTypes.entityCutoutCull(texture);
+		nodes.order(0).submitCustomGeometry(poseStack, baseRenderType, (pose, vertices) -> {
 			if (argument.block()) {
-				DynamicGeometry.cube(pose, vertices, light, overlay);
+				if (argument.blockShape() == DynamicBlockShape.SLAB) DynamicGeometry.slab(pose, vertices, light, overlay);
+				else DynamicGeometry.cube(pose, vertices, light, overlay);
 			} else {
-				DynamicGeometry.flat(pose, vertices, light, overlay);
+				DynamicGeometry.item(pose, vertices, light, overlay, opaquePixels);
 			}
 		});
+		if (hasFoil) {
+			nodes.order(1).submitCustomGeometry(poseStack, RenderTypes.entityGlint(), (pose, vertices) -> {
+				if (argument.block()) {
+					if (argument.blockShape() == DynamicBlockShape.SLAB) DynamicGeometry.slab(pose, vertices, light, overlay);
+					else DynamicGeometry.cube(pose, vertices, light, overlay);
+				} else {
+					DynamicGeometry.item(pose, vertices, light, overlay, opaquePixels);
+				}
+			});
+		}
 	}
 
 	@Override
@@ -43,10 +59,12 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 		if (definition == null) {
 			return null;
 		}
-		return new Argument(definition.textureHash(), stack.is(DynamicContentObjects.BLOCK_ITEM));
+		boolean block = stack.is(DynamicContentObjects.BLOCK_ITEM);
+		return new Argument(definition.textureHash(), block,
+				block && definition.block() != null ? definition.block().shape() : DynamicBlockShape.FULL_CUBE);
 	}
 
-	public record Argument(String textureHash, boolean block) {
+	public record Argument(String textureHash, boolean block, DynamicBlockShape blockShape) {
 	}
 
 	public record Unbaked() implements SpecialModelRenderer.Unbaked<Argument> {

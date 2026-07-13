@@ -1,15 +1,19 @@
 package com.yeyito.littlechemistry;
 
 import com.yeyito.littlechemistry.command.LittleChemistryCommands;
+import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.item.WandOfCreationItem;
+import com.yeyito.littlechemistry.item.WandOfDeletionItem;
 import com.yeyito.littlechemistry.network.CreateContentRequestPayload;
+import com.yeyito.littlechemistry.network.DeleteContentRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
 import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
+import com.yeyito.littlechemistry.network.OpenDeletionScreenPayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -44,6 +48,17 @@ public final class LittleChemistry implements ModInitializer {
 			new WandOfCreationItem(new Item.Properties().setId(WAND_OF_CREATION_KEY).stacksTo(1))
 	);
 
+	private static final ResourceKey<Item> WAND_OF_DELETION_KEY = ResourceKey.create(
+			Registries.ITEM,
+			id("wand_of_deletion")
+	);
+
+	public static final Item WAND_OF_DELETION = Registry.register(
+			BuiltInRegistries.ITEM,
+			WAND_OF_DELETION_KEY,
+			new WandOfDeletionItem(new Item.Properties().setId(WAND_OF_DELETION_KEY).stacksTo(1))
+	);
+
 	private static final ResourceKey<CreativeModeTab> CREATIVE_TAB_KEY = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB,
 			id("main")
@@ -64,8 +79,14 @@ public final class LittleChemistry implements ModInitializer {
 				com.yeyito.littlechemistry.content.DynamicTextureAsset.MAX_ENCODED_BYTES + 128
 		);
 		PayloadTypeRegistry.clientboundPlay().register(OpenCreationScreenPayload.TYPE, OpenCreationScreenPayload.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(OpenDeletionScreenPayload.TYPE, OpenDeletionScreenPayload.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(DynamicAssetRequestPayload.TYPE, DynamicAssetRequestPayload.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(CreateContentRequestPayload.TYPE, CreateContentRequestPayload.CODEC);
+		PayloadTypeRegistry.serverboundPlay().registerLarge(
+				DeleteContentRequestPayload.TYPE,
+				DeleteContentRequestPayload.CODEC,
+				DeleteContentRequestPayload.MAX_ENCODED_BYTES
+		);
 		ServerPlayNetworking.registerGlobalReceiver(DynamicAssetRequestPayload.TYPE, (payload, context) -> {
 			DynamicContentManager manager = DynamicContentManager.active();
 			if (manager != null) {
@@ -83,7 +104,19 @@ public final class LittleChemistry implements ModInitializer {
 			}
 			LittleChemistryCommands.createFromWand(context.player(), payload.contentType(), payload.name());
 		});
+		ServerPlayNetworking.registerGlobalReceiver(DeleteContentRequestPayload.TYPE, (payload, context) -> {
+			ItemStack mainHand = context.player().getMainHandItem();
+			ItemStack offHand = context.player().getOffhandItem();
+			if (mainHand.getItem() != WAND_OF_DELETION && offHand.getItem() != WAND_OF_DELETION) {
+				context.player().sendSystemMessage(Component.literal(
+						"[Little Chemistry] Hold the Wand of Deletion to delete content."
+				).withStyle(ChatFormatting.RED));
+				return;
+			}
+			LittleChemistryCommands.deleteFromWand(context.player(), payload.names());
+		});
 		ServerLifecycleEvents.SERVER_STARTED.register(DynamicContentManager::start);
+		ServerLifecycleEvents.SERVER_STOPPING.register(ContentGenerationService::cancelForServer);
 		ServerLifecycleEvents.SERVER_STOPPED.register(DynamicContentManager::stop);
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			DynamicContentManager manager = DynamicContentManager.active();
@@ -100,6 +133,7 @@ public final class LittleChemistry implements ModInitializer {
 							.icon(() -> new ItemStack(WAND_OF_CREATION))
 							.displayItems((context, entries) -> {
 								entries.accept(WAND_OF_CREATION);
+								entries.accept(WAND_OF_DELETION);
 								for (var definition : DynamicContentCatalog.definitions()) {
 									entries.accept(DynamicContentObjects.createStack(definition));
 								}

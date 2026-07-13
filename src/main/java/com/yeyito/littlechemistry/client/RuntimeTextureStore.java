@@ -28,6 +28,7 @@ import java.util.concurrent.Executors;
 public final class RuntimeTextureStore {
 	private static final ExecutorService DECODER = Executors.newVirtualThreadPerTaskExecutor();
 	private static final Map<String, Identifier> loadedTextures = new HashMap<>();
+	private static final Map<String, boolean[]> opaquePixels = new HashMap<>();
 	private static final Set<String> loadingTextures = new HashSet<>();
 	private static Set<String> expectedHashes = Set.of();
 	private static UUID activeServer;
@@ -46,7 +47,16 @@ public final class RuntimeTextureStore {
 	public static CompletableFuture<List<String>> prepare(Minecraft client, UUID serverId,
 			List<DynamicContentDefinition> definitions) throws IOException {
 		beginServer(client, serverId);
+		DynamicParticleTextures.clear();
 		expectedHashes = definitions.stream().map(DynamicContentDefinition::textureHash).collect(java.util.stream.Collectors.toUnmodifiableSet());
+		var loadedIterator = loadedTextures.entrySet().iterator();
+		while (loadedIterator.hasNext()) {
+			var entry = loadedIterator.next();
+			if (expectedHashes.contains(entry.getKey())) continue;
+			client.getTextureManager().release(entry.getValue());
+			opaquePixels.remove(entry.getKey());
+			loadedIterator.remove();
+		}
 		Path assetDirectory = assetDirectory(serverId);
 		Files.createDirectories(assetDirectory);
 		List<String> hashesToCheck = new ArrayList<>();
@@ -121,11 +131,17 @@ public final class RuntimeTextureStore {
 		return loadedTextures.getOrDefault(hash, TextureManager.INTENTIONAL_MISSING_TEXTURE);
 	}
 
+	public static boolean[] opaquePixels(String hash) {
+		return opaquePixels.get(hash);
+	}
+
 	public static void clear(Minecraft client) {
+		DynamicParticleTextures.clear();
 		for (Identifier texture : loadedTextures.values()) {
 			client.getTextureManager().release(texture);
 		}
 		loadedTextures.clear();
+		opaquePixels.clear();
 		loadingTextures.clear();
 		expectedHashes = Set.of();
 		activeServer = null;
@@ -142,27 +158,34 @@ public final class RuntimeTextureStore {
 					image.close();
 					throw new IOException("Runtime texture must be 16x16 pixels");
 				}
-				return image;
+				boolean[] opacity = new boolean[DynamicTextureAsset.WIDTH * DynamicTextureAsset.HEIGHT];
+				for (int y = 0; y < DynamicTextureAsset.HEIGHT; y++) {
+					for (int x = 0; x < DynamicTextureAsset.WIDTH; x++) {
+						opacity[y * DynamicTextureAsset.WIDTH + x] = ((image.getPixel(x, y) >>> 24) & 0xFF) != 0;
+					}
+				}
+				return new DecodedTexture(image, opacity);
 			} catch (IOException error) {
 				throw new RuntimeException(error);
 			}
-		}, DECODER).whenComplete((image, error) -> client.execute(() -> {
+		}, DECODER).whenComplete((decoded, error) -> client.execute(() -> {
 			loadingTextures.remove(hash);
 			if (error != null) {
 				LittleChemistry.LOGGER.error("Could not decode Little Chemistry texture {}", hash, error);
 				return;
 			}
 			if (!serverId.equals(activeServer) || !expectedHashes.contains(hash)) {
-				image.close();
+				decoded.image().close();
 				return;
 			}
 			Identifier textureId = LittleChemistry.id("runtime/" + hash);
 			client.getTextureManager().register(textureId, new DynamicTexture(
 					() -> "Little Chemistry " + hash,
-					image
+					decoded.image()
 			));
 			loadedTextures.put(hash, textureId);
-	}));
+			opaquePixels.put(hash, decoded.opaquePixels());
+		}));
 	}
 
 	private static Path assetDirectory(UUID serverId) {
@@ -174,5 +197,8 @@ public final class RuntimeTextureStore {
 	}
 
 	private record Prepared(Map<String, byte[]> cachedAssets, List<String> missing) {
+	}
+
+	private record DecodedTexture(NativeImage image, boolean[] opaquePixels) {
 	}
 }

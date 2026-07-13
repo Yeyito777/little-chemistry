@@ -1,5 +1,8 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.LittleChemistry;
+import net.minecraft.resources.Identifier;
+
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +37,11 @@ public final class DynamicContentCatalog {
 
 	public static DynamicContentDefinition find(String name) {
 		return definitionsByName.get(name);
+	}
+
+	public static DynamicContentDefinition find(Identifier id) {
+		return id != null && LittleChemistry.MOD_ID.equals(id.getNamespace())
+				? definitionsByName.get(id.getPath()) : null;
 	}
 
 	public static void clear() {

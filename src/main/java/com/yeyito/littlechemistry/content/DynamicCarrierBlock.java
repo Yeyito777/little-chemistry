@@ -1,17 +1,48 @@
 package com.yeyito.littlechemistry.content;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.stats.Stats;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ScheduledTickAccess;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.EnumProperty;
+import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.level.storage.loot.LootParams;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.core.Direction;
+
+import java.util.List;
 
 public final class DynamicCarrierBlock extends Block implements EntityBlock {
+	public static final IntegerProperty LIGHT_LEVEL = IntegerProperty.create("light_level", 0, 15);
+	public static final EnumProperty<DynamicMaterial> MATERIAL = EnumProperty.create("material", DynamicMaterial.class);
+
 	public DynamicCarrierBlock(Properties properties) {
 		super(properties);
+		registerDefaultState(stateDefinition.any()
+				.setValue(LIGHT_LEVEL, 0)
+				.setValue(MATERIAL, DynamicMaterial.STONE));
+	}
+
+	@Override
+	protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+		builder.add(LIGHT_LEVEL, MATERIAL);
 	}
 
 	@Override
@@ -25,11 +56,161 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	}
 
 	@Override
+	protected SoundType getSoundType(BlockState state) {
+		return state.getValue(MATERIAL).soundType();
+	}
+
+	@Override
+	protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos position, CollisionContext context) {
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.item() != null && definition.item().placement() != null) {
+			return definition.item().placement().shape() == DynamicPlacedShape.TORCH
+					? Shapes.box(6.0 / 16.0, 0, 6.0 / 16.0, 10.0 / 16.0, 10.0 / 16.0, 10.0 / 16.0)
+					: Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
+		}
+		if (definition == null || definition.block() == null) return Shapes.block();
+		return definition.block().shape() == DynamicBlockShape.SLAB
+				? Shapes.box(0, 0, 0, 1, 0.5, 1) : Shapes.block();
+	}
+
+	@Override
+	protected VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos position, CollisionContext context) {
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.item() != null && definition.item().placement() != null) return Shapes.empty();
+		if (definition == null || definition.block() == null) return Shapes.block();
+		return switch (definition.block().shape()) {
+			case FULL_CUBE -> Shapes.block();
+			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
+			case NO_COLLISION -> Shapes.empty();
+		};
+	}
+
+	@Override
+	protected boolean isSignalSource(BlockState state) {
+		return true;
+	}
+
+	@Override
+	protected int getSignal(BlockState state, BlockGetter level, BlockPos position, Direction direction) {
+		DynamicContentDefinition definition = definition(level, position);
+		return definition == null || definition.block() == null ? 0 : definition.block().redstonePower();
+	}
+
+	@Override
+	protected int getDirectSignal(BlockState state, BlockGetter level, BlockPos position, Direction direction) {
+		return getSignal(state, level, position, direction);
+	}
+
+	@Override
+	protected boolean hasAnalogOutputSignal(BlockState state) {
+		return true;
+	}
+
+	@Override
+	protected int getAnalogOutputSignal(BlockState state, Level level, BlockPos position, Direction direction) {
+		DynamicContentDefinition definition = definition(level, position);
+		return definition == null || definition.block() == null ? 0 : definition.block().comparatorPower();
+	}
+
+	@Override
+	protected float getDestroyProgress(BlockState state, Player player, BlockGetter level, BlockPos position) {
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.item() != null && definition.item().placement() != null) return 1.0F;
+		if (definition == null || definition.block() == null) {
+			return super.getDestroyProgress(state, player, level, position);
+		}
+		DynamicBlockProperties properties = definition.block();
+		boolean correctTool = properties.preferredTool().matches(player.getMainHandItem());
+		float speed = correctTool ? player.getDestroySpeed(state) : 1.0F;
+		int divisor = !properties.requiresCorrectTool() || correctTool ? 30 : 100;
+		return speed / properties.hardness() / divisor;
+	}
+
+	@Override
+	public void playerDestroy(Level level, Player player, BlockPos position, BlockState state,
+			BlockEntity blockEntity, ItemStack destroyedWith) {
+		DynamicContentDefinition definition = blockEntity instanceof DynamicBlockEntity dynamic
+				? DynamicContentCatalog.find(dynamic.contentId()) : null;
+		if (definition == null || definition.block() == null || !definition.block().requiresCorrectTool()
+				|| definition.block().preferredTool().matches(destroyedWith)) {
+			super.playerDestroy(level, player, position, state, blockEntity, destroyedWith);
+			return;
+		}
+		player.awardStat(Stats.BLOCK_MINED.get(this));
+		player.causeFoodExhaustion(0.005F);
+	}
+
+	@Override
+	public void animateTick(BlockState state, Level level, BlockPos position, RandomSource random) {
+		DynamicContentDefinition definition = definition(level, position);
+		if (definition == null || definition.block() == null) {
+			return;
+		}
+		for (DynamicParticleEmitter emitter : definition.block().particles()) {
+			if (random.nextDouble() >= emitter.chancePerTick()) {
+				continue;
+			}
+			for (int index = 0; index < emitter.count(); index++) {
+				double x = position.getX() + random.nextDouble();
+				double y = position.getY() + (emitter.topSurface() ? 1.02 : random.nextDouble());
+				double z = position.getZ() + random.nextDouble();
+				double velocity = emitter.velocity();
+				ParticleOptions particle = emitter.type().particle();
+				level.addParticle(particle, x, y, z,
+						(random.nextDouble() - 0.5) * velocity,
+						velocity,
+						(random.nextDouble() - 0.5) * velocity);
+			}
+		}
+	}
+
+	@Override
 	protected ItemStack getCloneItemStack(LevelReader level, BlockPos position, BlockState state, boolean includeData) {
 		if (level.getBlockEntity(position) instanceof DynamicBlockEntity blockEntity) {
-			return DynamicContentObjects.createBlockStack(blockEntity.contentId());
+			DynamicContentDefinition definition = DynamicContentCatalog.find(blockEntity.contentId());
+			if (definition != null) return DynamicContentObjects.createStack(definition);
 		}
 		return new ItemStack(DynamicContentObjects.BLOCK_ITEM);
+	}
+
+	@Override
+	protected List<ItemStack> getDrops(BlockState state, LootParams.Builder params) {
+		BlockEntity blockEntity = params.getOptionalParameter(LootContextParams.BLOCK_ENTITY);
+		DynamicContentDefinition definition = blockEntity instanceof DynamicBlockEntity dynamic
+				? DynamicContentCatalog.find(dynamic.contentId()) : null;
+		if (definition != null && definition.item() != null && definition.item().placement() != null) {
+			return List.of(DynamicContentObjects.createStack(definition));
+		}
+		return super.getDrops(state, params);
+	}
+
+	@Override
+	protected boolean canSurvive(BlockState state, LevelReader level, BlockPos position) {
+		DynamicContentDefinition definition = definition(level, position);
+		DynamicPlacementProperties placement = definition == null || definition.item() == null
+				? null : definition.item().placement();
+		if (placement == null) return true;
+		BlockPos below = position.below();
+		BlockState support = level.getBlockState(below);
+		return placement.canPlaceOn(support, level, below);
+	}
+
+	@Override
+	protected BlockState updateShape(BlockState state, LevelReader level, ScheduledTickAccess ticks,
+			BlockPos position, Direction directionToNeighbour, BlockPos neighbourPosition,
+			BlockState neighbourState, RandomSource random) {
+		if (directionToNeighbour == Direction.DOWN && !canSurvive(state, level, position)) {
+			return Blocks.AIR.defaultBlockState();
+		}
+		return super.updateShape(state, level, ticks, position, directionToNeighbour, neighbourPosition, neighbourState, random);
+	}
+
+	private static DynamicContentDefinition definition(BlockGetter level, BlockPos position) {
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity blockEntity
+				&& blockEntity.contentId() != null) {
+			return DynamicContentCatalog.find(blockEntity.contentId());
+		}
+		return null;
 	}
 
 }

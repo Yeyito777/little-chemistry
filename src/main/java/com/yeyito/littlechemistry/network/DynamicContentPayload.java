@@ -13,7 +13,7 @@ public record DynamicContentPayload(
 		byte[] definitionsJson
 ) implements CustomPacketPayload {
 	public static final int MAX_DEFINITIONS_BYTES = 8 * 1024 * 1024;
-	public static final Type<DynamicContentPayload> TYPE = new Type<>(LittleChemistry.id("dynamic_content"));
+	public static final Type<DynamicContentPayload> TYPE = new Type<>(LittleChemistry.id("dynamic_content_v3"));
 	public static final StreamCodec<RegistryFriendlyByteBuf, DynamicContentPayload> CODEC =
 			CustomPacketPayload.codec(DynamicContentPayload::write, DynamicContentPayload::read);
 

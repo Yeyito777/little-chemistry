@@ -1,12 +1,17 @@
 {
   "item.little_chemistry.wand_of_creation": "Wand of Creation",
+  "item.little_chemistry.wand_of_deletion": "Wand of Deletion",
   "itemGroup.little_chemistry.main": "Little Chemistry",
   "item.little_chemistry.dynamic_item": "Unresolved Little Chemistry Item",
+  "item.little_chemistry.dynamic_tool": "Unresolved Little Chemistry Tool",
   "block.little_chemistry.dynamic_block": "Unresolved Little Chemistry Block",
   "screen.little_chemistry.creation.title": "Wand of Creation",
   "screen.little_chemistry.creation.name": "Name",
   "screen.little_chemistry.creation.name_hint": "What shall be created?",
   "screen.little_chemistry.creation.type": "Creation Type",
   "screen.little_chemistry.creation.item": "Item",
-  "screen.little_chemistry.creation.block": "Block"
+  "screen.little_chemistry.creation.block": "Block",
+  "screen.little_chemistry.deletion.title": "Wand of Deletion",
+  "screen.little_chemistry.deletion.confirm": "Delete Selected",
+  "screen.little_chemistry.deletion.empty": "There is no custom content to delete."
 }

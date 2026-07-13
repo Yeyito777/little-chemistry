@@ -9,6 +9,7 @@ import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
 import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
+import com.yeyito.littlechemistry.network.OpenDeletionScreenPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -43,7 +44,9 @@ public final class LittleChemistryClient implements ClientModInitializer {
 		ClientPlayNetworking.registerGlobalReceiver(DynamicAssetPayload.TYPE,
 					(payload, context) -> applyAsset(context.client(), payload));
 		ClientPlayNetworking.registerGlobalReceiver(OpenCreationScreenPayload.TYPE,
-					(payload, context) -> context.client().gui.setScreen(new WandCreationScreen()));
+						(payload, context) -> context.client().gui.setScreen(new WandCreationScreen()));
+		ClientPlayNetworking.registerGlobalReceiver(OpenDeletionScreenPayload.TYPE,
+						(payload, context) -> context.client().gui.setScreen(new WandDeletionScreen()));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			DynamicContentCatalog.clear();
 			RuntimeTextureStore.clear(client);

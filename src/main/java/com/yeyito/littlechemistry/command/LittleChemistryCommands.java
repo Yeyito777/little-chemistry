@@ -6,9 +6,9 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
-import com.yeyito.littlechemistry.content.DynamicContentDefinition;
-import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicContentManager;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.permission.v1.PermissionNode;
 import net.fabricmc.fabric.api.permission.v1.PermissionPredicates;
@@ -83,7 +83,27 @@ public final class LittleChemistryCommands {
 			player.sendSystemMessage(error("You do not have permission to create dynamic content."));
 			return;
 		}
-		createDynamicContent(source, type, name);
+		ContentGenerationService.request(player, type, name);
+	}
+
+	public static void deleteFromWand(ServerPlayer player, java.util.List<String> names) {
+		if (!CREATE_PREDICATE.test(player.createCommandSourceStack())) {
+			player.sendSystemMessage(error("You do not have permission to delete dynamic content."));
+			return;
+		}
+		DynamicContentManager manager = DynamicContentManager.active();
+		if (manager == null) {
+			player.sendSystemMessage(error("Dynamic content is not available yet."));
+			return;
+		}
+		try {
+			int deleted = manager.delete(names);
+			player.sendSystemMessage(Component.literal("Deleted " + deleted + " Little Chemistry " +
+					(deleted == 1 ? "definition." : "definitions.")).withStyle(ChatFormatting.GREEN));
+		} catch (Exception error) {
+			player.sendSystemMessage(LittleChemistryCommands.error(rootMessage(error)));
+			LittleChemistry.LOGGER.warn("Could not delete Little Chemistry content for {}: {}", player.getUUID(), rootMessage(error));
+		}
 	}
 
 	private static int createDynamicContent(CommandContext<CommandSourceStack> context, DynamicContentType type) {
@@ -91,24 +111,12 @@ public final class LittleChemistryCommands {
 	}
 
 	private static int createDynamicContent(CommandSourceStack source, DynamicContentType type, String name) {
-		DynamicContentManager manager = DynamicContentManager.active();
-		if (manager == null) {
-			source.sendFailure(error("Dynamic content is not available yet."));
+		ServerPlayer player = source.getPlayer();
+		if (player == null) {
+			source.sendFailure(error("AI content generation must be started by a player."));
 			return 0;
 		}
-		try {
-			DynamicContentDefinition definition = manager.create(type, name);
-			source.sendSuccess(
-					() -> Component.literal("Created " + type.serializedName() + " '" + definition.displayName()
-							+ "' as little_chemistry:" + definition.idPath() + ".")
-							.withStyle(ChatFormatting.GREEN),
-					true
-			);
-			return 1;
-		} catch (IOException | IllegalArgumentException | IllegalStateException error) {
-			source.sendFailure(LittleChemistryCommands.error(rootMessage(error)));
-			return 0;
-		}
+		return ContentGenerationService.request(player, type, name) ? 1 : 0;
 	}
 
 	private static int askLlm(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
