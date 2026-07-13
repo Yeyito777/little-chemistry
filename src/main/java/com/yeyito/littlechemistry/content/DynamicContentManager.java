@@ -107,6 +107,9 @@ public final class DynamicContentManager {
 	public DynamicContentDefinition create(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
 			String requestedName) throws IOException {
 		validateArmorSlot(type, requestedArmorSlot);
+		if (type == DynamicContentType.ARMOR) {
+			throw new IllegalArgumentException("New armor requires a generated inventory icon and separate display texture");
+		}
 		String displayName = normalizeDisplayName(requestedName);
 		String name = normalizeIdentifier(displayName);
 		if (definitions.stream().anyMatch(definition -> definition.name().equals(name))) {
@@ -123,7 +126,7 @@ public final class DynamicContentManager {
 				type == DynamicContentType.ARMOR ? DynamicArmorProperties.defaults(requireArmorSlot(requestedArmorSlot)) : null,
 				null
 		);
-		return commit(definition, textureBytes, null, null);
+		return commit(definition, textureBytes, null, null, null);
 	}
 
 	public DynamicContentDefinition create(DynamicContentType type, String requestedName) throws IOException {
@@ -147,8 +150,18 @@ public final class DynamicContentManager {
 		}
 		byte[] textureBytes = generated.texture().renderPng();
 		String textureHash = DynamicTextureAsset.sha256(textureBytes);
-		DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
-		DynamicBehavior behavior = compiledBehavior.instantiate();
+		byte[] armorDisplayTextureBytes = generated.armorDisplayTexture() == null
+				? null : generated.armorDisplayTexture().renderPng();
+		String armorDisplayTextureHash = armorDisplayTextureBytes == null
+				? null : DynamicTextureAsset.sha256(armorDisplayTextureBytes);
+		DynamicBehaviorCompiler.Compiled compiledBehavior = null;
+		DynamicBehavior behavior = null;
+		String behaviorSource = null;
+		if (generated.hasBehavior()) {
+			compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
+			behavior = compiledBehavior.instantiate();
+			behaviorSource = compiledBehavior.source();
+		}
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				type,
 				name,
@@ -156,12 +169,14 @@ public final class DynamicContentManager {
 				RANDOM.nextLong(),
 				textureHash,
 				generated.texture(),
+				armorDisplayTextureHash,
+				generated.armorDisplayTexture(),
 				generated.block(),
 				generated.item(),
 				generated.armor(),
-				compiledBehavior.source()
+				behaviorSource
 		);
-		return commit(definition, textureBytes, compiledBehavior, behavior);
+		return commit(definition, textureBytes, armorDisplayTextureBytes, compiledBehavior, behavior);
 	}
 
 	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName,
@@ -170,12 +185,16 @@ public final class DynamicContentManager {
 	}
 
 	private DynamicContentDefinition commit(DynamicContentDefinition definition, byte[] textureBytes,
+			byte[] armorDisplayTextureBytes,
 			DynamicBehaviorCompiler.Compiled compiledBehavior, DynamicBehavior behavior) throws IOException {
 		List<DynamicContentDefinition> updatedDefinitions = new ArrayList<>(definitions);
 		updatedDefinitions.add(definition);
 		long updatedRevision = revision + 1;
 		DynamicContentPayload updatedPayload = buildPayload(updatedRevision, updatedDefinitions);
 		storeAsset(definition.textureHash(), textureBytes);
+		if (armorDisplayTextureBytes != null) {
+			storeAsset(definition.armorDisplayTextureHash(), armorDisplayTextureBytes);
+		}
 		save(updatedRevision, updatedDefinitions);
 
 		definitions.add(definition);
@@ -255,7 +274,11 @@ public final class DynamicContentManager {
 	}
 
 	private void removeUnusedAssets() {
-		Set<String> retained = definitions.stream().map(DynamicContentDefinition::textureHash).collect(java.util.stream.Collectors.toSet());
+		Set<String> retained = new HashSet<>();
+		for (DynamicContentDefinition definition : definitions) {
+			retained.add(definition.textureHash());
+			if (definition.armorDisplayTextureHash() != null) retained.add(definition.armorDisplayTextureHash());
+		}
 		var iterator = assets.entrySet().iterator();
 		while (iterator.hasNext()) {
 			var entry = iterator.next();
@@ -325,21 +348,29 @@ public final class DynamicContentManager {
 	}
 
 	private void ensureAsset(DynamicContentDefinition definition) throws IOException {
-		Path destination = dataFile.getParent().resolve("assets").resolve(definition.textureHash() + ".png");
+		byte[] textureBytes = definition.texture() == null
+				? DynamicTextureAsset.generate(definition.textureSeed())
+				: definition.texture().renderPng();
+		ensureAsset(definition.textureHash(), textureBytes, definition.name() + " inventory texture");
+		if (definition.armorDisplayTexture() != null) {
+			ensureAsset(definition.armorDisplayTextureHash(), definition.armorDisplayTexture().renderPng(),
+					definition.name() + " armor display texture");
+		}
+	}
+
+	private void ensureAsset(String hash, byte[] generated, String description) throws IOException {
+		Path destination = dataFile.getParent().resolve("assets").resolve(hash + ".png");
 		if (Files.isRegularFile(destination)) {
 			byte[] bytes = Files.readAllBytes(destination);
-			if (definition.textureHash().equals(DynamicTextureAsset.sha256(bytes))) {
-				assets.put(definition.textureHash(), destination);
+			if (hash.equals(DynamicTextureAsset.sha256(bytes))) {
+				assets.put(hash, destination);
 				return;
 			}
 		}
-		byte[] generated = definition.texture() == null
-				? DynamicTextureAsset.generate(definition.textureSeed())
-				: definition.texture().renderPng();
-		if (!definition.textureHash().equals(DynamicTextureAsset.sha256(generated))) {
-			throw new IOException("Texture hash mismatch for " + definition.name());
+		if (!hash.equals(DynamicTextureAsset.sha256(generated))) {
+			throw new IOException("Texture hash mismatch for " + description);
 		}
-		storeAsset(definition.textureHash(), generated);
+		storeAsset(hash, generated);
 	}
 
 	private void broadcast() {

@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
+import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
@@ -37,6 +38,8 @@ final class ContentGenerationDraft {
 	private final String requestedName;
 	private final DynamicArmorSlot requestedArmorSlot;
 	private DynamicTextureSpec texture;
+	private DynamicArmorDisplayTextureSpec armorDisplayTexture;
+	private DynamicArmorSlot armorDisplaySlot;
 	private DynamicMaterial material;
 	private Float hardness;
 	private DynamicTool preferredTool;
@@ -73,6 +76,8 @@ final class ContentGenerationDraft {
 	private Double armorKnockbackResistance;
 	private Integer armorDurability;
 	private DynamicArmorSlot armorSlot;
+	private Boolean customBehaviorPlanned;
+	private String behaviorPlanReason;
 	private String behaviorSource;
 	private boolean behaviorCompiled;
 
@@ -96,20 +101,23 @@ final class ContentGenerationDraft {
 			}
 			return switch (tool) {
 				case "set_texture" -> setTexture(arguments);
+				case "set_armor_display_texture" -> requireArmor(() -> setArmorDisplayTexture(arguments));
 				case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
 				case "set_block_redstone" -> requireBlock(() -> setBlockRedstone(arguments));
 				case "set_block_light" -> requireBlock(() -> setBlockLight(arguments));
 				case "set_block_particles" -> requireBlock(() -> setBlockParticles(arguments));
 				case "set_item_properties" -> requireItem(() -> setItemProperties(arguments));
-				case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
-				case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
-				case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
-				case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
-				case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
-				case "set_behavior_source" -> setBehaviorSource(arguments);
-				case "compile_behavior" -> compileBehavior(arguments);
-				case "inspect_behavior_source" -> inspectBehaviorSource(arguments);
-				case "inspect_draft" -> ToolExecution.success(inspect(), null);
+					case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
+					case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
+					case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
+					case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
+					case "set_behavior_plan" -> setBehaviorPlan(arguments);
+					case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
+					case "set_behavior_source" -> setBehaviorSource(arguments);
+					case "compile_behavior" -> compileBehavior(arguments);
+					case "inspect_behavior_source" -> inspectBehaviorSource(arguments);
+					case "clear_behavior" -> clearBehavior(arguments);
+					case "inspect_draft" -> ToolExecution.success(inspect(), null);
 				case "submit" -> submit(arguments);
 				default -> ToolExecution.error("UNKNOWN_TOOL", "Unknown generation tool: " + tool);
 			};
@@ -165,6 +173,55 @@ final class ContentGenerationDraft {
 		details.addProperty("dominantColorFraction", java.util.Arrays.stream(colorCounts).max().orElse(0) / 256.0);
 		details.addProperty("symmetryScore", symmetryScore(rows));
 		details.addProperty("message", "The 16x16 texture was accepted.");
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setArmorDisplayTexture(JsonObject arguments) {
+		requireOnly(arguments, "slot", "palette", "rows");
+		DynamicArmorSlot slot = DynamicArmorSlot.parse(requiredString(arguments, "slot"));
+		if (requestedArmorSlot != null && slot != requestedArmorSlot) {
+			throw new IllegalArgumentException("Armor display texture slot must be " + requestedArmorSlot.serializedName());
+		}
+		if (armorSlot != null && slot != armorSlot) {
+			throw new IllegalArgumentException("Armor display texture slot must match the armor properties slot "
+					+ armorSlot.serializedName());
+		}
+		List<String> palette = strings(requiredArray(arguments, "palette"));
+		List<String> rows = strings(requiredArray(arguments, "rows"));
+		DynamicArmorDisplayTextureSpec candidate = new DynamicArmorDisplayTextureSpec(palette, rows);
+		Set<Integer> usedColors = usedColors(rows);
+		int[] counts = colorCounts(rows);
+		int opaquePixels = 0;
+		int transparentPixels = 0;
+		for (int countIndex = 0; countIndex < palette.size(); countIndex++) {
+			int count = counts[countIndex];
+			if (palette.get(countIndex).regionMatches(true, 6, "00", 0, 2)) {
+				transparentPixels += count;
+			} else {
+				opaquePixels += count;
+			}
+		}
+		if (opaquePixels == 0 || transparentPixels == 0) {
+			throw new IllegalArgumentException("Armor display texture must contain both visible armor pixels and transparent unused UV space");
+		}
+		if (usedColors.size() < 3 || luminanceRange(palette, usedColors) < 32) {
+			throw new IllegalArgumentException("Armor display texture needs at least three used colors and readable shading contrast");
+		}
+		int relevantOpaquePixels = relevantOpaquePixels(candidate, slot);
+		if (relevantOpaquePixels < 16) {
+			throw new IllegalArgumentException("Armor display texture has too few visible pixels in the "
+					+ slot.serializedName() + " UV islands");
+		}
+		armorDisplayTexture = candidate;
+		armorDisplaySlot = slot;
+		JsonObject details = new JsonObject();
+		details.addProperty("paletteColors", palette.size());
+		details.addProperty("paletteColorsUsed", usedColors.size());
+		details.addProperty("opaquePixels", opaquePixels);
+		details.addProperty("transparentPixels", transparentPixels);
+		details.addProperty("slot", slot.serializedName());
+		details.addProperty("relevantOpaquePixels", relevantOpaquePixels);
+		details.addProperty("message", "The separate 64x32 equipped-armor display texture was accepted.");
 		return ToolExecution.success(details, null);
 	}
 
@@ -302,14 +359,38 @@ final class ContentGenerationDraft {
 		if (itemType != DynamicItemType.ITEM || !Boolean.TRUE.equals(placeable)) {
 			return ToolExecution.error("WRONG_ITEM_TYPE", "Set itemType=item and placeable=true before setting placement properties");
 		}
-		requireOnly(arguments, "shape", "supports", "lightLevel", "visuallyEmissive");
+		requireOnly(arguments, "shape", "supportProfile", "supports", "lightLevel", "visuallyEmissive");
+		DynamicPlacedShape shape = DynamicPlacedShape.parse(requiredString(arguments, "shape"));
+		String supportProfile = requiredString(arguments, "supportProfile");
+		if (!supportProfile.equals("overworld_vegetation") && !supportProfile.equals("custom")) {
+			throw new IllegalArgumentException("supportProfile must be overworld_vegetation or custom");
+		}
+		if (supportProfile.equals("overworld_vegetation") && shape != DynamicPlacedShape.CROSS) {
+			throw new IllegalArgumentException("overworld_vegetation support requires cross geometry");
+		}
+		List<String> supports = resolvePlacementSupports(
+				supportProfile, strings(requiredArray(arguments, "supports")));
 		placementProperties = new DynamicPlacementProperties(
-				DynamicPlacedShape.parse(requiredString(arguments, "shape")),
-				strings(requiredArray(arguments, "supports")),
+				shape,
+				supports,
 				requiredInt(arguments, "lightLevel"),
 				requiredBoolean(arguments, "visuallyEmissive")
 		);
-		return ToolExecution.success(message("Item placement properties were accepted."), null);
+		JsonObject details = message("Item placement properties were accepted.");
+		details.addProperty("supportProfile", supportProfile);
+		JsonArray resolvedSupports = new JsonArray();
+		placementProperties.supports().forEach(resolvedSupports::add);
+		details.add("resolvedSupports", resolvedSupports);
+		return ToolExecution.success(details, null);
+	}
+
+	static List<String> resolvePlacementSupports(String supportProfile, List<String> suppliedSupports) {
+		List<String> supports = new ArrayList<>(suppliedSupports);
+		if (supportProfile.equals("overworld_vegetation")
+				&& !supports.contains("#minecraft:supports_vegetation")) {
+			supports.addFirst("#minecraft:supports_vegetation");
+		}
+		return List.copyOf(supports);
 	}
 
 	private ToolExecution setArmorProperties(JsonObject arguments) {
@@ -318,6 +399,10 @@ final class ContentGenerationDraft {
 		DynamicArmorSlot slot = DynamicArmorSlot.parse(requiredString(arguments, "slot"));
 		if (requestedArmorSlot != null && slot != requestedArmorSlot) {
 			throw new IllegalArgumentException("Armor slot must be " + requestedArmorSlot.serializedName());
+		}
+		if (armorDisplaySlot != null && slot != armorDisplaySlot) {
+			throw new IllegalArgumentException("Armor slot must match the display texture slot "
+					+ armorDisplaySlot.serializedName());
 		}
 		Rarity candidateRarity = Rarity.valueOf(requiredString(arguments, "rarity").toUpperCase(Locale.ROOT));
 		boolean candidateFoil = requiredBoolean(arguments, "foil");
@@ -342,6 +427,9 @@ final class ContentGenerationDraft {
 	private ToolExecution inspectBehaviorApi(JsonObject arguments) {
 		requireOnly(arguments);
 		JsonObject details = new JsonObject();
+		details.addProperty("optional", true);
+		details.addProperty("whenToUse", "Only use generated Java when native block, item, food, tool, placement, armor, light, redstone, and particle properties cannot express a clearly implied ability.");
+		details.addProperty("implementationScope", "Override only callbacks that perform the custom ability. Inherit every other default; do not add empty or PASS-only overrides.");
 		details.addProperty("requiredClass", "public final class GeneratedBehaviorImpl implements DynamicBehavior");
 		details.addProperty("callbacks", "The API includes held-item use in air/on blocks/on entities, inventory ticks, attacks, mining, consumption, crafting, placed-block use/attack/placement/breaking, entity contact/falls, random and scheduled ticks, neighbor updates, and projectile hits.");
 		details.addProperty("inspection", "Call inspect_java_class for com.yeyito.littlechemistry.behavior.DynamicBehavior and its context records to get the exact current signatures.");
@@ -350,7 +438,7 @@ final class ContentGenerationDraft {
 		details.addProperty("semantics", "Callbacks run only on the authoritative server. Return PASS for normal placement, eating, equipping, or block-item fallback; return SUCCESS or CONSUME after handling, and FAIL to reject the use.");
 		details.addProperty("example", """
 				import com.yeyito.littlechemistry.behavior.*;
-				import net.minecraft.network.chat.Component;
+				import net.minecraft.core.particles.ParticleTypes;
 				import net.minecraft.world.InteractionResult;
 
 				public final class GeneratedBehaviorImpl implements DynamicBehavior {
@@ -358,16 +446,37 @@ final class ContentGenerationDraft {
 
 				    @Override
 				    public InteractionResult useAir(DynamicItemUseContext context) {
-				        context.player().sendSystemMessage(Component.literal("It works!"));
+				        context.level().sendParticles(ParticleTypes.END_ROD,
+				                context.player().getX(), context.player().getY() + 1.0, context.player().getZ(),
+				                8, 0.4, 0.4, 0.4, 0.02);
+				        context.player().getCooldowns().addCooldown(context.stack(), 20);
 				        return InteractionResult.SUCCESS;
-				    }
-
-				    @Override
-				    public InteractionResult useOnBlock(DynamicBlockUseContext context) {
-				        return InteractionResult.PASS;
 				    }
 				}
 				""");
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setBehaviorPlan(JsonObject arguments) {
+		requireOnly(arguments, "mode", "reason");
+		String mode = requiredString(arguments, "mode");
+		if (!mode.equals("native") && !mode.equals("custom")) {
+			throw new IllegalArgumentException("mode must be native or custom");
+		}
+		String reason = requiredString(arguments, "reason").strip();
+		if (reason.isEmpty() || reason.length() > 500 || reason.indexOf('\0') >= 0) {
+			throw new IllegalArgumentException("reason must contain 1-500 valid text characters");
+		}
+		customBehaviorPlanned = mode.equals("custom");
+		behaviorPlanReason = reason;
+		if (!customBehaviorPlanned) {
+			behaviorSource = null;
+			behaviorCompiled = false;
+		}
+		JsonObject details = message(customBehaviorPlanned
+				? "Custom behavior was planned. Set and compile only the source needed for the core ability."
+				: "Native behavior was selected; no Java class is needed.");
+		details.addProperty("mode", mode);
 		return ToolExecution.success(details, null);
 	}
 
@@ -385,6 +494,10 @@ final class ContentGenerationDraft {
 
 	private ToolExecution setBehaviorSource(JsonObject arguments) {
 		requireOnly(arguments, "source");
+		if (!Boolean.TRUE.equals(customBehaviorPlanned)) {
+			return ToolExecution.error("CUSTOM_BEHAVIOR_NOT_PLANNED",
+					"Call set_behavior_plan with mode=custom and a design reason before setting Java source");
+		}
 		String source = requiredString(arguments, "source").strip();
 		if (source.isEmpty() || source.length() > 60_000 || source.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("source must contain 1-60,000 valid text characters");
@@ -413,6 +526,15 @@ final class ContentGenerationDraft {
 		}
 	}
 
+	private ToolExecution clearBehavior(JsonObject arguments) {
+		requireOnly(arguments);
+		customBehaviorPlanned = false;
+		behaviorPlanReason = "Custom Java was discarded because native properties are sufficient.";
+		behaviorSource = null;
+		behaviorCompiled = false;
+		return ToolExecution.success(message("Custom Java behavior was cleared; native properties will be used."), null);
+	}
+
 	private ToolExecution submit(JsonObject arguments) {
 		requireOnly(arguments);
 		List<String> missing = missing();
@@ -434,6 +556,7 @@ final class ContentGenerationDraft {
 							blockShape, redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles),
 					null,
 					null,
+					null,
 					behaviorSource
 			);
 		} else if (type == DynamicContentType.ITEM) {
@@ -445,11 +568,12 @@ final class ContentGenerationDraft {
 							DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
 							itemType == DynamicItemType.FOOD ? foodProperties : null,
 							itemType == DynamicItemType.ITEM && Boolean.TRUE.equals(placeable) ? placementProperties : null);
-			generated = new GeneratedContentSpec(texture, null, item, null, behaviorSource);
+			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource);
 		} else {
 			generated = new GeneratedContentSpec(texture, null, null,
 					new DynamicArmorProperties(armorSlot, armorRarity, armorFoil, armorEnchantability,
 							armorDefense, armorToughness, armorKnockbackResistance, armorDurability),
+					armorDisplayTexture,
 					behaviorSource);
 		}
 		JsonObject details = message("The draft passed validation and was submitted.");
@@ -467,16 +591,28 @@ final class ContentGenerationDraft {
 		missing().forEach(missing::add);
 		result.add("missing", missing);
 		result.addProperty("complete", missing.isEmpty());
+		result.addProperty("behaviorRequired", Boolean.TRUE.equals(customBehaviorPlanned));
+		result.addProperty("behaviorMode", customBehaviorPlanned == null
+				? "undecided" : customBehaviorPlanned ? "custom" : "native");
+		if (behaviorPlanReason != null) result.addProperty("behaviorPlanReason", behaviorPlanReason);
 		result.addProperty("behaviorSourceSet", behaviorSource != null);
 		result.addProperty("behaviorCompiled", behaviorCompiled);
+		result.addProperty("behaviorStatus", behaviorSource == null ? "none" : behaviorCompiled ? "compiled" : "needs_compilation");
+		result.addProperty("armorDisplayTextureSet", armorDisplayTexture != null);
+		if (armorDisplaySlot != null) result.addProperty("armorDisplayTextureSlot", armorDisplaySlot.serializedName());
 		return result;
 	}
 
 	private List<String> missing() {
 		List<String> missing = new ArrayList<>();
 		if (texture == null) missing.add("texture");
-		if (behaviorSource == null) missing.add("behaviorSource");
-		else if (!behaviorCompiled) missing.add("behaviorCompilation");
+		if (type == DynamicContentType.ARMOR && armorDisplayTexture == null) missing.add("armorDisplayTexture");
+		if (customBehaviorPlanned == null) {
+			missing.add("behaviorPlan");
+		} else if (customBehaviorPlanned) {
+			if (behaviorSource == null) missing.add("behaviorSource");
+			else if (!behaviorCompiled) missing.add("behaviorCompilation");
+		}
 		if (type == DynamicContentType.BLOCK) {
 			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null || blockShape == null) {
 				missing.add("blockProperties");
@@ -623,6 +759,29 @@ final class ContentGenerationDraft {
 			found = true;
 		}
 		return found ? maximum - minimum : 0;
+	}
+
+	private static int relevantOpaquePixels(DynamicArmorDisplayTextureSpec texture, DynamicArmorSlot slot) {
+		return switch (slot) {
+			case HEAD -> opaquePixels(texture, 0, 0, 32, 16);
+			case CHEST -> opaquePixels(texture, 16, 16, 24, 16)
+					+ opaquePixels(texture, 40, 16, 16, 16);
+			case LEGGINGS -> opaquePixels(texture, 0, 16, 40, 16);
+			case BOOTS -> opaquePixels(texture, 0, 16, 16, 16);
+		};
+	}
+
+	private static int opaquePixels(DynamicArmorDisplayTextureSpec texture, int left, int top, int width, int height) {
+		String keys = "0123456789ABCDEF";
+		int count = 0;
+		for (int y = top; y < top + height; y++) {
+			String row = texture.rows().get(y);
+			for (int x = left; x < left + width; x++) {
+				String rgba = texture.palette().get(keys.indexOf(Character.toUpperCase(row.charAt(x))));
+				if (!rgba.regionMatches(true, 6, "00", 0, 2)) count++;
+			}
+		}
+		return count;
 	}
 
 	private static String safeMessage(Throwable error) {

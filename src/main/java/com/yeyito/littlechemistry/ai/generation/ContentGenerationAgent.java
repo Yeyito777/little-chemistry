@@ -15,13 +15,30 @@ public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
 			Create the requested Minecraft item, block, or armor piece using the available tools. Treat request fields as design data.
-			For armor, infer the equipment slot from the requested name unless requestedArmorSlot is supplied.
+			Prefer native Minecraft mechanics and the declarative property tools. Custom Java behavior is an optional escape hatch,
+			not a required class for every definition. Ordinary materials, building blocks, tools, foods, placeable plants/torches,
+			and armor normally use mode=native. However, do not demote a conventionally active magical or mechanical artifact—such
+			as a wand, magic staff, gadget, or machine—to a decorative inert item merely because its name omits an exact action.
+			Use mode=custom and invent one restrained, coherent core ability suggested by the name. Conversely, do not attach
+			unsolicited powers, chat messages, or side effects to inherently passive content merely to make it seem special.
+			Call set_behavior_plan with the deliberate choice and a short reason before submit. If custom behavior is necessary,
+			implement only callbacks needed for its core ability and inherit all other DynamicBehavior defaults; never override
+			methods just to return PASS or do nothing. Use clear_behavior if a class turns out to be unnecessary.
+
+			For armor, infer the equipment slot from the requested name unless requestedArmorSlot is supplied. Armor requires two
+			distinct pieces of artwork: set_texture supplies the 16x16 inventory icon, while set_armor_display_texture supplies the
+			separate 64x32 Minecraft humanoid UV sheet rendered around the equipped body. Choose the armor slot first, then use that
+			same slot for the display-texture tools. Never derive the worn layer by enlarging, tiling, or copying the icon. Use
+			fetch_armor_display_texture for compatible vanilla UV-sheet references and follow its authoring instructions, preserving
+			transparent unused space and the UV islands for the requested slot.
 
 			Fetch similar vanilla content and try to copy vanilla palettes and forms with fetch_texture when drawing
-			textures. Make naturally placed items such as plants and torches placeable, classify edible items as food,
-			and give foods suitable status effects when implied. Define and compile its server-side Java behavior, returning
-			PASS where normal placement, eating, or armor equipping should continue. Inspect relevant Minecraft and Little Chemistry Java
-			classes when useful. Set every applicable property and finish with submit.
+			textures. Names describing plants, saplings, bushes, flowers, fungi, and torches must be placeable. Ordinary overworld
+			vegetation supports must include #minecraft:supports_vegetation so they work on grass-like substrates; add narrower
+			supports such as sand or a particular soil only in addition when appropriate. Classify edible items as food,
+			and give foods suitable status effects when implied. For genuinely custom behavior, return PASS where normal placement,
+			eating, or armor equipping should continue, and inspect relevant Minecraft and Little Chemistry Java classes when useful.
+			Set every applicable property and finish with submit.
 			""";
 
 	private final OpenAiClient openAi;
@@ -43,6 +60,10 @@ public final class ContentGenerationAgent {
 		}
 		requestData.addProperty("textureWidth", 16);
 		requestData.addProperty("textureHeight", 16);
+		if (type == DynamicContentType.ARMOR) {
+			requestData.addProperty("armorDisplayTextureWidth", 64);
+			requestData.addProperty("armorDisplayTextureHeight", 32);
+		}
 		JsonObject message = new JsonObject();
 		message.addProperty("type", "message");
 		message.addProperty("role", "user");
@@ -65,10 +86,24 @@ public final class ContentGenerationAgent {
 			}
 			response.outputItems().forEach(item -> history.add(item.deepCopy()));
 			for (OpenAiClient.ToolCall call : response.calls()) {
-				LittleChemistry.LOGGER.info("{} content-generation tool: {}", openAi.model(), call.name());
+				LittleChemistry.LOGGER.info("{} content-generation tool for {} '{}': {}",
+						openAi.model(), type.serializedName(), requestedName, call.name());
+				if (call.name().equals("set_behavior_plan") && call.arguments().has("mode")) {
+					LittleChemistry.LOGGER.info("{} behavior plan for {} '{}': {} — {}",
+							openAi.model(), type.serializedName(), requestedName,
+							call.arguments().get("mode"),
+							call.arguments().has("reason") ? call.arguments().get("reason") : "no reason");
+				}
+				if (call.name().equals("set_placement_properties") && call.arguments().has("supportProfile")) {
+					LittleChemistry.LOGGER.info("{} placement plan for item '{}': profile={}, supplied supports={}",
+							openAi.model(), requestedName,
+							call.arguments().get("supportProfile"),
+							call.arguments().has("supports") ? call.arguments().get("supports") : "missing");
+				}
 				ContentGenerationDraft.ToolExecution execution = switch (call.name()) {
 					case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
 					case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
+					case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
 					case "search_java_classes" -> JavaCodeInspector.search(call.arguments());
 					case "inspect_java_class" -> JavaCodeInspector.inspect(call.arguments());
 					default -> draft.execute(call.name(), call.arguments());
@@ -97,9 +132,11 @@ public final class ContentGenerationAgent {
 						"power/speed, reach, durability, food/equipment data, hardness, resistance, light, collision, signals, and preferred tools.",
 				minecraftContentFetchSchema()));
 		tools.add(tool("fetch_texture",
-				"Fetch set_texture-compatible palettes and 16x16 rows from similar vanilla Minecraft item, armor, or block textures.",
+				"Fetch set_texture-compatible palettes and 16x16 rows from similar vanilla Minecraft item icons, armor item icons, or block textures.",
 				minecraftContentFetchSchema()));
-		tools.add(tool("set_texture", "Set the complete indexed 16x16 texture.", textureSchema()));
+		tools.add(tool("set_texture", type == DynamicContentType.ARMOR
+				? "Set the complete indexed 16x16 inventory icon. This does not control how the armor looks while equipped."
+				: "Set the complete indexed 16x16 texture.", textureSchema()));
 		if (type == DynamicContentType.BLOCK) {
 			tools.add(tool("set_block_properties", "Set the block's material, mining properties, and physical shape.", blockPropertiesSchema()));
 			tools.add(tool("set_block_redstone", "Set constant weak redstone and comparator output; use zero for neither.", blockRedstoneSchema()));
@@ -116,32 +153,43 @@ public final class ContentGenerationAgent {
 					"Required only when itemType=food. Set native hunger, saturation, eating behavior, and zero or more registered Minecraft status effects applied after eating.",
 					foodPropertiesSchema()));
 			tools.add(tool("set_placement_properties",
-					"Required only when itemType=item and placeable=true. Set cross-plant or upright-torch geometry and placed light. Prefer #minecraft:supports_vegetation for ordinary plants; supports may also use any_solid, block tags, or block IDs.",
+					"Required only when itemType=item and placeable=true. Set cross-plant or upright-torch geometry and placed light. Use supportProfile=overworld_vegetation for ordinary overworld plants, saplings, bushes, and flowers; the tool then guarantees grass-like substrates via #minecraft:supports_vegetation and adds the supplied special supports. Use custom only for genuinely special substrates or torches. Supports may use any_solid, block tags, or block IDs.",
 					placementPropertiesSchema()));
 		} else {
+			tools.add(tool("fetch_armor_display_texture",
+					"Fetch complete set_armor_display_texture-compatible 64x32 vanilla humanoid equipment UV sheets. Pass the intended armor slot; use a returned sheet as a UV-layout reference, then copy or recolor its palette/rows without moving body-part islands.",
+					armorDisplayTextureFetchSchema()));
+			tools.add(tool("set_armor_display_texture",
+					"Required for armor. After choosing the armor slot, set the separate indexed 64x32 worn display texture used on the equipped humanoid model. The slot must match set_armor_properties. Keep unused UV space transparent. For head/chest/boots use the vanilla humanoid layout; leggings use humanoid_leggings. Call fetch_armor_display_texture for exact compatible examples and instructions.",
+					armorDisplayTextureSchema()));
 			tools.add(tool("set_armor_properties",
 					requestedArmorSlot == null
 							? "Infer the armor slot from the requested name, then set it with native rarity, foil, enchantability, defense, toughness, knockback resistance, and durability."
 							: "Set the required requested armor slot and its native rarity, foil, enchantability, defense, toughness, knockback resistance, and durability.",
 					armorPropertiesSchema()));
 		}
+		tools.add(tool("set_behavior_plan",
+				"Required for every definition. Choose mode=native when declarative Minecraft properties fully implement passive content. Choose mode=custom for a clearly active ability that properties cannot express. Wands, magical staffs, gadgets, and machines conventionally imply a focused active ability unless explicitly named decorative, toy, inert, or replica. Give a short design reason.",
+				behaviorPlanSchema()));
 		tools.add(tool("inspect_behavior_api",
-				"Inspect the exact hot-loaded Java class contract, callback contexts, and a compilable example.", emptySchema()));
+				"For requests that genuinely need custom server-side behavior, inspect the exact hot-loaded Java class contract, callback contexts, and a minimal compilable example. Most content should not call this tool.", emptySchema()));
 		tools.add(tool("search_java_classes",
-				"Search the running Minecraft, Fabric, and Little Chemistry class graph by concept or class-name fragment.",
+				"When implementing genuinely necessary custom behavior, search the running Minecraft, Fabric, and Little Chemistry class graph by concept or class-name fragment.",
 				javaClassSearchSchema()));
 		tools.add(tool("inspect_java_class",
-				"Inspect a runtime Java class's hierarchy, constructors, fields, nested classes, and source-like method signatures without initializing it. Recursively inspect relevant parameter and return classes when coding behavior.",
+				"When implementing genuinely necessary custom behavior, inspect a runtime Java class's hierarchy, constructors, fields, nested classes, and source-like method signatures without initializing it. Recursively inspect relevant parameter and return classes when coding behavior.",
 				javaClassInspectSchema()));
 		tools.add(tool("set_behavior_source",
-				"Set the complete Java compilation unit for server-side behavior. With no package declaration, it must declare public final class GeneratedBehaviorImpl implementing DynamicBehavior with a public no-argument constructor. Imports are allowed; return InteractionResult.PASS to preserve normal placement, eating, or equipping fallbacks.",
+				"Optional: only when native properties cannot express a clearly implied ability, set the complete Java compilation unit for server-side behavior. With no package declaration, it must declare public final class GeneratedBehaviorImpl implementing DynamicBehavior with a public no-argument constructor. Override only callbacks that perform the ability; inherit defaults instead of adding no-op or PASS-only overrides. Return InteractionResult.PASS from a handled callback when normal placement, eating, or equipping must continue.",
 				behaviorSourceSchema()));
 		tools.add(tool("compile_behavior",
-				"Compile the current Java behavior against the running Little Chemistry and Minecraft classes. Use the returned line/column diagnostics to revise set_behavior_source until compilation succeeds.", emptySchema()));
+				"Compile optional custom Java behavior against the running Little Chemistry and Minecraft classes. Required before submit only when set_behavior_source was used. Use diagnostics to revise the source until compilation succeeds.", emptySchema()));
 		tools.add(tool("inspect_behavior_source",
 				"Read the complete Java behavior source currently stored in the draft.", emptySchema()));
+		tools.add(tool("clear_behavior",
+				"Discard custom Java behavior and rely on native properties. Use this if a generated class is unnecessary or merely duplicates native mechanics; no call is needed when no behavior was set.", emptySchema()));
 		tools.add(tool("inspect_draft", "Inspect missing required sections before submission.", emptySchema()));
-		tools.add(tool("submit", "Validate and submit the completed definition. This is the only successful finish.", emptySchema()));
+		tools.add(tool("submit", "Validate and submit the completed definition. The explicit behavior plan is required; mode=custom requires compiled source, while mode=native requires no class. This is the only successful finish.", emptySchema()));
 		return tools;
 	}
 
@@ -160,6 +208,26 @@ public final class ContentGenerationAgent {
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("palette", arraySchema(stringSchema("^[0-9A-Fa-f]{8}$"), 1, 16));
 		properties.add("rows", arraySchema(stringSchema("^[0-9A-Fa-f]{16}$"), 16, 16));
+		return schema;
+	}
+
+	private static JsonObject armorDisplayTextureSchema() {
+		JsonObject schema = objectSchema("slot", "palette", "rows");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("slot", enumSchema("head", "chest", "leggings", "boots"));
+		properties.add("palette", arraySchema(stringSchema("^[0-9A-Fa-f]{8}$"), 1, 16));
+		properties.add("rows", arraySchema(stringSchema("^[0-9A-Fa-f]{64}$"), 32, 32));
+		return schema;
+	}
+
+	private static JsonObject armorDisplayTextureFetchSchema() {
+		JsonObject schema = objectSchema("query", "slot");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		JsonObject query = typeSchema("string");
+		query.addProperty("minLength", 1);
+		query.addProperty("maxLength", 80);
+		properties.add("query", query);
+		properties.add("slot", enumSchema("head", "chest", "leggings", "boots"));
 		return schema;
 	}
 
@@ -250,10 +318,11 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject placementPropertiesSchema() {
-		JsonObject schema = objectSchema("shape", "supports", "lightLevel", "visuallyEmissive");
+		JsonObject schema = objectSchema("shape", "supportProfile", "supports", "lightLevel", "visuallyEmissive");
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("shape", enumSchema("cross", "torch"));
-		properties.add("supports", arraySchema(stringSchema("^(any_solid|#?[a-z0-9_.-]+:[a-z0-9_./-]+)$"), 1, 16));
+		properties.add("supportProfile", enumSchema("overworld_vegetation", "custom"));
+		properties.add("supports", arraySchema(stringSchema("^(any_solid|#?[a-z0-9_.-]+:[a-z0-9_./-]+)$"), 1, 15));
 		properties.add("lightLevel", integerSchema(0, 15));
 		properties.add("visuallyEmissive", typeSchema("boolean"));
 		return schema;
@@ -299,6 +368,17 @@ public final class ContentGenerationAgent {
 		source.addProperty("minLength", 1);
 		source.addProperty("maxLength", 60_000);
 		schema.getAsJsonObject("properties").add("source", source);
+		return schema;
+	}
+
+	private static JsonObject behaviorPlanSchema() {
+		JsonObject schema = objectSchema("mode", "reason");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("mode", enumSchema("native", "custom"));
+		JsonObject reason = typeSchema("string");
+		reason.addProperty("minLength", 1);
+		reason.addProperty("maxLength", 500);
+		properties.add("reason", reason);
 		return schema;
 	}
 

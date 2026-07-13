@@ -23,7 +23,7 @@ public final class DynamicContentJson {
 
 	public static byte[] encode(UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", 6);
+		root.addProperty("format", 7);
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
@@ -36,6 +36,10 @@ public final class DynamicContentJson {
 			entry.addProperty("textureHash", definition.textureHash());
 			if (definition.texture() != null) {
 				entry.add("texture", encodeTexture(definition.texture()));
+			}
+			if (definition.armorDisplayTexture() != null) {
+				entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
+				entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
 			}
 			switch (definition.type()) {
 				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
@@ -54,7 +58,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = root.get("format").getAsInt();
-		if (format < 1 || format > 6) {
+		if (format < 1 || format > 7) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -89,6 +93,10 @@ public final class DynamicContentJson {
 			}
 			DynamicTextureSpec texture = format >= 3 && entry.has("texture")
 					? decodeTexture(entry.getAsJsonObject("texture")) : null;
+			String armorDisplayTextureHash = format >= 7 && entry.has("armorDisplayTextureHash")
+					? entry.get("armorDisplayTextureHash").getAsString() : null;
+			DynamicArmorDisplayTextureSpec armorDisplayTexture = format >= 7 && entry.has("armorDisplayTexture")
+					? decodeArmorDisplayTexture(entry.getAsJsonObject("armorDisplayTexture")) : null;
 			DynamicBlockProperties block = type == DynamicContentType.BLOCK
 					? format >= 3 && entry.has("block") ? decodeBlock(entry.getAsJsonObject("block")) : DynamicBlockProperties.DEFAULT
 					: null;
@@ -101,7 +109,8 @@ public final class DynamicContentJson {
 			String behaviorSource = format >= 4 && entry.has("behaviorSource")
 					? entry.get("behaviorSource").getAsString() : null;
 			definitions.add(new DynamicContentDefinition(
-					type, name, displayName, textureSeed, textureHash, texture, block, item, armor, behaviorSource
+					type, name, displayName, textureSeed, textureHash, texture,
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource
 			));
 		}
 		validateUniqueNames(definitions);
@@ -125,6 +134,25 @@ public final class DynamicContentJson {
 		List<String> rows = new ArrayList<>();
 		encoded.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
 		return new DynamicTextureSpec(palette, rows);
+	}
+
+	private static JsonObject encodeArmorDisplayTexture(DynamicArmorDisplayTextureSpec texture) {
+		JsonObject encoded = new JsonObject();
+		JsonArray palette = new JsonArray();
+		texture.palette().forEach(palette::add);
+		encoded.add("palette", palette);
+		JsonArray rows = new JsonArray();
+		texture.rows().forEach(rows::add);
+		encoded.add("rows", rows);
+		return encoded;
+	}
+
+	private static DynamicArmorDisplayTextureSpec decodeArmorDisplayTexture(JsonObject encoded) {
+		List<String> palette = new ArrayList<>();
+		encoded.getAsJsonArray("palette").forEach(value -> palette.add(value.getAsString()));
+		List<String> rows = new ArrayList<>();
+		encoded.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
+		return new DynamicArmorDisplayTextureSpec(palette, rows);
 	}
 
 	private static JsonObject encodeBlock(DynamicBlockProperties block) {

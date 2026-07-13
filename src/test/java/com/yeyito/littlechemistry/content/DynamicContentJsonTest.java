@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class DynamicContentJsonTest {
 	private static final String TEXTURE_HASH = "0".repeat(64);
@@ -25,7 +26,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(6, decoded.format());
+		assertEquals(7, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 	}
@@ -52,9 +53,11 @@ class DynamicContentJsonTest {
 	void roundTripPreservesArmorSlotAndProtection() {
 		DynamicArmorProperties armor = new DynamicArmorProperties(
 				DynamicArmorSlot.LEGGINGS, Rarity.RARE, true, 18, 6.0, 2.0, 0.1, 495);
+		DynamicArmorDisplayTextureSpec displayTexture = displayTexture();
+		String displayTextureHash = "1".repeat(64);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.ARMOR, "star_leggings", "Star Leggings", 0L, TEXTURE_HASH,
-				null, null, null, armor, null);
+				null, displayTextureHash, displayTexture, null, null, armor, null);
 
 		DynamicContentDefinition decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
@@ -64,10 +67,35 @@ class DynamicContentJsonTest {
 		assertEquals(DynamicArmorSlot.LEGGINGS, decoded.armor().slot());
 		assertEquals(6.0, decoded.armor().defense());
 		assertEquals(495, decoded.armor().durability());
+		assertEquals(displayTextureHash, decoded.armorDisplayTextureHash());
+		assertEquals(displayTexture, decoded.armorDisplayTexture());
+	}
+
+	@Test
+	void formatSixArmorRemainsLoadableWithoutSeparateDisplayTexture() {
+		DynamicArmorProperties armor = DynamicArmorProperties.defaults(DynamicArmorSlot.HEAD);
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ARMOR, "legacy_helmet", "Legacy Helmet", 0L, TEXTURE_HASH,
+				null, null, null, armor, null);
+		byte[] current = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition));
+		JsonObject legacy = JsonParser.parseString(new String(current, StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 6);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertNull(decoded.armorDisplayTexture());
+		assertEquals(TEXTURE_HASH, decoded.effectiveArmorDisplayTextureHash());
 	}
 
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
 		return new DynamicContentDefinition(
 				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null, null);
+	}
+
+	private static DynamicArmorDisplayTextureSpec displayTexture() {
+		List<String> rows = new java.util.ArrayList<>();
+		for (int y = 0; y < 32; y++) rows.add("1".repeat(32) + "0".repeat(32));
+		return new DynamicArmorDisplayTextureSpec(List.of("00000000", "80A0C0FF"), rows);
 	}
 }

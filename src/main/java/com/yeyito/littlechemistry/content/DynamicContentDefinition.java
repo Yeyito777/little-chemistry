@@ -7,6 +7,8 @@ public record DynamicContentDefinition(
 		long textureSeed,
 		String textureHash,
 		DynamicTextureSpec texture,
+		String armorDisplayTextureHash,
+		DynamicArmorDisplayTextureSpec armorDisplayTexture,
 		DynamicBlockProperties block,
 		DynamicItemProperties item,
 		DynamicArmorProperties armor,
@@ -15,7 +17,15 @@ public record DynamicContentDefinition(
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
-		this(type, name, displayName, textureSeed, textureHash, texture, block, item, null, behaviorSource);
+		this(type, name, displayName, textureSeed, textureHash, texture, null, null,
+				block, item, null, behaviorSource);
+	}
+
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
+			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
+		this(type, name, displayName, textureSeed, textureHash, texture, null, null,
+				block, item, armor, behaviorSource);
 	}
 
 	public DynamicContentDefinition {
@@ -29,6 +39,12 @@ public record DynamicContentDefinition(
 		if (textureHash == null || !textureHash.matches("[a-f0-9]{64}")) {
 			throw new IllegalArgumentException("Dynamic content texture hash is invalid");
 		}
+		if ((armorDisplayTextureHash == null) != (armorDisplayTexture == null)) {
+			throw new IllegalArgumentException("Armor display texture hash and specification must be supplied together");
+		}
+		if (armorDisplayTextureHash != null && !armorDisplayTextureHash.matches("[a-f0-9]{64}")) {
+			throw new IllegalArgumentException("Dynamic armor display texture hash is invalid");
+		}
 		if (behaviorSource != null) {
 			behaviorSource = behaviorSource.strip();
 			if (behaviorSource.isEmpty()) behaviorSource = null;
@@ -38,13 +54,13 @@ public record DynamicContentDefinition(
 		}
 		switch (type) {
 			case BLOCK -> {
-				if (block == null || item != null || armor != null) {
+				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
 					throw new IllegalArgumentException("Block content must have block properties only");
 				}
 				if (texture != null) texture.requireOpaque();
 			}
 			case ITEM -> {
-				if (item == null || block != null || armor != null) {
+				if (item == null || block != null || armor != null || armorDisplayTexture != null) {
 					throw new IllegalArgumentException("Item content must have item properties only");
 				}
 				if (texture != null) texture.requireBinaryAlpha();
@@ -64,5 +80,16 @@ public record DynamicContentDefinition(
 
 	public boolean hasBehavior() {
 		return behaviorSource != null;
+	}
+
+	/**
+	 * Legacy armor definitions did not store separate worn artwork and continue to use their icon hash
+	 * until they are recreated. New definitions always return the dedicated 64x32 asset hash.
+	 */
+	public String effectiveArmorDisplayTextureHash() {
+		if (type != DynamicContentType.ARMOR) {
+			throw new IllegalStateException("Only armor has an equipped display texture");
+		}
+		return armorDisplayTextureHash == null ? textureHash : armorDisplayTextureHash;
 	}
 }

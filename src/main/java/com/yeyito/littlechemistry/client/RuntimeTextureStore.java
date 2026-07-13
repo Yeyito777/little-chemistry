@@ -2,6 +2,7 @@ package com.yeyito.littlechemistry.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
@@ -33,6 +34,7 @@ public final class RuntimeTextureStore {
 	private static final Map<String, boolean[]> opaquePixels = new HashMap<>();
 	private static final Set<String> loadingTextures = new HashSet<>();
 	private static Set<String> expectedHashes = Set.of();
+	private static Set<String> expectedItemHashes = Set.of();
 	private static Set<String> expectedArmorHashes = Set.of();
 	private static UUID activeServer;
 
@@ -51,20 +53,20 @@ public final class RuntimeTextureStore {
 			List<DynamicContentDefinition> definitions) throws IOException {
 		beginServer(client, serverId);
 		DynamicParticleTextures.clear();
-		expectedHashes = definitions.stream().map(DynamicContentDefinition::textureHash).collect(java.util.stream.Collectors.toUnmodifiableSet());
+		expectedItemHashes = definitions.stream().map(DynamicContentDefinition::textureHash)
+				.collect(java.util.stream.Collectors.toUnmodifiableSet());
 		expectedArmorHashes = definitions.stream()
 				.filter(definition -> definition.type() == DynamicContentType.ARMOR)
-				.map(DynamicContentDefinition::textureHash)
+				.map(DynamicContentDefinition::effectiveArmorDisplayTextureHash)
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		Set<String> allExpectedHashes = new HashSet<>(expectedItemHashes);
+		allExpectedHashes.addAll(expectedArmorHashes);
+		expectedHashes = Set.copyOf(allExpectedHashes);
 		var loadedIterator = loadedTextures.entrySet().iterator();
 		while (loadedIterator.hasNext()) {
 			var entry = loadedIterator.next();
-			if (expectedHashes.contains(entry.getKey())) continue;
+			if (expectedItemHashes.contains(entry.getKey())) continue;
 			client.getTextureManager().release(entry.getValue());
-			for (Identifier armorTexture : loadedArmorTextures.getOrDefault(entry.getKey(), List.of())) {
-				client.getTextureManager().release(armorTexture);
-			}
-			loadedArmorTextures.remove(entry.getKey());
 			opaquePixels.remove(entry.getKey());
 			loadedIterator.remove();
 		}
@@ -79,8 +81,9 @@ public final class RuntimeTextureStore {
 		Files.createDirectories(assetDirectory);
 		List<String> hashesToCheck = new ArrayList<>();
 		for (String hash : expectedHashes) {
+			boolean itemReady = !expectedItemHashes.contains(hash) || loadedTextures.containsKey(hash);
 			boolean armorReady = !expectedArmorHashes.contains(hash) || loadedArmorTextures.containsKey(hash);
-			if ((loadedTextures.containsKey(hash) && armorReady) || loadingTextures.contains(hash)) {
+			if ((itemReady && armorReady) || loadingTextures.contains(hash)) {
 				continue;
 			}
 			hashesToCheck.add(hash);
@@ -172,6 +175,7 @@ public final class RuntimeTextureStore {
 		opaquePixels.clear();
 		loadingTextures.clear();
 		expectedHashes = Set.of();
+		expectedItemHashes = Set.of();
 		expectedArmorHashes = Set.of();
 		activeServer = null;
 	}
@@ -180,26 +184,40 @@ public final class RuntimeTextureStore {
 		if (!loadingTextures.add(hash)) {
 			return;
 		}
+		boolean item = expectedItemHashes.contains(hash);
 		boolean armor = expectedArmorHashes.contains(hash);
 		CompletableFuture.supplyAsync(() -> {
 			try {
-				NativeImage image = NativeImage.read(bytes);
-				if (image.getWidth() != DynamicTextureAsset.WIDTH || image.getHeight() != DynamicTextureAsset.HEIGHT) {
-					image.close();
-					throw new IOException("Runtime texture must be 16x16 pixels");
+				NativeImage source = NativeImage.read(bytes);
+				if (item && (source.getWidth() != DynamicTextureAsset.WIDTH
+						|| source.getHeight() != DynamicTextureAsset.HEIGHT)) {
+					source.close();
+					throw new IOException("Runtime inventory texture must be 16x16 pixels");
 				}
-				boolean[] opacity = new boolean[DynamicTextureAsset.WIDTH * DynamicTextureAsset.HEIGHT];
-				for (int y = 0; y < DynamicTextureAsset.HEIGHT; y++) {
-					for (int x = 0; x < DynamicTextureAsset.WIDTH; x++) {
-						opacity[y * DynamicTextureAsset.WIDTH + x] = ((image.getPixel(x, y) >>> 24) & 0xFF) != 0;
+				boolean[] opacity = item ? opacity(source) : null;
+				NativeImage humanoid = null;
+				NativeImage leggings = null;
+				NativeImage baby = null;
+				if (armor) {
+					if (source.getWidth() == DynamicArmorDisplayTextureSpec.WIDTH
+							&& source.getHeight() == DynamicArmorDisplayTextureSpec.HEIGHT) {
+						humanoid = copyTexture(source);
+						leggings = copyTexture(source);
+						baby = babyArmorTexture(source);
+					} else if (source.getWidth() == DynamicTextureAsset.WIDTH
+							&& source.getHeight() == DynamicTextureAsset.HEIGHT) {
+						// Format 6 and older used the inventory icon for the worn layer. Keep those worlds loadable.
+						humanoid = legacyArmorTexture(source, 64, 32);
+						leggings = legacyArmorTexture(source, 64, 32);
+						baby = legacyArmorTexture(source, 64, 64);
+					} else {
+						source.close();
+						throw new IOException("Runtime armor display texture must be 64x32 pixels");
 					}
 				}
-				return new DecodedTexture(
-						image,
-						opacity,
-						armor ? armorTexture(image, 64, 32) : null,
-						armor ? armorTexture(image, 64, 32) : null,
-						armor ? armorTexture(image, 64, 64) : null);
+				NativeImage itemImage = item ? source : null;
+				if (!item) source.close();
+				return new DecodedTexture(itemImage, opacity, humanoid, leggings, baby);
 			} catch (IOException error) {
 				throw new RuntimeException(error);
 			}
@@ -213,19 +231,21 @@ public final class RuntimeTextureStore {
 				decoded.close();
 				return;
 			}
-			if (armor != expectedArmorHashes.contains(hash)) {
+			if (item != expectedItemHashes.contains(hash) || armor != expectedArmorHashes.contains(hash)) {
 				decoded.close();
-				decode(client, serverId, hash, bytes);
+				if (expectedHashes.contains(hash)) decode(client, serverId, hash, bytes);
 				return;
 			}
 
-			Identifier textureId = LittleChemistry.id("runtime/" + hash);
-			client.getTextureManager().register(textureId, new DynamicTexture(
-					() -> "Little Chemistry " + hash,
-					decoded.image()
-			));
-			loadedTextures.put(hash, textureId);
-			opaquePixels.put(hash, decoded.opaquePixels());
+			if (decoded.image() != null) {
+				Identifier textureId = LittleChemistry.id("runtime/" + hash);
+				client.getTextureManager().register(textureId, new DynamicTexture(
+						() -> "Little Chemistry " + hash,
+						decoded.image()
+				));
+				loadedTextures.put(hash, textureId);
+				opaquePixels.put(hash, decoded.opaquePixels());
+			}
 
 			if (decoded.humanoid() != null) {
 				List<Identifier> armorTextureIds = List.of(
@@ -243,7 +263,157 @@ public final class RuntimeTextureStore {
 		}));
 	}
 
-	private static NativeImage armorTexture(NativeImage source, int width, int height) {
+	private static boolean[] opacity(NativeImage image) {
+		boolean[] opacity = new boolean[DynamicTextureAsset.WIDTH * DynamicTextureAsset.HEIGHT];
+		for (int y = 0; y < DynamicTextureAsset.HEIGHT; y++) {
+			for (int x = 0; x < DynamicTextureAsset.WIDTH; x++) {
+				opacity[y * DynamicTextureAsset.WIDTH + x] = ((image.getPixel(x, y) >>> 24) & 0xFF) != 0;
+			}
+		}
+		return opacity;
+	}
+
+	private static NativeImage copyTexture(NativeImage source) {
+		NativeImage result = new NativeImage(source.getWidth(), source.getHeight(), true);
+		for (int y = 0; y < source.getHeight(); y++) {
+			for (int x = 0; x < source.getWidth(); x++) result.setPixel(x, y, source.getPixel(x, y));
+		}
+		return result;
+	}
+
+	/**
+	 * Minecraft 26.2 gives baby humanoids a separate 64x64 model and UV layout. Generation only has
+	 * to author the standard 64x32 sheet; remap each adult cuboid face to the corresponding baby
+	 * cuboid so the same artwork remains meaningful instead of stretching or tiling the item icon.
+	 */
+	private static NativeImage babyArmorTexture(NativeImage adult) {
+		NativeImage baby = new NativeImage(64, 64, true);
+		copyCuboidUv(adult, baby, 0, 0, 8, 8, 8, 0, 0, 9, 8, 8);          // head
+		copyCuboidUv(adult, baby, 16, 16, 8, 12, 4, 0, 17, 6, 5, 3);      // torso
+		copyCuboidUv(adult, baby, 16, 16, 8, 12, 4, 0, 36, 6, 2, 3);      // leggings waist
+		copyCuboidUv(adult, baby, 40, 16, 4, 12, 4, 30, 25, 2, 5, 3);     // right arm
+		copyMirroredCuboidUv(adult, baby, 40, 16, 4, 12, 4, 30, 17, 2, 5, 3); // left arm
+		copyCuboidUv(adult, baby, 0, 16, 4, 12, 4, 18, 17, 3, 4, 3);      // right leg
+		copyMirroredCuboidUv(adult, baby, 0, 16, 4, 12, 4, 18, 24, 3, 4, 3); // left leg
+		copyFootUv(adult, baby, 0, 16, 4, 12, 4, 0, 25, 3, 1, 3, true);   // left foot
+		copyFootUv(adult, baby, 0, 16, 4, 12, 4, 0, 29, 3, 1, 3, true);   // right foot
+		return baby;
+	}
+
+	private static void copyCuboidUv(NativeImage source, NativeImage destination,
+			int sourceU, int sourceV, int sourceWidth, int sourceHeight, int sourceDepth,
+			int destinationU, int destinationV, int destinationWidth, int destinationHeight, int destinationDepth) {
+		copyRegion(source, destination,
+				sourceU + sourceDepth, sourceV, sourceWidth, sourceDepth,
+				destinationU + destinationDepth, destinationV, destinationWidth, destinationDepth);
+		copyRegion(source, destination,
+				sourceU + sourceDepth + sourceWidth, sourceV, sourceWidth, sourceDepth,
+				destinationU + destinationDepth + destinationWidth, destinationV, destinationWidth, destinationDepth);
+		copyRegion(source, destination,
+				sourceU, sourceV + sourceDepth, sourceDepth, sourceHeight,
+				destinationU, destinationV + destinationDepth, destinationDepth, destinationHeight);
+		copyRegion(source, destination,
+				sourceU + sourceDepth, sourceV + sourceDepth, sourceWidth, sourceHeight,
+				destinationU + destinationDepth, destinationV + destinationDepth, destinationWidth, destinationHeight);
+		copyRegion(source, destination,
+				sourceU + sourceDepth + sourceWidth, sourceV + sourceDepth, sourceDepth, sourceHeight,
+				destinationU + destinationDepth + destinationWidth, destinationV + destinationDepth,
+				destinationDepth, destinationHeight);
+		copyRegion(source, destination,
+				sourceU + sourceDepth * 2 + sourceWidth, sourceV + sourceDepth, sourceWidth, sourceHeight,
+				destinationU + destinationDepth * 2 + destinationWidth, destinationV + destinationDepth,
+				destinationWidth, destinationHeight);
+	}
+
+	private static void copyMirroredCuboidUv(NativeImage source, NativeImage destination,
+			int sourceU, int sourceV, int sourceWidth, int sourceHeight, int sourceDepth,
+			int destinationU, int destinationV, int destinationWidth, int destinationHeight, int destinationDepth) {
+		copyRegionFlippedX(source, destination,
+				sourceU + sourceDepth, sourceV, sourceWidth, sourceDepth,
+				destinationU + destinationDepth, destinationV, destinationWidth, destinationDepth);
+		copyRegionFlippedX(source, destination,
+				sourceU + sourceDepth + sourceWidth, sourceV, sourceWidth, sourceDepth,
+				destinationU + destinationDepth + destinationWidth, destinationV, destinationWidth, destinationDepth);
+		copyRegionFlippedX(source, destination,
+				sourceU + sourceDepth + sourceWidth, sourceV + sourceDepth, sourceDepth, sourceHeight,
+				destinationU, destinationV + destinationDepth, destinationDepth, destinationHeight);
+		copyRegionFlippedX(source, destination,
+				sourceU + sourceDepth, sourceV + sourceDepth, sourceWidth, sourceHeight,
+				destinationU + destinationDepth, destinationV + destinationDepth, destinationWidth, destinationHeight);
+		copyRegionFlippedX(source, destination,
+				sourceU, sourceV + sourceDepth, sourceDepth, sourceHeight,
+				destinationU + destinationDepth + destinationWidth, destinationV + destinationDepth,
+				destinationDepth, destinationHeight);
+		copyRegionFlippedX(source, destination,
+				sourceU + sourceDepth * 2 + sourceWidth, sourceV + sourceDepth, sourceWidth, sourceHeight,
+				destinationU + destinationDepth * 2 + destinationWidth, destinationV + destinationDepth,
+				destinationWidth, destinationHeight);
+	}
+
+	private static void copyFootUv(NativeImage source, NativeImage destination,
+			int sourceU, int sourceV, int sourceWidth, int sourceHeight, int sourceDepth,
+			int destinationU, int destinationV, int destinationWidth, int destinationHeight, int destinationDepth,
+			boolean mirrored) {
+		RegionCopier copier = mirrored
+				? RuntimeTextureStore::copyRegionFlippedX
+				: RuntimeTextureStore::copyRegion;
+		copier.copy(source, destination,
+				sourceU + sourceDepth, sourceV, sourceWidth, sourceDepth,
+				destinationU + destinationDepth, destinationV, destinationWidth, destinationDepth);
+		copier.copy(source, destination,
+				sourceU + sourceDepth + sourceWidth, sourceV, sourceWidth, sourceDepth,
+				destinationU + destinationDepth + destinationWidth, destinationV, destinationWidth, destinationDepth);
+		int sourceSideY = sourceV + sourceDepth + sourceHeight - 1;
+		// A baby foot is only one pixel tall; sample the bottom of the adult leg where boot artwork lives.
+		copier.copy(source, destination,
+				sourceU + sourceDepth + sourceWidth, sourceSideY, sourceDepth, 1,
+				destinationU, destinationV + destinationDepth, destinationDepth, destinationHeight);
+		copier.copy(source, destination,
+				sourceU + sourceDepth, sourceSideY, sourceWidth, 1,
+				destinationU + destinationDepth, destinationV + destinationDepth, destinationWidth, destinationHeight);
+		copier.copy(source, destination,
+				sourceU, sourceSideY, sourceDepth, 1,
+				destinationU + destinationDepth + destinationWidth, destinationV + destinationDepth,
+				destinationDepth, destinationHeight);
+		copier.copy(source, destination,
+				sourceU + sourceDepth * 2 + sourceWidth, sourceSideY, sourceWidth, 1,
+				destinationU + destinationDepth * 2 + destinationWidth, destinationV + destinationDepth,
+				destinationWidth, destinationHeight);
+	}
+
+	private static void copyRegion(NativeImage source, NativeImage destination,
+			int sourceX, int sourceY, int sourceWidth, int sourceHeight,
+			int destinationX, int destinationY, int destinationWidth, int destinationHeight) {
+		for (int y = 0; y < destinationHeight; y++) {
+			for (int x = 0; x < destinationWidth; x++) {
+				int sampledX = sourceX + Math.min(sourceWidth - 1, x * sourceWidth / destinationWidth);
+				int sampledY = sourceY + Math.min(sourceHeight - 1, y * sourceHeight / destinationHeight);
+				destination.setPixel(destinationX + x, destinationY + y, source.getPixel(sampledX, sampledY));
+			}
+		}
+	}
+
+	private static void copyRegionFlippedX(NativeImage source, NativeImage destination,
+			int sourceX, int sourceY, int sourceWidth, int sourceHeight,
+			int destinationX, int destinationY, int destinationWidth, int destinationHeight) {
+		for (int y = 0; y < destinationHeight; y++) {
+			for (int x = 0; x < destinationWidth; x++) {
+				int sampledX = sourceX + sourceWidth - 1
+						- Math.min(sourceWidth - 1, x * sourceWidth / destinationWidth);
+				int sampledY = sourceY + Math.min(sourceHeight - 1, y * sourceHeight / destinationHeight);
+				destination.setPixel(destinationX + x, destinationY + y, source.getPixel(sampledX, sampledY));
+			}
+		}
+	}
+
+	@FunctionalInterface
+	private interface RegionCopier {
+		void copy(NativeImage source, NativeImage destination,
+				int sourceX, int sourceY, int sourceWidth, int sourceHeight,
+				int destinationX, int destinationY, int destinationWidth, int destinationHeight);
+	}
+
+	private static NativeImage legacyArmorTexture(NativeImage source, int width, int height) {
 		NativeImage result = new NativeImage(width, height, true);
 		Map<Integer, Integer> opaqueCounts = new HashMap<>();
 		for (int y = 0; y < source.getHeight(); y++) {
@@ -284,7 +454,7 @@ public final class RuntimeTextureStore {
 			NativeImage baby
 	) {
 		private void close() {
-			image.close();
+			if (image != null) image.close();
 			if (humanoid != null) humanoid.close();
 			if (leggings != null) leggings.close();
 			if (baby != null) baby.close();

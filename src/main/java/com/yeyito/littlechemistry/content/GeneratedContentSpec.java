@@ -5,11 +5,12 @@ public record GeneratedContentSpec(
 		DynamicBlockProperties block,
 		DynamicItemProperties item,
 		DynamicArmorProperties armor,
+		DynamicArmorDisplayTextureSpec armorDisplayTexture,
 		String behaviorSource
 ) {
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
-		this(texture, block, item, null, behaviorSource);
+		this(texture, block, item, null, null, behaviorSource);
 	}
 
 	public GeneratedContentSpec {
@@ -25,8 +26,19 @@ public record GeneratedContentSpec(
 		} else {
 			texture.requireBinaryAlpha();
 		}
-		if (behaviorSource == null || behaviorSource.isBlank()) {
-			throw new IllegalArgumentException("Generated content requires compiled Java behavior source");
+		if ((armor == null) != (armorDisplayTexture == null)) {
+			throw new IllegalArgumentException("Generated armor requires a separate 64x32 display texture");
 		}
+		if (behaviorSource != null) {
+			behaviorSource = behaviorSource.strip();
+			if (behaviorSource.isEmpty()) behaviorSource = null;
+			if (behaviorSource != null && (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0)) {
+				throw new IllegalArgumentException("Generated behavior source is invalid");
+			}
+		}
+	}
+
+	public boolean hasBehavior() {
+		return behaviorSource != null;
 	}
 }

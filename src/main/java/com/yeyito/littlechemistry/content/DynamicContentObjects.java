@@ -150,7 +150,7 @@ public final class DynamicContentObjects {
 			stack.set(DataComponents.MAX_DAMAGE, armor.durability());
 			stack.set(DataComponents.DAMAGE, 0);
 			stack.set(DataComponents.EQUIPPABLE, Equippable.builder(armor.slot().equipmentSlot())
-					.setAsset(armorAsset(definition.textureHash()))
+					.setAsset(armorAsset(definition.effectiveArmorDisplayTextureHash()))
 					.build());
 			stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes(armor));
 		}

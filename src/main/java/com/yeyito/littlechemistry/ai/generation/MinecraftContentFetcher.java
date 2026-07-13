@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
@@ -44,11 +45,13 @@ import java.util.Set;
 final class MinecraftContentFetcher {
 	private static final String BLOCK_PREFIX = "assets/minecraft/textures/block/";
 	private static final String ITEM_PREFIX = "assets/minecraft/textures/item/";
+	private static final String ARMOR_DISPLAY_PREFIX = "assets/minecraft/textures/entity/equipment/";
 	private static final int RETURNED_REFERENCES = 6;
 	private static final List<String> BLOCK_TEXTURE_SUFFIXES = List.of(
 			"_front_on", "_side_on", "_top_on", "_bottom_on", "_front", "_side", "_top", "_bottom", "_back", "_on"
 	);
 	private static volatile List<TextureEntry> textureIndex;
+	private static volatile List<ArmorDisplayTextureEntry> armorDisplayTextureIndex;
 
 	private MinecraftContentFetcher() {
 	}
@@ -59,6 +62,67 @@ final class MinecraftContentFetcher {
 
 	static ContentGenerationDraft.ToolExecution fetchTexture(JsonObject arguments) {
 		return fetch(arguments, true);
+	}
+
+	static ContentGenerationDraft.ToolExecution fetchArmorDisplayTexture(JsonObject arguments) {
+		try {
+			if (arguments.has("_malformed")) throw new IllegalArgumentException("Tool arguments were not valid JSON");
+			requireOnly(arguments, "query", "slot");
+			String query = requiredString(arguments, "query").trim().toLowerCase(Locale.ROOT);
+			String slot = requiredString(arguments, "slot").trim().toLowerCase(Locale.ROOT);
+			if (query.isEmpty() || query.length() > 80) {
+				throw new IllegalArgumentException("query must contain between 1 and 80 characters");
+			}
+			if (!Set.of("head", "chest", "leggings", "boots").contains(slot)) {
+				throw new IllegalArgumentException("slot must be head, chest, leggings, or boots");
+			}
+			String layer = slot.equals("leggings") ? "humanoid_leggings" : "humanoid";
+			List<ScoredArmorDisplayTexture> matches = matchingArmorDisplayTextures(query, layer);
+			if (matches.isEmpty()) {
+				return ContentGenerationDraft.ToolExecution.error(
+						"NO_ARMOR_DISPLAY_TEXTURE_MATCH",
+						"No installed vanilla " + layer + " equipment texture matched '" + query
+								+ "'. Try a material such as iron, copper, diamond, gold, leather, chainmail, or netherite."
+				);
+			}
+
+			JsonArray references = new JsonArray();
+			List<String> failures = new ArrayList<>();
+			for (ScoredArmorDisplayTexture match : matches) {
+				try {
+					references.add(armorDisplayTexturePreview(match.texture()));
+				} catch (Exception error) {
+					failures.add(match.texture().id() + ": " + safeMessage(error));
+				}
+			}
+			if (references.isEmpty()) {
+				return ContentGenerationDraft.ToolExecution.error(
+						"ARMOR_DISPLAY_TEXTURE_READ_FAILED",
+						"Matching vanilla armor display textures were found but could not be read: " + String.join("; ", failures)
+				);
+			}
+
+			JsonObject result = new JsonObject();
+			result.addProperty("query", query);
+			result.addProperty("slot", slot);
+			result.addProperty("targetLayer", layer);
+			result.addProperty("textureFormat", "little_chemistry:indexed_rgba_64x32");
+			result.addProperty("setArmorDisplayTextureCompatible", true);
+			result.add("authoringInstructions", armorDisplayTextureInstructions(layer));
+			result.add("references", references);
+			if (!failures.isEmpty()) {
+				JsonArray warnings = new JsonArray();
+				failures.forEach(warnings::add);
+				result.add("warnings", warnings);
+			}
+			LittleChemistry.LOGGER.info("Fetched vanilla Minecraft armor display textures for '{}' ({}): {}",
+					query, layer, matches.stream().map(match -> match.texture().id()).toList());
+			return ContentGenerationDraft.ToolExecution.success(result, null);
+		} catch (IllegalArgumentException error) {
+			return ContentGenerationDraft.ToolExecution.error("INVALID_ARGUMENT", safeMessage(error));
+		} catch (Exception error) {
+			return ContentGenerationDraft.ToolExecution.error("TOOL_FAILURE", safeMessage(error));
+		}
 	}
 
 	private static ContentGenerationDraft.ToolExecution fetch(JsonObject arguments, boolean textures) {
@@ -189,6 +253,7 @@ final class MinecraftContentFetcher {
 			JsonObject encoded = new JsonObject();
 			encoded.addProperty("slot", equippable.slot().getSerializedName());
 			encoded.addProperty("swappable", equippable.swappable());
+			equippable.assetId().ifPresent(asset -> encoded.addProperty("equipmentAsset", asset.identifier().toString()));
 			result.add("equippable", encoded);
 		}
 		Weapon weapon = stack.get(DataComponents.WEAPON);
@@ -360,6 +425,21 @@ final class MinecraftContentFetcher {
 		return matches.size() <= RETURNED_REFERENCES ? List.copyOf(matches) : List.copyOf(matches.subList(0, RETURNED_REFERENCES));
 	}
 
+	private static List<ScoredArmorDisplayTexture> matchingArmorDisplayTextures(String query, String layer) throws IOException {
+		String normalizedQuery = normalize(query);
+		String[] queryParts = normalizedQuery.split("_+");
+		List<ScoredArmorDisplayTexture> matches = new ArrayList<>();
+		for (ArmorDisplayTextureEntry texture : armorDisplayTextureIndex()) {
+			if (!texture.layer().equals(layer)) continue;
+			int score = score(normalize(texture.name()), normalizedQuery, queryParts);
+			if (score > 0) matches.add(new ScoredArmorDisplayTexture(texture, score));
+		}
+		matches.sort(Comparator.comparingInt(ScoredArmorDisplayTexture::score).reversed()
+				.thenComparing(match -> match.texture().id()));
+		return matches.size() <= RETURNED_REFERENCES
+				? List.copyOf(matches) : List.copyOf(matches.subList(0, RETURNED_REFERENCES));
+	}
+
 	private static int score(String name, String query, String[] queryParts) {
 		if (name.equals(query)) return 10_000;
 		int score = 0;
@@ -395,6 +475,27 @@ final class MinecraftContentFetcher {
 		}
 	}
 
+	private static List<ArmorDisplayTextureEntry> armorDisplayTextureIndex() throws IOException {
+		List<ArmorDisplayTextureEntry> existing = armorDisplayTextureIndex;
+		if (existing != null) return existing;
+		synchronized (MinecraftContentFetcher.class) {
+			if (armorDisplayTextureIndex != null) return armorDisplayTextureIndex;
+			ModContainer minecraft = FabricLoader.getInstance().getModContainer("minecraft")
+					.orElseThrow(() -> new IOException("Minecraft's installed resources are unavailable"));
+			List<ArmorDisplayTextureEntry> discovered = new ArrayList<>();
+			for (Path root : minecraft.getRootPaths()) {
+				indexArmorDisplayDirectory(root, "humanoid", discovered);
+				indexArmorDisplayDirectory(root, "humanoid_leggings", discovered);
+			}
+			discovered.sort(Comparator.comparing(ArmorDisplayTextureEntry::id));
+			if (discovered.isEmpty()) {
+				throw new IOException("This Minecraft installation does not expose humanoid equipment textures to the server process");
+			}
+			armorDisplayTextureIndex = List.copyOf(discovered);
+			return armorDisplayTextureIndex;
+		}
+	}
+
 	private static void indexDirectory(Path root, String prefix, String kind, List<TextureEntry> destination) throws IOException {
 		Path directory = root.resolve(prefix);
 		if (!Files.isDirectory(directory)) return;
@@ -405,6 +506,84 @@ final class MinecraftContentFetcher {
 				destination.add(new TextureEntry(kind + "/" + name, kind, name, path));
 			});
 		}
+	}
+
+	private static void indexArmorDisplayDirectory(Path root, String layer,
+			List<ArmorDisplayTextureEntry> destination) throws IOException {
+		Path directory = root.resolve(ARMOR_DISPLAY_PREFIX).resolve(layer);
+		if (!Files.isDirectory(directory)) return;
+		try (var paths = Files.walk(directory)) {
+			paths.filter(Files::isRegularFile).filter(path -> path.getFileName().toString().endsWith(".png")).forEach(path -> {
+				String relative = directory.relativize(path).toString().replace('\\', '/');
+				String name = relative.substring(0, relative.length() - 4);
+				destination.add(new ArmorDisplayTextureEntry(
+						"entity/equipment/" + layer + "/" + name, layer, name, path));
+			});
+		}
+	}
+
+	private static JsonObject armorDisplayTexturePreview(ArmorDisplayTextureEntry texture) throws IOException {
+		BufferedImage image;
+		try (InputStream input = Files.newInputStream(texture.path())) {
+			image = ImageIO.read(input);
+		}
+		if (image == null || image.getWidth() != DynamicArmorDisplayTextureSpec.WIDTH
+				|| image.getHeight() != DynamicArmorDisplayTextureSpec.HEIGHT) {
+			throw new IOException("Vanilla humanoid equipment texture is not 64x32 pixels");
+		}
+		DynamicArmorDisplayTextureSpec encoded = encodeArmorDisplayTexture(image);
+		JsonArray palette = new JsonArray();
+		encoded.palette().forEach(palette::add);
+		JsonArray rows = new JsonArray();
+		encoded.rows().forEach(rows::add);
+		JsonObject result = new JsonObject();
+		result.addProperty("texture", texture.id());
+		result.addProperty("layer", texture.layer());
+		result.addProperty("sourceWidth", image.getWidth());
+		result.addProperty("sourceHeight", image.getHeight());
+		result.add("palette", palette);
+		result.add("rows", rows);
+		return result;
+	}
+
+	private static DynamicArmorDisplayTextureSpec encodeArmorDisplayTexture(BufferedImage image) {
+		int[] pixels = new int[DynamicArmorDisplayTextureSpec.WIDTH * DynamicArmorDisplayTextureSpec.HEIGHT];
+		Map<Integer, Integer> counts = new HashMap<>();
+		for (int y = 0; y < DynamicArmorDisplayTextureSpec.HEIGHT; y++) {
+			for (int x = 0; x < DynamicArmorDisplayTextureSpec.WIDTH; x++) {
+				int argb = normalizeAlpha(image.getRGB(x, y));
+				pixels[y * DynamicArmorDisplayTextureSpec.WIDTH + x] = argb;
+				counts.merge(argb, 1, Integer::sum);
+			}
+		}
+		List<Integer> palette = counts.entrySet().stream()
+				.sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed()
+						.thenComparing(entry -> Integer.toUnsignedLong(entry.getKey())))
+				.map(Map.Entry::getKey).limit(16).toList();
+		List<String> encodedPalette = palette.stream().map(MinecraftContentFetcher::rgba).toList();
+		String keys = "0123456789ABCDEF";
+		List<String> rows = new ArrayList<>(DynamicArmorDisplayTextureSpec.HEIGHT);
+		for (int y = 0; y < DynamicArmorDisplayTextureSpec.HEIGHT; y++) {
+			StringBuilder row = new StringBuilder(DynamicArmorDisplayTextureSpec.WIDTH);
+			for (int x = 0; x < DynamicArmorDisplayTextureSpec.WIDTH; x++) {
+				row.append(keys.charAt(nearestPaletteIndex(
+						pixels[y * DynamicArmorDisplayTextureSpec.WIDTH + x], palette)));
+			}
+			rows.add(row.toString());
+		}
+		return new DynamicArmorDisplayTextureSpec(encodedPalette, rows);
+	}
+
+	private static JsonArray armorDisplayTextureInstructions(String layer) {
+		JsonArray instructions = new JsonArray();
+		instructions.add("Choose a reference below and pass the top-level slot plus that reference's palette and all 32 rows to set_armor_display_texture; recolor or edit it while keeping every row exactly 64 palette keys long.");
+		instructions.add("This is the worn 64x32 equipment UV sheet, not the 16x16 inventory icon. Do not enlarge, tile, or paste the icon into it.");
+		instructions.add("Coordinates start at the top-left. Preserve transparent pixels outside UV islands so the armor model does not acquire unintended surfaces.");
+		instructions.add(layer.equals("humanoid_leggings")
+				? "The requested leggings use Minecraft's humanoid_leggings layer. Keep the vanilla leggings reference's waist and leg artwork in the same UV positions."
+				: "The requested piece uses Minecraft's humanoid layer. Standard UV bounds are head x=0..31/y=0..15, legs x=0..15/y=16..31, torso x=16..39/y=16..31, and arms x=40..55/y=16..31; only the parts for the equipped slot are rendered.");
+		instructions.add("Palette entries are RRGGBBAA. Use alpha 00 for transparent space and only alpha 00 or FF. Row characters 0-F index the palette.");
+		return instructions;
 	}
 
 	private static JsonObject texturePreview(TextureEntry texture) throws IOException {
@@ -510,9 +689,15 @@ final class MinecraftContentFetcher {
 	private record TextureEntry(String id, String kind, String name, Path path) {
 	}
 
+	private record ArmorDisplayTextureEntry(String id, String layer, String name, Path path) {
+	}
+
 	private record TextureSample(DynamicTextureSpec texture, int sourceWidth, int sourceHeight) {
 	}
 
 	private record ScoredTexture(TextureEntry texture, int score) {
+	}
+
+	private record ScoredArmorDisplayTexture(ArmorDisplayTextureEntry texture, int score) {
 	}
 }
