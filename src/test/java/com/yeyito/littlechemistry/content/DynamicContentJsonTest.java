@@ -25,7 +25,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(5, decoded.format());
+		assertEquals(6, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 	}
@@ -48,8 +48,26 @@ class DynamicContentJsonTest {
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 	}
 
+	@Test
+	void roundTripPreservesArmorSlotAndProtection() {
+		DynamicArmorProperties armor = new DynamicArmorProperties(
+				DynamicArmorSlot.LEGGINGS, Rarity.RARE, true, 18, 6.0, 2.0, 0.1, 495);
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ARMOR, "star_leggings", "Star Leggings", 0L, TEXTURE_HASH,
+				null, null, null, armor, null);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
+				.definitions().getFirst();
+
+		assertEquals(DynamicContentType.ARMOR, decoded.type());
+		assertEquals(DynamicArmorSlot.LEGGINGS, decoded.armor().slot());
+		assertEquals(6.0, decoded.armor().defense());
+		assertEquals(495, decoded.armor().durability());
+	}
+
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
 		return new DynamicContentDefinition(
-				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null);
+				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null, null);
 	}
 }

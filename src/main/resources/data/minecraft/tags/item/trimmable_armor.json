@@ -1,0 +1,9 @@
+{
+  "replace": false,
+  "values": [
+    "little_chemistry:dynamic_armor_head",
+    "little_chemistry:dynamic_armor_chest",
+    "little_chemistry:dynamic_armor_leggings",
+    "little_chemistry:dynamic_armor_boots"
+  ]
+}

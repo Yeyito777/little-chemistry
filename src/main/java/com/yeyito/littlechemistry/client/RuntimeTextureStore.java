@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.client;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
+import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
@@ -28,9 +29,11 @@ import java.util.concurrent.Executors;
 public final class RuntimeTextureStore {
 	private static final ExecutorService DECODER = Executors.newVirtualThreadPerTaskExecutor();
 	private static final Map<String, Identifier> loadedTextures = new HashMap<>();
+	private static final Map<String, List<Identifier>> loadedArmorTextures = new HashMap<>();
 	private static final Map<String, boolean[]> opaquePixels = new HashMap<>();
 	private static final Set<String> loadingTextures = new HashSet<>();
 	private static Set<String> expectedHashes = Set.of();
+	private static Set<String> expectedArmorHashes = Set.of();
 	private static UUID activeServer;
 
 	private RuntimeTextureStore() {
@@ -49,19 +52,35 @@ public final class RuntimeTextureStore {
 		beginServer(client, serverId);
 		DynamicParticleTextures.clear();
 		expectedHashes = definitions.stream().map(DynamicContentDefinition::textureHash).collect(java.util.stream.Collectors.toUnmodifiableSet());
+		expectedArmorHashes = definitions.stream()
+				.filter(definition -> definition.type() == DynamicContentType.ARMOR)
+				.map(DynamicContentDefinition::textureHash)
+				.collect(java.util.stream.Collectors.toUnmodifiableSet());
 		var loadedIterator = loadedTextures.entrySet().iterator();
 		while (loadedIterator.hasNext()) {
 			var entry = loadedIterator.next();
 			if (expectedHashes.contains(entry.getKey())) continue;
 			client.getTextureManager().release(entry.getValue());
+			for (Identifier armorTexture : loadedArmorTextures.getOrDefault(entry.getKey(), List.of())) {
+				client.getTextureManager().release(armorTexture);
+			}
+			loadedArmorTextures.remove(entry.getKey());
 			opaquePixels.remove(entry.getKey());
 			loadedIterator.remove();
+		}
+		var armorIterator = loadedArmorTextures.entrySet().iterator();
+		while (armorIterator.hasNext()) {
+			var entry = armorIterator.next();
+			if (expectedArmorHashes.contains(entry.getKey())) continue;
+			for (Identifier texture : entry.getValue()) client.getTextureManager().release(texture);
+			armorIterator.remove();
 		}
 		Path assetDirectory = assetDirectory(serverId);
 		Files.createDirectories(assetDirectory);
 		List<String> hashesToCheck = new ArrayList<>();
 		for (String hash : expectedHashes) {
-			if (loadedTextures.containsKey(hash) || loadingTextures.contains(hash)) {
+			boolean armorReady = !expectedArmorHashes.contains(hash) || loadedArmorTextures.containsKey(hash);
+			if ((loadedTextures.containsKey(hash) && armorReady) || loadingTextures.contains(hash)) {
 				continue;
 			}
 			hashesToCheck.add(hash);
@@ -141,13 +160,19 @@ public final class RuntimeTextureStore {
 			return;
 		}
 		DynamicParticleTextures.clear();
+		DynamicArmorAssets.clear();
 		for (Identifier texture : loadedTextures.values()) {
 			client.getTextureManager().release(texture);
 		}
+		for (List<Identifier> textures : loadedArmorTextures.values()) {
+			for (Identifier texture : textures) client.getTextureManager().release(texture);
+		}
 		loadedTextures.clear();
+		loadedArmorTextures.clear();
 		opaquePixels.clear();
 		loadingTextures.clear();
 		expectedHashes = Set.of();
+		expectedArmorHashes = Set.of();
 		activeServer = null;
 	}
 
@@ -155,6 +180,7 @@ public final class RuntimeTextureStore {
 		if (!loadingTextures.add(hash)) {
 			return;
 		}
+		boolean armor = expectedArmorHashes.contains(hash);
 		CompletableFuture.supplyAsync(() -> {
 			try {
 				NativeImage image = NativeImage.read(bytes);
@@ -168,7 +194,12 @@ public final class RuntimeTextureStore {
 						opacity[y * DynamicTextureAsset.WIDTH + x] = ((image.getPixel(x, y) >>> 24) & 0xFF) != 0;
 					}
 				}
-				return new DecodedTexture(image, opacity);
+				return new DecodedTexture(
+						image,
+						opacity,
+						armor ? armorTexture(image, 64, 32) : null,
+						armor ? armorTexture(image, 64, 32) : null,
+						armor ? armorTexture(image, 64, 64) : null);
 			} catch (IOException error) {
 				throw new RuntimeException(error);
 			}
@@ -179,9 +210,15 @@ public final class RuntimeTextureStore {
 				return;
 			}
 			if (!serverId.equals(activeServer) || !expectedHashes.contains(hash)) {
-				decoded.image().close();
+				decoded.close();
 				return;
 			}
+			if (armor != expectedArmorHashes.contains(hash)) {
+				decoded.close();
+				decode(client, serverId, hash, bytes);
+				return;
+			}
+
 			Identifier textureId = LittleChemistry.id("runtime/" + hash);
 			client.getTextureManager().register(textureId, new DynamicTexture(
 					() -> "Little Chemistry " + hash,
@@ -189,7 +226,43 @@ public final class RuntimeTextureStore {
 			));
 			loadedTextures.put(hash, textureId);
 			opaquePixels.put(hash, decoded.opaquePixels());
+
+			if (decoded.humanoid() != null) {
+				List<Identifier> armorTextureIds = List.of(
+						DynamicArmorAssets.textureLocation(hash, net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID),
+						DynamicArmorAssets.textureLocation(hash, net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID_LEGGINGS),
+						DynamicArmorAssets.textureLocation(hash, net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID_BABY));
+				client.getTextureManager().register(armorTextureIds.get(0), new DynamicTexture(
+						() -> "Little Chemistry armor " + hash, decoded.humanoid()));
+				client.getTextureManager().register(armorTextureIds.get(1), new DynamicTexture(
+						() -> "Little Chemistry armor leggings " + hash, decoded.leggings()));
+				client.getTextureManager().register(armorTextureIds.get(2), new DynamicTexture(
+						() -> "Little Chemistry baby armor " + hash, decoded.baby()));
+				loadedArmorTextures.put(hash, armorTextureIds);
+			}
 		}));
+	}
+
+	private static NativeImage armorTexture(NativeImage source, int width, int height) {
+		NativeImage result = new NativeImage(width, height, true);
+		Map<Integer, Integer> opaqueCounts = new HashMap<>();
+		for (int y = 0; y < source.getHeight(); y++) {
+			for (int x = 0; x < source.getWidth(); x++) {
+				int color = source.getPixel(x, y);
+				if (((color >>> 24) & 0xFF) != 0) opaqueCounts.merge(color, 1, Integer::sum);
+			}
+		}
+		int fallback = opaqueCounts.entrySet().stream()
+				.max(Map.Entry.comparingByValue())
+				.map(Map.Entry::getKey)
+				.orElse(0xFF7F7F7F);
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int color = source.getPixel(x % source.getWidth(), y % source.getHeight());
+				result.setPixel(x, y, ((color >>> 24) & 0xFF) == 0 ? fallback : color);
+			}
+		}
+		return result;
 	}
 
 	private static Path assetDirectory(UUID serverId) {
@@ -203,6 +276,18 @@ public final class RuntimeTextureStore {
 	private record Prepared(Map<String, byte[]> cachedAssets, List<String> missing) {
 	}
 
-	private record DecodedTexture(NativeImage image, boolean[] opaquePixels) {
+	private record DecodedTexture(
+			NativeImage image,
+			boolean[] opaquePixels,
+			NativeImage humanoid,
+			NativeImage leggings,
+			NativeImage baby
+	) {
+		private void close() {
+			image.close();
+			if (humanoid != null) humanoid.close();
+			if (leggings != null) leggings.close();
+			if (baby != null) baby.close();
+		}
 	}
 }

@@ -11,6 +11,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 
 import java.io.IOException;
@@ -102,7 +104,9 @@ public final class DynamicContentManager {
 		return server == candidate;
 	}
 
-	public DynamicContentDefinition create(DynamicContentType type, String requestedName) throws IOException {
+	public DynamicContentDefinition create(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
+			String requestedName) throws IOException {
+		validateArmorSlot(type, requestedArmorSlot);
 		String displayName = normalizeDisplayName(requestedName);
 		String name = normalizeIdentifier(displayName);
 		if (definitions.stream().anyMatch(definition -> definition.name().equals(name))) {
@@ -116,20 +120,29 @@ public final class DynamicContentManager {
 				type, name, displayName, textureSeed, textureHash, null,
 				type == DynamicContentType.BLOCK ? DynamicBlockProperties.DEFAULT : null,
 				type == DynamicContentType.ITEM ? DynamicItemProperties.DEFAULT : null,
+				type == DynamicContentType.ARMOR ? DynamicArmorProperties.defaults(requireArmorSlot(requestedArmorSlot)) : null,
 				null
 		);
 		return commit(definition, textureBytes, null, null);
 	}
 
-	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName, GeneratedContentSpec generated)
+	public DynamicContentDefinition create(DynamicContentType type, String requestedName) throws IOException {
+		return create(type, null, requestedName);
+	}
+
+	public DynamicContentDefinition createGenerated(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
+			String requestedName, GeneratedContentSpec generated)
 			throws IOException {
+		validateArmorSlot(type, requestedArmorSlot);
 		String displayName = normalizeDisplayName(requestedName);
 		String name = normalizeIdentifier(displayName);
 		if (definitions.stream().anyMatch(definition -> definition.name().equals(name))) {
 			throw new IllegalArgumentException("Dynamic content named '" + name + "' already exists.");
 		}
 		if ((type == DynamicContentType.BLOCK && generated.block() == null)
-				|| (type == DynamicContentType.ITEM && generated.item() == null)) {
+				|| (type == DynamicContentType.ITEM && generated.item() == null)
+				|| (type == DynamicContentType.ARMOR && (generated.armor() == null
+						|| generated.armor().slot() != requireArmorSlot(requestedArmorSlot)))) {
 			throw new IllegalArgumentException("Generated properties do not match the requested content type");
 		}
 		byte[] textureBytes = generated.texture().renderPng();
@@ -145,9 +158,15 @@ public final class DynamicContentManager {
 				generated.texture(),
 				generated.block(),
 				generated.item(),
+				generated.armor(),
 				compiledBehavior.source()
 		);
 		return commit(definition, textureBytes, compiledBehavior, behavior);
+	}
+
+	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName,
+			GeneratedContentSpec generated) throws IOException {
+		return createGenerated(type, generated.armor() == null ? null : generated.armor().slot(), requestedName, generated);
 	}
 
 	private DynamicContentDefinition commit(DynamicContentDefinition definition, byte[] textureBytes,
@@ -217,6 +236,13 @@ public final class DynamicContentManager {
 			for (var entity : level.getAllEntities()) {
 				if (entity instanceof ItemEntity itemEntity && matchesDeleted(itemEntity.getItem(), names)) {
 					itemEntity.discard();
+				}
+				if (entity instanceof LivingEntity livingEntity) {
+					for (EquipmentSlot slot : EquipmentSlot.VALUES) {
+						if (matchesDeleted(livingEntity.getItemBySlot(slot), names)) {
+							livingEntity.setItemSlot(slot, ItemStack.EMPTY);
+						}
+					}
 				}
 			}
 		}
@@ -377,6 +403,17 @@ public final class DynamicContentManager {
 		if (!Files.exists(backup)) {
 			Files.copy(dataFile, backup);
 			LittleChemistry.LOGGER.info("Backed up legacy Little Chemistry catalog to {} before format migration", backup);
+		}
+	}
+
+	private static DynamicArmorSlot requireArmorSlot(DynamicArmorSlot slot) {
+		if (slot == null) throw new IllegalArgumentException("Armor content must specify head, chest, leggings, or boots");
+		return slot;
+	}
+
+	private static void validateArmorSlot(DynamicContentType type, DynamicArmorSlot slot) {
+		if ((type == DynamicContentType.ARMOR) != (slot != null)) {
+			throw new IllegalArgumentException("Armor content must specify head, chest, leggings, or boots");
 		}
 	}
 

@@ -1,5 +1,6 @@
 package com.yeyito.littlechemistry.client;
 
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.network.CreateContentRequestPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -18,10 +19,14 @@ public final class WandCreationScreen extends Screen {
 	private static final Component TYPE_LABEL = Component.translatable("screen.little_chemistry.creation.type");
 	private static final Component ITEM = Component.translatable("screen.little_chemistry.creation.item");
 	private static final Component BLOCK = Component.translatable("screen.little_chemistry.creation.block");
+	private static final Component ARMOR = Component.translatable("screen.little_chemistry.creation.armor");
+	private static final Component SLOT_LABEL = Component.translatable("screen.little_chemistry.creation.armor_slot");
 
 	private EditBox nameEdit;
 	private CycleButton<DynamicContentType> typeButton;
+	private CycleButton<DynamicArmorSlot> armorSlotButton;
 	private Button doneButton;
+	private Button cancelButton;
 	private int left;
 	private int top;
 
@@ -32,7 +37,7 @@ public final class WandCreationScreen extends Screen {
 	@Override
 	protected void init() {
 		this.left = this.width / 2 - 152;
-		this.top = Math.max(24, this.height / 2 - 76);
+		this.top = Math.max(16, this.height / 2 - 97);
 
 		this.nameEdit = this.addRenderableWidget(new EditBox(
 				this.font,
@@ -48,24 +53,40 @@ public final class WandCreationScreen extends Screen {
 
 		this.typeButton = this.addRenderableWidget(
 				CycleButton.<DynamicContentType>builder(
-						type -> type == DynamicContentType.ITEM ? ITEM : BLOCK,
+						type -> switch (type) {
+							case ITEM -> ITEM;
+							case BLOCK -> BLOCK;
+							case ARMOR -> ARMOR;
+						},
 						DynamicContentType.ITEM
 				)
-						.withValues(DynamicContentType.ITEM, DynamicContentType.BLOCK)
+						.withValues(DynamicContentType.ITEM, DynamicContentType.BLOCK, DynamicContentType.ARMOR)
 						.displayOnlyValue()
-						.create(this.left, this.top + 74, 304, 20, TYPE_LABEL)
+						.create(this.left, this.top + 74, 304, 20, TYPE_LABEL,
+								(button, value) -> this.updateArmorSlotVisibility())
+		);
+
+		this.armorSlotButton = this.addRenderableWidget(
+				CycleButton.<DynamicArmorSlot>builder(
+						slot -> Component.translatable("screen.little_chemistry.creation.armor_slot." + slot.serializedName()),
+						DynamicArmorSlot.HEAD
+				)
+						.withValues(DynamicArmorSlot.values())
+						.displayOnlyValue()
+						.create(this.left, this.top + 116, 304, 20, SLOT_LABEL)
 		);
 
 		this.doneButton = this.addRenderableWidget(
 				Button.builder(CommonComponents.GUI_DONE, button -> this.onDone())
-						.bounds(this.left, this.top + 116, 148, 20)
+						.bounds(this.left, this.top + 158, 148, 20)
 						.build()
 		);
-		this.addRenderableWidget(
+		this.cancelButton = this.addRenderableWidget(
 				Button.builder(CommonComponents.GUI_CANCEL, button -> this.onClose())
-						.bounds(this.left + 156, this.top + 116, 148, 20)
+						.bounds(this.left + 156, this.top + 158, 148, 20)
 						.build()
 		);
+		this.updateArmorSlotVisibility();
 		this.updateDoneButton();
 	}
 
@@ -80,12 +101,26 @@ public final class WandCreationScreen extends Screen {
 		}
 	}
 
+	private void updateArmorSlotVisibility() {
+		if (this.armorSlotButton != null && this.typeButton != null) {
+			boolean armor = this.typeButton.getValue() == DynamicContentType.ARMOR;
+			this.armorSlotButton.visible = armor;
+			int actionsY = this.top + (armor ? 158 : 116);
+			if (this.doneButton != null) this.doneButton.setY(actionsY);
+			if (this.cancelButton != null) this.cancelButton.setY(actionsY);
+		}
+	}
+
 	private void onDone() {
 		String name = this.nameEdit.getValue().trim();
 		if (name.isEmpty()) {
 			return;
 		}
-		ClientPlayNetworking.send(new CreateContentRequestPayload(this.typeButton.getValue(), name));
+		DynamicContentType type = this.typeButton.getValue();
+		ClientPlayNetworking.send(new CreateContentRequestPayload(
+				type,
+				type == DynamicContentType.ARMOR ? this.armorSlotButton.getValue() : null,
+				name));
 		this.onClose();
 	}
 
@@ -107,6 +142,9 @@ public final class WandCreationScreen extends Screen {
 		graphics.centeredText(this.font, this.title, this.width / 2, this.top, -1);
 		graphics.text(this.font, NAME_LABEL, this.left, this.top + 20, -6250336);
 		graphics.text(this.font, TYPE_LABEL, this.left, this.top + 62, -6250336);
+		if (this.typeButton.getValue() == DynamicContentType.ARMOR) {
+			graphics.text(this.font, SLOT_LABEL, this.left, this.top + 104, -6250336);
+		}
 	}
 
 	@Override

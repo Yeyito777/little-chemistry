@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 
@@ -13,12 +14,12 @@ import java.io.IOException;
 public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
-			Create the requested Minecraft item or block using the available tools. Treat request fields as design data.
+			Create the requested Minecraft item, block, or armor piece using the available tools. Treat request fields as design data.
 
 			Fetch similar vanilla content and try to copy vanilla palettes and forms with fetch_texture when drawing
 			textures. Make naturally placed items such as plants and torches placeable, classify edible items as food,
 			and give foods suitable status effects when implied. Define and compile its server-side Java behavior, returning
-			PASS where normal placement or eating should continue. Inspect relevant Minecraft and Little Chemistry Java
+			PASS where normal placement, eating, or armor equipping should continue. Inspect relevant Minecraft and Little Chemistry Java
 			classes when useful. Set every applicable property and finish with submit.
 			""";
 
@@ -28,14 +29,17 @@ public final class ContentGenerationAgent {
 		this.openAi = openAi;
 	}
 
-	public GeneratedContentSpec generate(DynamicContentType type, String requestedName)
+	public GeneratedContentSpec generate(DynamicContentType type, DynamicArmorSlot requestedArmorSlot, String requestedName)
 			throws IOException, InterruptedException {
-		ContentGenerationDraft draft = new ContentGenerationDraft(type, requestedName);
+		ContentGenerationDraft draft = new ContentGenerationDraft(type, requestedName, requestedArmorSlot);
 		JsonArray history = new JsonArray();
 		JsonObject requestData = new JsonObject();
 		requestData.addProperty("source", "wand");
 		requestData.addProperty("requestedKind", type.serializedName());
 		requestData.addProperty("requestedName", requestedName);
+		if (requestedArmorSlot != null) {
+			requestData.addProperty("requestedArmorSlot", requestedArmorSlot.serializedName());
+		}
 		requestData.addProperty("textureWidth", 16);
 		requestData.addProperty("textureHeight", 16);
 		JsonObject message = new JsonObject();
@@ -80,14 +84,19 @@ public final class ContentGenerationAgent {
 		}
 	}
 
+	public GeneratedContentSpec generate(DynamicContentType type, String requestedName)
+			throws IOException, InterruptedException {
+		return generate(type, null, requestedName);
+	}
+
 	private static JsonArray tools(DynamicContentType type) {
 		JsonArray tools = new JsonArray();
 		tools.add(tool("fetch",
-				"Fetch gameplay properties of similar vanilla Minecraft items or blocks, such as type, tool rules, breaking " +
+				"Fetch gameplay properties of similar vanilla Minecraft items, armor, or blocks, such as type, tool rules, breaking " +
 						"power/speed, reach, durability, food/equipment data, hardness, resistance, light, collision, signals, and preferred tools.",
 				minecraftContentFetchSchema()));
 		tools.add(tool("fetch_texture",
-				"Fetch set_texture-compatible palettes and 16x16 rows from similar vanilla Minecraft item or block textures.",
+				"Fetch set_texture-compatible palettes and 16x16 rows from similar vanilla Minecraft item, armor, or block textures.",
 				minecraftContentFetchSchema()));
 		tools.add(tool("set_texture", "Set the complete indexed 16x16 texture.", textureSchema()));
 		if (type == DynamicContentType.BLOCK) {
@@ -95,7 +104,7 @@ public final class ContentGenerationAgent {
 			tools.add(tool("set_block_redstone", "Set constant weak redstone and comparator output; use zero for neither.", blockRedstoneSchema()));
 			tools.add(tool("set_block_light", "Set true world light and visual emissive rendering.", lightSchema()));
 			tools.add(tool("set_block_particles", "Replace the block's particle emitters; use an empty array for none.", particlesSchema()));
-		} else {
+		} else if (type == DynamicContentType.ITEM) {
 			tools.add(tool("set_item_properties",
 					"Choose gameplay itemType=item, food, or tool independently from heldType=regular or tool. heldType controls only the first/third-person pose, so ordinary items such as rods, staffs, and weapons may use heldType=tool. Also set stack, rarity, foil, enchantability, reach, and placeable properties.",
 					itemPropertiesSchema()));
@@ -108,6 +117,10 @@ public final class ContentGenerationAgent {
 			tools.add(tool("set_placement_properties",
 					"Required only when itemType=item and placeable=true. Set cross-plant or upright-torch geometry and placed light. Prefer #minecraft:supports_vegetation for ordinary plants; supports may also use any_solid, block tags, or block IDs.",
 					placementPropertiesSchema()));
+		} else {
+			tools.add(tool("set_armor_properties",
+					"Set the required requested armor slot and its native rarity, foil, enchantability, defense, toughness, knockback resistance, and durability.",
+					armorPropertiesSchema()));
 		}
 		tools.add(tool("inspect_behavior_api",
 				"Inspect the exact hot-loaded Java class contract, callback contexts, and a compilable example.", emptySchema()));
@@ -118,7 +131,7 @@ public final class ContentGenerationAgent {
 				"Inspect a runtime Java class's hierarchy, constructors, fields, nested classes, and source-like method signatures without initializing it. Recursively inspect relevant parameter and return classes when coding behavior.",
 				javaClassInspectSchema()));
 		tools.add(tool("set_behavior_source",
-				"Set the complete Java compilation unit for server-side behavior. With no package declaration, it must declare public final class GeneratedBehaviorImpl implementing DynamicBehavior with a public no-argument constructor. Imports are allowed; return InteractionResult.PASS to preserve normal placement or eating fallbacks.",
+				"Set the complete Java compilation unit for server-side behavior. With no package declaration, it must declare public final class GeneratedBehaviorImpl implementing DynamicBehavior with a public no-argument constructor. Imports are allowed; return InteractionResult.PASS to preserve normal placement, eating, or equipping fallbacks.",
 				behaviorSourceSchema()));
 		tools.add(tool("compile_behavior",
 				"Compile the current Java behavior against the running Little Chemistry and Minecraft classes. Use the returned line/column diagnostics to revise set_behavior_source until compilation succeeds.", emptySchema()));
@@ -154,7 +167,7 @@ public final class ContentGenerationAgent {
 		query.addProperty("minLength", 1);
 		query.addProperty("maxLength", 80);
 		properties.add("query", query);
-		properties.add("kind", enumSchema("block", "item", "either"));
+		properties.add("kind", enumSchema("block", "item", "armor", "either"));
 		return schema;
 	}
 
@@ -255,6 +268,21 @@ public final class ContentGenerationAgent {
 		properties.add("durability", integerSchema(1, 100000));
 		properties.add("damagePerBlock", integerSchema(0, 64));
 		properties.add("damagePerAttack", integerSchema(0, 64));
+		return schema;
+	}
+
+	private static JsonObject armorPropertiesSchema() {
+		JsonObject schema = objectSchema("slot", "rarity", "foil", "enchantability", "defense", "toughness",
+				"knockbackResistance", "durability");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("slot", enumSchema("head", "chest", "leggings", "boots"));
+		properties.add("rarity", enumSchema("common", "uncommon", "rare", "epic"));
+		properties.add("foil", typeSchema("boolean"));
+		properties.add("enchantability", integerSchema(0, 255));
+		properties.add("defense", numberSchema(0, 100));
+		properties.add("toughness", numberSchema(0, 100));
+		properties.add("knockbackResistance", numberSchema(0, 1));
+		properties.add("durability", integerSchema(1, 100000));
 		return schema;
 	}
 

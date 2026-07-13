@@ -7,6 +7,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -73,17 +74,36 @@ public final class LittleChemistryCommands {
 									.requires(CREATE_PREDICATE)
 								.then(literal("create")
 										.then(argument("name", StringArgumentType.greedyString())
-												.executes(context -> createDynamicContent(context, DynamicContentType.BLOCK)))))
+												.executes(context -> createDynamicContent(context, DynamicContentType.BLOCK, null)))))
+							.then(literal("armor")
+									.requires(CREATE_PREDICATE)
+									.then(literal("head").then(literal("create")
+											.then(argument("name", StringArgumentType.greedyString())
+													.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.HEAD)))))
+									.then(literal("chest").then(literal("create")
+											.then(argument("name", StringArgumentType.greedyString())
+													.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.CHEST)))))
+									.then(literal("leggings").then(literal("create")
+											.then(argument("name", StringArgumentType.greedyString())
+													.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.LEGGINGS)))))
+									.then(literal("boots").then(literal("create")
+											.then(argument("name", StringArgumentType.greedyString())
+													.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.BOOTS))))))
 		));
 	}
 
-	public static void createFromWand(ServerPlayer player, DynamicContentType type, String name) {
+	public static void createFromWand(ServerPlayer player, DynamicContentType type, DynamicArmorSlot armorSlot,
+			String name) {
 		CommandSourceStack source = player.createCommandSourceStack();
 		if (!CREATE_PREDICATE.test(source)) {
 			player.sendSystemMessage(error("You do not have permission to create dynamic content."));
 			return;
 		}
-		ContentGenerationService.request(player, type, name);
+		ContentGenerationService.request(player, type, armorSlot, name);
+	}
+
+	public static void createFromWand(ServerPlayer player, DynamicContentType type, String name) {
+		createFromWand(player, type, null, name);
 	}
 
 	public static void deleteFromWand(ServerPlayer player, java.util.List<String> names) {
@@ -107,16 +127,22 @@ public final class LittleChemistryCommands {
 	}
 
 	private static int createDynamicContent(CommandContext<CommandSourceStack> context, DynamicContentType type) {
-		return createDynamicContent(context.getSource(), type, StringArgumentType.getString(context, "name"));
+		return createDynamicContent(context, type, null);
 	}
 
-	private static int createDynamicContent(CommandSourceStack source, DynamicContentType type, String name) {
+	private static int createDynamicContent(CommandContext<CommandSourceStack> context, DynamicContentType type,
+			DynamicArmorSlot armorSlot) {
+		return createDynamicContent(context.getSource(), type, armorSlot, StringArgumentType.getString(context, "name"));
+	}
+
+	private static int createDynamicContent(CommandSourceStack source, DynamicContentType type,
+			DynamicArmorSlot armorSlot, String name) {
 		ServerPlayer player = source.getPlayer();
 		if (player == null) {
 			source.sendFailure(error("AI content generation must be started by a player."));
 			return 0;
 		}
-		return ContentGenerationService.request(player, type, name) ? 1 : 0;
+		return ContentGenerationService.request(player, type, armorSlot, name) ? 1 : 0;
 	}
 
 	private static int askLlm(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {

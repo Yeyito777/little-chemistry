@@ -48,7 +48,7 @@ public record DynamicTextureSpec(List<String> palette, List<String> rows) {
 		for (String color : palette) {
 			String alpha = color.substring(6, 8);
 			if (!alpha.equalsIgnoreCase("00") && !alpha.equalsIgnoreCase("FF")) {
-				throw new IllegalArgumentException("Item textures may use only fully transparent or fully opaque pixels");
+				throw new IllegalArgumentException("Item and armor textures may use only fully transparent or fully opaque pixels");
 			}
 		}
 	}

@@ -4,6 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
+import com.yeyito.littlechemistry.content.DynamicArmorProperties;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicBreakingPower;
@@ -33,6 +35,7 @@ import java.util.Set;
 final class ContentGenerationDraft {
 	private final DynamicContentType type;
 	private final String requestedName;
+	private final DynamicArmorSlot requestedArmorSlot;
 	private DynamicTextureSpec texture;
 	private DynamicMaterial material;
 	private Float hardness;
@@ -62,12 +65,27 @@ final class ContentGenerationDraft {
 	private Integer durability;
 	private Integer damagePerBlock;
 	private Integer damagePerAttack;
+	private Rarity armorRarity;
+	private Boolean armorFoil;
+	private Integer armorEnchantability;
+	private Double armorDefense;
+	private Double armorToughness;
+	private Double armorKnockbackResistance;
+	private Integer armorDurability;
 	private String behaviorSource;
 	private boolean behaviorCompiled;
 
 	ContentGenerationDraft(DynamicContentType type, String requestedName) {
+		this(type, requestedName, null);
+	}
+
+	ContentGenerationDraft(DynamicContentType type, String requestedName, DynamicArmorSlot requestedArmorSlot) {
 		this.type = type;
 		this.requestedName = requestedName;
+		this.requestedArmorSlot = requestedArmorSlot;
+		if ((type == DynamicContentType.ARMOR) != (requestedArmorSlot != null)) {
+			throw new IllegalArgumentException("Armor generation requires a head, chest, leggings, or boots slot");
+		}
 	}
 
 	ToolExecution execute(String tool, JsonObject arguments) {
@@ -85,6 +103,7 @@ final class ContentGenerationDraft {
 				case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
 				case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
 				case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
+				case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
 				case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
 				case "set_behavior_source" -> setBehaviorSource(arguments);
 				case "compile_behavior" -> compileBehavior(arguments);
@@ -134,7 +153,7 @@ final class ContentGenerationDraft {
 		} else {
 			candidate.requireBinaryAlpha();
 			if (usedColors.size() < 3 || luminanceRange < 40) {
-				throw new IllegalArgumentException("Item texture needs at least three used colors and stronger readable contrast");
+				throw new IllegalArgumentException("Item or armor texture needs at least three used colors and stronger readable contrast");
 			}
 		}
 		texture = candidate;
@@ -292,6 +311,32 @@ final class ContentGenerationDraft {
 		return ToolExecution.success(message("Item placement properties were accepted."), null);
 	}
 
+	private ToolExecution setArmorProperties(JsonObject arguments) {
+		requireOnly(arguments, "slot", "rarity", "foil", "enchantability", "defense", "toughness",
+				"knockbackResistance", "durability");
+		DynamicArmorSlot slot = DynamicArmorSlot.parse(requiredString(arguments, "slot"));
+		if (slot != requestedArmorSlot) {
+			throw new IllegalArgumentException("Armor slot must be " + requestedArmorSlot.serializedName());
+		}
+		Rarity candidateRarity = Rarity.valueOf(requiredString(arguments, "rarity").toUpperCase(Locale.ROOT));
+		boolean candidateFoil = requiredBoolean(arguments, "foil");
+		int candidateEnchantability = requiredInt(arguments, "enchantability");
+		double candidateDefense = requiredDouble(arguments, "defense");
+		double candidateToughness = requiredDouble(arguments, "toughness");
+		double candidateKnockbackResistance = requiredDouble(arguments, "knockbackResistance");
+		int candidateDurability = requiredInt(arguments, "durability");
+		new DynamicArmorProperties(requestedArmorSlot, candidateRarity, candidateFoil, candidateEnchantability,
+				candidateDefense, candidateToughness, candidateKnockbackResistance, candidateDurability);
+		armorRarity = candidateRarity;
+		armorFoil = candidateFoil;
+		armorEnchantability = candidateEnchantability;
+		armorDefense = candidateDefense;
+		armorToughness = candidateToughness;
+		armorKnockbackResistance = candidateKnockbackResistance;
+		armorDurability = candidateDurability;
+		return ToolExecution.success(message("Armor slot, protection, and durability properties were accepted."), null);
+	}
+
 	private ToolExecution inspectBehaviorApi(JsonObject arguments) {
 		requireOnly(arguments);
 		JsonObject details = new JsonObject();
@@ -300,7 +345,7 @@ final class ContentGenerationDraft {
 		details.addProperty("inspection", "Call inspect_java_class for com.yeyito.littlechemistry.behavior.DynamicBehavior and its context records to get the exact current signatures.");
 		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
 		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
-		details.addProperty("semantics", "Callbacks run only on the authoritative server. Return PASS for normal placement/eating/block-item fallback, SUCCESS or CONSUME after handling, and FAIL to reject the use.");
+		details.addProperty("semantics", "Callbacks run only on the authoritative server. Return PASS for normal placement, eating, equipping, or block-item fallback; return SUCCESS or CONSUME after handling, and FAIL to reject the use.");
 		details.addProperty("example", """
 				import com.yeyito.littlechemistry.behavior.*;
 				import net.minecraft.network.chat.Component;
@@ -386,9 +431,10 @@ final class ContentGenerationDraft {
 					new DynamicBlockProperties(material, hardness, preferredTool, requiresCorrectTool,
 							blockShape, redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles),
 					null,
+					null,
 					behaviorSource
 			);
-		} else {
+		} else if (type == DynamicContentType.ITEM) {
 			DynamicItemProperties item = itemType == DynamicItemType.TOOL
 					? new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
 							itemTool, breakingPower, breakingSpeed, attackDamage, attackSpeed,
@@ -397,7 +443,12 @@ final class ContentGenerationDraft {
 							DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
 							itemType == DynamicItemType.FOOD ? foodProperties : null,
 							itemType == DynamicItemType.ITEM && Boolean.TRUE.equals(placeable) ? placementProperties : null);
-			generated = new GeneratedContentSpec(texture, null, item, behaviorSource);
+			generated = new GeneratedContentSpec(texture, null, item, null, behaviorSource);
+		} else {
+			generated = new GeneratedContentSpec(texture, null, null,
+					new DynamicArmorProperties(requestedArmorSlot, armorRarity, armorFoil, armorEnchantability,
+							armorDefense, armorToughness, armorKnockbackResistance, armorDurability),
+					behaviorSource);
 		}
 		JsonObject details = message("The draft passed validation and was submitted.");
 		details.addProperty("submitted", true);
@@ -409,6 +460,7 @@ final class ContentGenerationDraft {
 		result.addProperty("ok", true);
 		result.addProperty("kind", type.serializedName());
 		result.addProperty("requestedName", requestedName);
+		if (requestedArmorSlot != null) result.addProperty("requestedArmorSlot", requestedArmorSlot.serializedName());
 		JsonArray missing = new JsonArray();
 		missing().forEach(missing::add);
 		result.add("missing", missing);
@@ -424,12 +476,15 @@ final class ContentGenerationDraft {
 		if (behaviorSource == null) missing.add("behaviorSource");
 		else if (!behaviorCompiled) missing.add("behaviorCompilation");
 		if (type == DynamicContentType.BLOCK) {
-			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null || blockShape == null) missing.add("blockProperties");
+			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null || blockShape == null) {
+				missing.add("blockProperties");
+			}
 			if (redstonePower == null || comparatorPower == null) missing.add("redstone");
 			if (lightLevel == null || visuallyEmissive == null) missing.add("light");
 			if (particles == null) missing.add("particles");
-		} else {
-			if (itemType == null || heldType == null || maxStack == null || rarity == null || foil == null || enchantability == null || reach == null || placeable == null) {
+		} else if (type == DynamicContentType.ITEM) {
+			if (itemType == null || heldType == null || maxStack == null || rarity == null || foil == null
+					|| enchantability == null || reach == null || placeable == null) {
 				missing.add("itemProperties");
 			} else if (itemType == DynamicItemType.FOOD && foodProperties == null) {
 				missing.add("foodProperties");
@@ -440,18 +495,26 @@ final class ContentGenerationDraft {
 					|| damagePerBlock == null || damagePerAttack == null)) {
 				missing.add("toolProperties");
 			}
+		} else if (armorRarity == null || armorFoil == null || armorEnchantability == null || armorDefense == null
+				|| armorToughness == null || armorKnockbackResistance == null || armorDurability == null) {
+			missing.add("armorProperties");
 		}
 		return missing;
 	}
 
 	private ToolExecution requireBlock(ThrowingSupplier operation) throws Exception {
 		return type == DynamicContentType.BLOCK ? operation.get()
-				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is creating an item, not a block");
+				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is not creating a block");
 	}
 
 	private ToolExecution requireItem(ThrowingSupplier operation) throws Exception {
 		return type == DynamicContentType.ITEM ? operation.get()
-				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is creating a block, not an item");
+				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is not creating an item");
+	}
+
+	private ToolExecution requireArmor(ThrowingSupplier operation) throws Exception {
+		return type == DynamicContentType.ARMOR ? operation.get()
+				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is not creating armor");
 	}
 
 	private static JsonObject message(String value) {

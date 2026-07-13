@@ -2,7 +2,6 @@ package com.yeyito.littlechemistry.content;
 
 import com.yeyito.littlechemistry.LittleChemistry;
 import net.minecraft.core.Registry;
-import net.minecraft.core.HolderSet;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -15,6 +14,9 @@ import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.component.Tool;
 import net.minecraft.world.item.component.Weapon;
 import net.minecraft.world.item.enchantment.Enchantable;
+import net.minecraft.world.item.equipment.EquipmentAsset;
+import net.minecraft.world.item.equipment.EquipmentAssets;
+import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.component.Consumables;
 import net.minecraft.world.item.consume_effects.ApplyStatusEffectsConsumeEffect;
@@ -25,14 +27,18 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 
-import java.util.Set;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 public final class DynamicContentObjects {
 	public static DataComponentType<Identifier> CONTENT_ID;
 	public static DynamicCarrierItem ITEM;
 	public static DynamicCarrierItem TOOL_HELD_ITEM;
+	public static DynamicCarrierItem ARMOR_HEAD;
+	public static DynamicCarrierItem ARMOR_CHEST;
+	public static DynamicCarrierItem ARMOR_LEGGINGS;
+	public static DynamicCarrierItem ARMOR_BOOTS;
 	public static DynamicCarrierBlock BLOCK;
 	public static DynamicCarrierBlockItem BLOCK_ITEM;
 	public static BlockEntityType<DynamicBlockEntity> BLOCK_ENTITY_TYPE;
@@ -64,6 +70,11 @@ public final class DynamicContentObjects {
 				new DynamicCarrierItem(new Item.Properties().setId(toolItemKey).stacksTo(1))
 		);
 
+		ARMOR_HEAD = registerArmorCarrier("dynamic_armor_head");
+		ARMOR_CHEST = registerArmorCarrier("dynamic_armor_chest");
+		ARMOR_LEGGINGS = registerArmorCarrier("dynamic_armor_leggings");
+		ARMOR_BOOTS = registerArmorCarrier("dynamic_armor_boots");
+
 		ResourceKey<Block> blockKey = ResourceKey.create(Registries.BLOCK, LittleChemistry.id("dynamic_block"));
 		BLOCK = Registry.register(
 				BuiltInRegistries.BLOCK,
@@ -92,9 +103,11 @@ public final class DynamicContentObjects {
 	}
 
 	public static ItemStack createStack(DynamicContentDefinition definition) {
-		Item carrier = definition.type() == DynamicContentType.BLOCK
-				? BLOCK_ITEM
-				: definition.item().heldType() == DynamicHeldType.TOOL ? TOOL_HELD_ITEM : ITEM;
+		Item carrier = switch (definition.type()) {
+			case BLOCK -> BLOCK_ITEM;
+			case ITEM -> definition.item().heldType() == DynamicHeldType.TOOL ? TOOL_HELD_ITEM : ITEM;
+			case ARMOR -> armorCarrier(definition.armor().slot());
+		};
 		ItemStack stack = new ItemStack(carrier);
 		stack.set(CONTENT_ID, LittleChemistry.id(definition.name()));
 		if (definition.item() != null) {
@@ -126,13 +139,30 @@ public final class DynamicContentObjects {
 			ItemAttributeModifiers attributes = attributes(properties);
 			if (attributes != null) stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes);
 		}
+		if (definition.armor() != null) {
+			DynamicArmorProperties armor = definition.armor();
+			stack.set(DataComponents.MAX_STACK_SIZE, 1);
+			stack.set(DataComponents.RARITY, armor.rarity());
+			stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, armor.foil());
+			if (armor.enchantability() > 0) {
+				stack.set(DataComponents.ENCHANTABLE, new Enchantable(armor.enchantability()));
+			}
+			stack.set(DataComponents.MAX_DAMAGE, armor.durability());
+			stack.set(DataComponents.DAMAGE, 0);
+			stack.set(DataComponents.EQUIPPABLE, Equippable.builder(armor.slot().equipmentSlot())
+					.setAsset(armorAsset(definition.textureHash()))
+					.build());
+			stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes(armor));
+		}
 		return stack;
 	}
 
 	public static void refreshDynamicAttributes(ItemStack stack) {
 		DynamicContentDefinition definition = definition(stack);
-		if (definition == null || definition.item() == null) return;
-		ItemAttributeModifiers expected = attributes(definition.item());
+		if (definition == null) return;
+		ItemAttributeModifiers expected = definition.armor() != null
+				? attributes(definition.armor())
+				: definition.item() != null ? attributes(definition.item()) : null;
 		if (expected == null) return;
 		ItemAttributeModifiers current = stack.getOrDefault(DataComponents.ATTRIBUTE_MODIFIERS, ItemAttributeModifiers.EMPTY);
 		if (!expected.equals(current)) stack.set(DataComponents.ATTRIBUTE_MODIFIERS, expected);
@@ -164,6 +194,42 @@ public final class DynamicContentObjects {
 			hasAttributes = true;
 		}
 		return hasAttributes ? builder.build() : null;
+	}
+
+	private static ItemAttributeModifiers attributes(DynamicArmorProperties armor) {
+		ItemAttributeModifiers.Builder builder = ItemAttributeModifiers.builder();
+		Identifier modifierId = LittleChemistry.id("armor." + armor.slot().serializedName());
+		builder.add(Attributes.ARMOR,
+				new AttributeModifier(modifierId, armor.defense(), AttributeModifier.Operation.ADD_VALUE),
+				armor.slot().slotGroup());
+		builder.add(Attributes.ARMOR_TOUGHNESS,
+				new AttributeModifier(modifierId, armor.toughness(), AttributeModifier.Operation.ADD_VALUE),
+				armor.slot().slotGroup());
+		if (armor.knockbackResistance() > 0.0) {
+			builder.add(Attributes.KNOCKBACK_RESISTANCE,
+					new AttributeModifier(modifierId, armor.knockbackResistance(), AttributeModifier.Operation.ADD_VALUE),
+					armor.slot().slotGroup());
+		}
+		return builder.build();
+	}
+
+	public static ResourceKey<EquipmentAsset> armorAsset(String textureHash) {
+		return ResourceKey.create(EquipmentAssets.ROOT_ID, LittleChemistry.id("dynamic/" + textureHash));
+	}
+
+	private static DynamicCarrierItem registerArmorCarrier(String name) {
+		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, LittleChemistry.id(name));
+		return Registry.register(BuiltInRegistries.ITEM, key,
+				new DynamicCarrierItem(new Item.Properties().setId(key).stacksTo(1)));
+	}
+
+	private static DynamicCarrierItem armorCarrier(DynamicArmorSlot slot) {
+		return switch (slot) {
+			case HEAD -> ARMOR_HEAD;
+			case CHEST -> ARMOR_CHEST;
+			case LEGGINGS -> ARMOR_LEGGINGS;
+			case BOOTS -> ARMOR_BOOTS;
+		};
 	}
 
 	public static ItemStack createBlockStack(Identifier contentId) {

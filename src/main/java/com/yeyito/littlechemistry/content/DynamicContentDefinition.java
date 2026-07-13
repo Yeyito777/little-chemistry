@@ -9,8 +9,15 @@ public record DynamicContentDefinition(
 		DynamicTextureSpec texture,
 		DynamicBlockProperties block,
 		DynamicItemProperties item,
+		DynamicArmorProperties armor,
 		String behaviorSource
 ) {
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
+			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
+			DynamicItemProperties item, String behaviorSource) {
+		this(type, name, displayName, textureSeed, textureHash, texture, block, item, null, behaviorSource);
+	}
+
 	public DynamicContentDefinition {
 		if (name == null || !name.matches("[a-z0-9_]{1,64}")) {
 			throw new IllegalArgumentException("Dynamic content ID is invalid");
@@ -29,19 +36,24 @@ public record DynamicContentDefinition(
 				throw new IllegalArgumentException("Dynamic behavior source is invalid");
 			}
 		}
-		if (type == DynamicContentType.BLOCK) {
-			if (block == null || item != null) {
-				throw new IllegalArgumentException("Block content must have block properties only");
+		switch (type) {
+			case BLOCK -> {
+				if (block == null || item != null || armor != null) {
+					throw new IllegalArgumentException("Block content must have block properties only");
+				}
+				if (texture != null) texture.requireOpaque();
 			}
-			if (texture != null) {
-				texture.requireOpaque();
+			case ITEM -> {
+				if (item == null || block != null || armor != null) {
+					throw new IllegalArgumentException("Item content must have item properties only");
+				}
+				if (texture != null) texture.requireBinaryAlpha();
 			}
-		} else {
-			if (item == null || block != null) {
-				throw new IllegalArgumentException("Item content must have item properties only");
-			}
-			if (texture != null) {
-				texture.requireBinaryAlpha();
+			case ARMOR -> {
+				if (armor == null || block != null || item != null) {
+					throw new IllegalArgumentException("Armor content must have armor properties only");
+				}
+				if (texture != null) texture.requireBinaryAlpha();
 			}
 		}
 	}

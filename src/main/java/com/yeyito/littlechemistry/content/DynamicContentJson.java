@@ -23,7 +23,7 @@ public final class DynamicContentJson {
 
 	public static byte[] encode(UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", 5);
+		root.addProperty("format", 6);
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
@@ -37,10 +37,10 @@ public final class DynamicContentJson {
 			if (definition.texture() != null) {
 				entry.add("texture", encodeTexture(definition.texture()));
 			}
-			if (definition.type() == DynamicContentType.BLOCK) {
-				entry.add("block", encodeBlock(definition.block()));
-			} else {
-				entry.add("item", encodeItem(definition.item()));
+			switch (definition.type()) {
+				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
+				case ITEM -> entry.add("item", encodeItem(definition.item()));
+				case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
 			}
 			if (definition.hasBehavior()) {
 				entry.addProperty("behaviorSource", definition.behaviorSource());
@@ -54,7 +54,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = root.get("format").getAsInt();
-		if (format < 1 || format > 5) {
+		if (format < 1 || format > 6) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -95,10 +95,13 @@ public final class DynamicContentJson {
 			DynamicItemProperties item = type == DynamicContentType.ITEM
 					? format >= 3 && entry.has("item") ? decodeItem(entry.getAsJsonObject("item")) : DynamicItemProperties.DEFAULT
 					: null;
+			DynamicArmorProperties armor = type == DynamicContentType.ARMOR
+					? format >= 6 && entry.has("armor") ? decodeArmor(entry.getAsJsonObject("armor")) : null
+					: null;
 			String behaviorSource = format >= 4 && entry.has("behaviorSource")
 					? entry.get("behaviorSource").getAsString() : null;
 			definitions.add(new DynamicContentDefinition(
-					type, name, displayName, textureSeed, textureHash, texture, block, item, behaviorSource
+					type, name, displayName, textureSeed, textureHash, texture, block, item, armor, behaviorSource
 			));
 		}
 		validateUniqueNames(definitions);
@@ -294,6 +297,32 @@ public final class DynamicContentJson {
 				encoded.has("damagePerAttack") ? encoded.get("damagePerAttack").getAsInt() : 2,
 				null,
 				null
+		);
+	}
+
+	private static JsonObject encodeArmor(DynamicArmorProperties armor) {
+		JsonObject encoded = new JsonObject();
+		encoded.addProperty("slot", armor.slot().serializedName());
+		encoded.addProperty("rarity", armor.rarity().getSerializedName());
+		encoded.addProperty("foil", armor.foil());
+		encoded.addProperty("enchantability", armor.enchantability());
+		encoded.addProperty("defense", armor.defense());
+		encoded.addProperty("toughness", armor.toughness());
+		encoded.addProperty("knockbackResistance", armor.knockbackResistance());
+		encoded.addProperty("durability", armor.durability());
+		return encoded;
+	}
+
+	private static DynamicArmorProperties decodeArmor(JsonObject encoded) {
+		return new DynamicArmorProperties(
+				DynamicArmorSlot.parse(encoded.get("slot").getAsString()),
+				Rarity.valueOf(encoded.get("rarity").getAsString().toUpperCase(Locale.ROOT)),
+				encoded.get("foil").getAsBoolean(),
+				encoded.get("enchantability").getAsInt(),
+				encoded.get("defense").getAsDouble(),
+				encoded.get("toughness").getAsDouble(),
+				encoded.get("knockbackResistance").getAsDouble(),
+				encoded.get("durability").getAsInt()
 		);
 	}
 

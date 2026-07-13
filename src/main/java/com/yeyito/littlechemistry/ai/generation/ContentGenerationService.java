@@ -6,6 +6,7 @@ import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
@@ -19,17 +20,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.Semaphore;
 
 public final class ContentGenerationService {
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
-	private static final Semaphore PROVIDER_SLOTS = new Semaphore(2);
 	private static final Map<GenerationKey, ActiveJob> ACTIVE = new ConcurrentHashMap<>();
 
 	private ContentGenerationService() {
 	}
 
-	public static boolean request(ServerPlayer player, DynamicContentType type, String requestedName) {
+	public static boolean request(ServerPlayer player, DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
+			String requestedName) {
 		DynamicContentManager manager = DynamicContentManager.active();
 		if (manager == null) {
 			player.sendSystemMessage(error("Dynamic content is not available yet."));
@@ -38,6 +38,9 @@ public final class ContentGenerationService {
 		String displayName;
 		String contentName;
 		try {
+			if ((type == DynamicContentType.ARMOR) != (requestedArmorSlot != null)) {
+				throw new IllegalArgumentException("Armor content must specify head, chest, leggings, or boots.");
+			}
 			displayName = DynamicContentManager.normalizeDisplayName(requestedName);
 			contentName = DynamicContentManager.normalizeIdentifier(displayName);
 			if (manager.containsName(displayName)) {
@@ -57,14 +60,10 @@ public final class ContentGenerationService {
 			player.sendSystemMessage(error("Dynamic content named '" + contentName + "' is already being generated."));
 			return false;
 		}
-		if (!PROVIDER_SLOTS.tryAcquire()) {
-			ACTIVE.remove(generationKey, job);
-			player.sendSystemMessage(error("The server is already running the maximum number of content-generation jobs."));
-			return false;
-		}
-
+		String requestedKind = type == DynamicContentType.ARMOR
+				? requestedArmorSlot.serializedName() + " armor" : type.serializedName();
 		player.sendSystemMessage(Component.literal("[Little Chemistry] ").withStyle(ChatFormatting.AQUA)
-				.append(Component.literal("Sol is creating " + type.serializedName() + " '" + displayName + "'…")
+				.append(Component.literal("Sol is creating " + requestedKind + " '" + displayName + "'…")
 						.withStyle(ChatFormatting.GRAY)));
 
 		try {
@@ -72,20 +71,17 @@ public final class ContentGenerationService {
 				try {
 					if (!job.promise.isDone()) {
 						ContentGenerationAgent agent = new ContentGenerationAgent(new OpenAiClient(new AuthConfig()));
-						job.promise.complete(agent.generate(type, displayName));
+						job.promise.complete(agent.generate(type, requestedArmorSlot, displayName));
 					}
 				} catch (InterruptedException interrupted) {
 					Thread.currentThread().interrupt();
 					job.promise.completeExceptionally(interrupted);
 				} catch (Throwable error) {
 					job.promise.completeExceptionally(error);
-				} finally {
-					PROVIDER_SLOTS.release();
 				}
 			});
 		} catch (Throwable submissionFailure) {
 			ACTIVE.remove(generationKey, job);
-			PROVIDER_SLOTS.release();
 			player.sendSystemMessage(error("Could not start the generation job."));
 			LittleChemistry.LOGGER.error("Could not submit a Little Chemistry generation job", submissionFailure);
 			return false;
@@ -98,13 +94,17 @@ public final class ContentGenerationService {
 			}
 			server.execute(() -> {
 				try {
-					completeOnServer(server, playerId, type, displayName, generated, failure);
+					completeOnServer(server, playerId, type, requestedArmorSlot, displayName, generated, failure);
 				} finally {
 					ACTIVE.remove(generationKey, job);
 				}
 			});
 		});
 		return true;
+	}
+
+	public static boolean request(ServerPlayer player, DynamicContentType type, String requestedName) {
+		return request(player, type, null, requestedName);
 	}
 
 	public static void cancelForServer(MinecraftServer server) {
@@ -119,6 +119,7 @@ public final class ContentGenerationService {
 	}
 
 	private static void completeOnServer(MinecraftServer server, UUID playerId, DynamicContentType type,
+			DynamicArmorSlot requestedArmorSlot,
 			String displayName, GeneratedContentSpec generated, Throwable failure) {
 		ServerPlayer recipient = server.getPlayerList().getPlayer(playerId);
 		if (failure != null) {
@@ -135,9 +136,12 @@ public final class ContentGenerationService {
 			return;
 		}
 		try {
-			DynamicContentDefinition definition = activeManager.createGenerated(type, displayName, generated);
+			DynamicContentDefinition definition = activeManager.createGenerated(
+					type, requestedArmorSlot, displayName, generated);
 			if (recipient != null) {
-				recipient.sendSystemMessage(Component.literal("Created " + type.serializedName() + " '" +
+				String createdKind = type == DynamicContentType.ARMOR
+						? requestedArmorSlot.serializedName() + " armor" : type.serializedName();
+				recipient.sendSystemMessage(Component.literal("Created " + createdKind + " '" +
 						definition.displayName() + "' as little_chemistry:" + definition.name() + ".")
 						.withStyle(ChatFormatting.GREEN));
 			}

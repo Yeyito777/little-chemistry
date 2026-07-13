@@ -82,7 +82,11 @@ public final class WandDeletionScreen extends Screen {
 
 	private Component label(DynamicContentDefinition definition) {
 		String check = this.selected.contains(definition.name()) ? "[x] " : "[ ] ";
-		String kind = definition.type() == DynamicContentType.BLOCK ? "Block: " : "Item: ";
+		String kind = switch (definition.type()) {
+			case ITEM -> "Item: ";
+			case BLOCK -> "Block: ";
+			case ARMOR -> "Armor (" + definition.armor().slot().serializedName() + "): ";
+		};
 		return Component.literal(check + kind + definition.displayName());
 	}
 

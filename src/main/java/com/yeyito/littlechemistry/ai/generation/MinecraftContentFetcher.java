@@ -70,11 +70,11 @@ final class MinecraftContentFetcher {
 			if (query.isEmpty() || query.length() > 80) {
 				throw new IllegalArgumentException("query must contain between 1 and 80 characters");
 			}
-			if (!kind.equals("block") && !kind.equals("item") && !kind.equals("either")) {
-				throw new IllegalArgumentException("kind must be block, item, or either");
+			if (!kind.equals("block") && !kind.equals("item") && !kind.equals("armor") && !kind.equals("either")) {
+				throw new IllegalArgumentException("kind must be block, item, armor, or either");
 			}
 
-			List<ScoredTexture> matches = matchingTextures(query, kind);
+			List<ScoredTexture> matches = matchingTextures(query, kind.equals("armor") ? "item" : kind);
 			if (matches.isEmpty()) {
 				return ContentGenerationDraft.ToolExecution.error(
 						"NO_CONTENT_MATCH",
