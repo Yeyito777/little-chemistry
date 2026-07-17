@@ -5,6 +5,7 @@ import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.item.WandOfCreationItem;
 import com.yeyito.littlechemistry.item.WandOfDeletionItem;
 import com.yeyito.littlechemistry.network.CreateContentRequestPayload;
@@ -17,6 +18,7 @@ import com.yeyito.littlechemistry.network.OpenDeletionScreenPayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -117,8 +119,11 @@ public final class LittleChemistry implements ModInitializer {
 			LittleChemistryCommands.deleteFromWand(context.player(), payload.names());
 		});
 		ServerLifecycleEvents.SERVER_STARTED.register(DynamicContentManager::start);
+		ServerLifecycleEvents.SERVER_STARTED.register(AiCraftingManager::start);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ContentGenerationService::cancelForServer);
+		ServerLifecycleEvents.SERVER_STOPPING.register(AiCraftingManager::stop);
 		ServerLifecycleEvents.SERVER_STOPPED.register(DynamicContentManager::stop);
+		ServerTickEvents.END_SERVER_TICK.register(AiCraftingManager::tick);
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			DynamicContentManager manager = DynamicContentManager.active();
 			if (manager != null) {

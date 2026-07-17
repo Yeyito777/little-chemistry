@@ -10,5 +10,9 @@ public final class DynamicBlockRenderState extends BlockEntityRenderState {
 	boolean visuallyEmissive;
 	DynamicBlockShape shape = DynamicBlockShape.FULL_CUBE;
 	DynamicPlacedShape placedShape;
+	boolean fenceNorth;
+	boolean fenceEast;
+	boolean fenceSouth;
+	boolean fenceWest;
 	final int[] faceLightCoords = new int[Direction.values().length];
 }

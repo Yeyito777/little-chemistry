@@ -28,6 +28,7 @@ import java.util.UUID;
 
 public final class LittleChemistryClient implements ClientModInitializer {
 	private static UUID activeServer;
+	private static long activeRevision = -1;
 
 	@Override
 	public void onInitializeClient() {
@@ -48,10 +49,11 @@ public final class LittleChemistryClient implements ClientModInitializer {
 		ClientPlayNetworking.registerGlobalReceiver(OpenDeletionScreenPayload.TYPE,
 						(payload, context) -> context.client().gui.setScreen(new WandDeletionScreen()));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-			DynamicContentCatalog.clear();
-			RuntimeTextureStore.clear(client);
-			activeServer = null;
-		});
+				DynamicContentCatalog.clear();
+				RuntimeTextureStore.clear(client);
+				activeServer = null;
+				activeRevision = -1;
+			});
 	}
 
 	private static void apply(Minecraft client, DynamicContentPayload payload) {
@@ -59,6 +61,11 @@ public final class LittleChemistryClient implements ClientModInitializer {
 			DynamicContentJson.Decoded decoded = DynamicContentJson.decode(payload.definitionsJson());
 			if (!decoded.serverId().equals(payload.serverId()) || decoded.revision() != payload.revision()) {
 				throw new IOException("The synchronized definitions do not match their packet metadata");
+			}
+			if (payload.serverId().equals(activeServer) && payload.revision() < activeRevision) {
+				LittleChemistry.LOGGER.debug("Ignoring stale Little Chemistry catalog revision {} behind {}",
+						payload.revision(), activeRevision);
+				return;
 			}
 
 			Path directory = FabricLoader.getInstance().getConfigDir()
@@ -72,24 +79,28 @@ public final class LittleChemistryClient implements ClientModInitializer {
 			Files.move(temporary, definitions, StandardCopyOption.REPLACE_EXISTING);
 
 			activeServer = payload.serverId();
-			DynamicContentCatalog.replace(decoded.definitions());
-			refreshCreativeTabs(client);
+			activeRevision = payload.revision();
 
 			RuntimeTextureStore.prepare(client, payload.serverId(), decoded.definitions())
 					.whenComplete((missing, error) -> client.execute(() -> {
+						if (!payload.serverId().equals(activeServer) || payload.revision() != activeRevision) {
+							return;
+						}
 						if (error != null) {
 							LittleChemistry.LOGGER.error("Could not inspect the Little Chemistry asset cache", error);
 							return;
 						}
+						DynamicContentCatalog.replace(decoded.definitions());
+						refreshCreativeTabs(client);
 						for (int start = 0; start < missing.size(); start += DynamicAssetRequestPayload.MAX_HASHES) {
 							int end = Math.min(missing.size(), start + DynamicAssetRequestPayload.MAX_HASHES);
 							ClientPlayNetworking.send(new DynamicAssetRequestPayload(missing.subList(start, end)));
 						}
 						LittleChemistry.LOGGER.info("Little Chemistry catalog revision {} is ready; requesting {} assets",
 								payload.revision(), missing.size());
+						LittleChemistry.LOGGER.info("Applied Little Chemistry catalog revision {} with {} entries",
+								payload.revision(), decoded.definitions().size());
 					}));
-			LittleChemistry.LOGGER.info("Applied Little Chemistry catalog revision {} with {} entries",
-					payload.revision(), decoded.definitions().size());
 		} catch (Exception error) {
 			LittleChemistry.LOGGER.error("Could not apply synchronized Little Chemistry content", error);
 			if (client.player != null) {

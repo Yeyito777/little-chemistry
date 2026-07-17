@@ -3,7 +3,9 @@ package com.yeyito.littlechemistry.content;
 public enum DynamicBlockShape {
 	FULL_CUBE("full_cube"),
 	SLAB("slab"),
-	NO_COLLISION("no_collision");
+	NO_COLLISION("no_collision"),
+	STAR("star"),
+	FENCE("fence");
 
 	private final String serializedName;
 

@@ -2,12 +2,16 @@ package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
+import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ContentGenerationDraftTest {
@@ -86,6 +90,39 @@ class ContentGenerationDraftTest {
 
 		assertFalse(result.output().get("ok").getAsBoolean(), result.output().toString());
 		assertTrue(result.output().get("message").getAsString().contains("not creating armor"));
+	}
+
+	@Test
+	void itemTextureCannotBeFullyTransparent() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "invisible shard");
+		JsonObject arguments = itemTextureArguments();
+		arguments.getAsJsonArray("palette").set(1, new com.google.gson.JsonPrimitive("20202000"));
+		arguments.getAsJsonArray("palette").set(2, new com.google.gson.JsonPrimitive("E0F0FF00"));
+
+		ContentGenerationDraft.ToolExecution result = draft.execute("set_texture", arguments);
+
+		assertFalse(result.output().get("ok").getAsBoolean(), result.output().toString());
+		assertTrue(result.output().get("message").getAsString().contains("invisible"));
+	}
+
+	@Test
+	void starBlockAcceptsTransparentTextureBeforeShapeIsChosen() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "ember spray");
+
+		ContentGenerationDraft.ToolExecution texture = draft.execute("set_texture", starTextureArguments());
+
+		assertTrue(texture.output().get("ok").getAsBoolean(), texture.output().toString());
+		assertDoesNotThrow(() -> ContentGenerationDraft.validateBlockTextureAlpha(
+				starTextureSpec(), DynamicBlockShape.STAR));
+	}
+
+	@Test
+	void solidBlockRejectsTransparentStarTexture() {
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> ContentGenerationDraft.validateBlockTextureAlpha(
+						starTextureSpec(), DynamicBlockShape.FULL_CUBE));
+
+		assertTrue(error.getMessage().contains("opaque"));
 	}
 
 	@Test
@@ -234,6 +271,36 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("reach", 0.0);
 		arguments.addProperty("placeable", false);
 		return arguments;
+	}
+
+	private static JsonObject starTextureArguments() {
+		JsonObject arguments = new JsonObject();
+		com.google.gson.JsonArray palette = new com.google.gson.JsonArray();
+		palette.add("00000000");
+		palette.add("401000FF");
+		palette.add("D06010FF");
+		palette.add("FFF080FF");
+		arguments.add("palette", palette);
+		com.google.gson.JsonArray rows = new com.google.gson.JsonArray();
+		for (int y = 0; y < 16; y++) {
+			StringBuilder row = new StringBuilder(16);
+			for (int x = 0; x < 16; x++) {
+				int pattern = Math.floorMod(x * 3 + y * 5 + x * y, 11);
+				row.append(pattern < 5 ? "0" : Integer.toString(1 + pattern % 3));
+			}
+			rows.add(row.toString());
+		}
+		arguments.add("rows", rows);
+		return arguments;
+	}
+
+	private static DynamicTextureSpec starTextureSpec() {
+		JsonObject arguments = starTextureArguments();
+		java.util.List<String> palette = new java.util.ArrayList<>();
+		arguments.getAsJsonArray("palette").forEach(value -> palette.add(value.getAsString()));
+		java.util.List<String> rows = new java.util.ArrayList<>();
+		arguments.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
+		return new DynamicTextureSpec(palette, rows);
 	}
 
 	private static JsonObject itemTextureArguments() {

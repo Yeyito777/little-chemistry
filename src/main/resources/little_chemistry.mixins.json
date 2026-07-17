@@ -3,11 +3,20 @@
   "package": "com.yeyito.littlechemistry.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "AbstractContainerMenuMixin",
+    "AbstractCraftingMenuAccessor",
+    "BlockBehaviourMixin",
+    "CraftingMenuMixin",
     "CreativeModeTabsAccessor",
-    "ItemCooldownsMixin"
+    "ItemCooldownsMixin",
+    "PistonStructureResolverMixin",
+    "RecipeManagerMixin",
+    "ServerGamePacketListenerMixin",
+    "ServerPlayerGameModeMixin"
   ],
   "client": [
     "ClientLevelParticleMixin",
+    "CraftingScreenMixin",
     "EquipmentAssetManagerMixin",
     "ParticleEngineMixin"
   ],

@@ -52,12 +52,15 @@ public record DynamicContentDefinition(
 				throw new IllegalArgumentException("Dynamic behavior source is invalid");
 			}
 		}
-		switch (type) {
+			switch (type) {
 			case BLOCK -> {
 				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
 					throw new IllegalArgumentException("Block content must have block properties only");
 				}
-				if (texture != null) texture.requireOpaque();
+				if (texture != null) {
+					if (block.shape() == DynamicBlockShape.STAR) texture.requireBinaryAlpha();
+					else texture.requireOpaque();
+				}
 			}
 			case ITEM -> {
 				if (item == null || block != null || armor != null || armorDisplayTexture != null) {

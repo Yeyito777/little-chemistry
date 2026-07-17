@@ -7,6 +7,7 @@ import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -23,6 +24,7 @@ import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -109,8 +111,12 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 					: Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
 		}
 		if (definition == null || definition.block() == null) return Shapes.block();
-		return definition.block().shape() == DynamicBlockShape.SLAB
-				? Shapes.box(0, 0, 0, 1, 0.5, 1) : Shapes.block();
+		return switch (definition.block().shape()) {
+			case FULL_CUBE, NO_COLLISION -> Shapes.block();
+			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
+			case STAR -> Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
+			case FENCE -> fenceShape(level, position, 1.0);
+		};
 	}
 
 	@Override
@@ -121,8 +127,42 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		return switch (definition.block().shape()) {
 			case FULL_CUBE -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
-			case NO_COLLISION -> Shapes.empty();
+			case NO_COLLISION, STAR -> Shapes.empty();
+			case FENCE -> fenceShape(level, position, 1.5);
 		};
+	}
+
+	public static boolean connectsFence(BlockGetter level, BlockPos position, Direction direction) {
+		if (direction.getAxis().isVertical()) return false;
+		BlockPos neighborPosition = position.relative(direction);
+		DynamicContentDefinition neighborDefinition = definition(level, neighborPosition);
+		if (neighborDefinition != null && neighborDefinition.block() != null
+				&& neighborDefinition.block().shape() == DynamicBlockShape.FENCE) {
+			return true;
+		}
+		BlockState neighbor = level.getBlockState(neighborPosition);
+		if (neighbor.is(BlockTags.FENCES)) return true;
+		if (neighbor.getBlock() instanceof FenceGateBlock) {
+			return FenceGateBlock.connectsToDirection(neighbor, direction.getOpposite());
+		}
+		return neighbor.isFaceSturdy(level, neighborPosition, direction.getOpposite());
+	}
+
+	private static VoxelShape fenceShape(BlockGetter level, BlockPos position, double height) {
+		VoxelShape shape = Shapes.box(6.0 / 16.0, 0, 6.0 / 16.0, 10.0 / 16.0, height, 10.0 / 16.0);
+		if (connectsFence(level, position, Direction.NORTH)) {
+			shape = Shapes.or(shape, Shapes.box(7.0 / 16.0, 0, 0, 9.0 / 16.0, height, 8.0 / 16.0));
+		}
+		if (connectsFence(level, position, Direction.SOUTH)) {
+			shape = Shapes.or(shape, Shapes.box(7.0 / 16.0, 0, 8.0 / 16.0, 9.0 / 16.0, height, 1));
+		}
+		if (connectsFence(level, position, Direction.WEST)) {
+			shape = Shapes.or(shape, Shapes.box(0, 0, 7.0 / 16.0, 8.0 / 16.0, height, 9.0 / 16.0));
+		}
+		if (connectsFence(level, position, Direction.EAST)) {
+			shape = Shapes.or(shape, Shapes.box(8.0 / 16.0, 0, 7.0 / 16.0, 1, height, 9.0 / 16.0));
+		}
+		return shape;
 	}
 
 	@Override

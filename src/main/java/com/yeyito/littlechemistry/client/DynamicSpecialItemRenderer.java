@@ -29,8 +29,7 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 				: RenderTypes.entityCutoutCull(texture);
 		nodes.order(0).submitCustomGeometry(poseStack, baseRenderType, (pose, vertices) -> {
 			if (argument.block()) {
-				if (argument.blockShape() == DynamicBlockShape.SLAB) DynamicGeometry.slab(pose, vertices, light, overlay);
-				else DynamicGeometry.cube(pose, vertices, light, overlay);
+				renderBlock(argument.blockShape(), pose, vertices, light, overlay);
 			} else {
 				DynamicGeometry.item(pose, vertices, light, overlay, opaquePixels);
 			}
@@ -38,12 +37,21 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 		if (hasFoil) {
 			nodes.order(1).submitCustomGeometry(poseStack, RenderTypes.entityGlint(), (pose, vertices) -> {
 				if (argument.block()) {
-					if (argument.blockShape() == DynamicBlockShape.SLAB) DynamicGeometry.slab(pose, vertices, light, overlay);
-					else DynamicGeometry.cube(pose, vertices, light, overlay);
+					renderBlock(argument.blockShape(), pose, vertices, light, overlay);
 				} else {
 					DynamicGeometry.item(pose, vertices, light, overlay, opaquePixels);
 				}
 			});
+		}
+	}
+
+	private static void renderBlock(DynamicBlockShape shape, PoseStack.Pose pose,
+			com.mojang.blaze3d.vertex.VertexConsumer vertices, int light, int overlay) {
+		switch (shape) {
+			case SLAB -> DynamicGeometry.slab(pose, vertices, light, overlay);
+			case STAR -> DynamicGeometry.star(pose, vertices, light, overlay);
+			case FENCE -> DynamicGeometry.fence(pose, vertices, light, overlay, true, true, true, true);
+			default -> DynamicGeometry.cube(pose, vertices, light, overlay);
 		}
 	}
 

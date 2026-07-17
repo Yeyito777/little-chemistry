@@ -4,9 +4,11 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.behavior.DynamicBehavior;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
+import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
@@ -213,6 +215,14 @@ public final class DynamicContentManager {
 		return definitions.stream().anyMatch(definition -> definition.name().equals(name));
 	}
 
+	public DynamicContentDefinition findDefinition(Identifier id) {
+		if (id == null || !LittleChemistry.MOD_ID.equals(id.getNamespace())) return null;
+		return definitions.stream()
+				.filter(definition -> definition.name().equals(id.getPath()))
+				.findFirst()
+				.orElse(null);
+	}
+
 	public int delete(List<String> requestedNames) throws IOException {
 		Set<String> names = new HashSet<>(requestedNames);
 		if (names.isEmpty() || names.stream().anyMatch(name -> !name.matches("[a-z0-9_]{1,64}"))) {
@@ -235,6 +245,8 @@ public final class DynamicContentManager {
 		cachedPayload = updatedPayload;
 		DynamicContentCatalog.replace(definitions);
 		DynamicBehaviorRegistry.remove(names);
+		AiCraftingManager craftingManager = AiCraftingManager.active();
+		if (craftingManager != null) craftingManager.removeRecipesFor(names);
 		purgeLoadedReferences(names);
 		removeUnusedAssets();
 		broadcast();

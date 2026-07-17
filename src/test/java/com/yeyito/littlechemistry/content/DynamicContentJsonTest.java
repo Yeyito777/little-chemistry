@@ -88,6 +88,14 @@ class DynamicContentJsonTest {
 		assertEquals(TEXTURE_HASH, decoded.effectiveArmorDisplayTextureHash());
 	}
 
+	@Test
+	void newBlockMeshesHaveStableSerializedNames() {
+		assertEquals("star", DynamicBlockShape.STAR.serializedName());
+		assertEquals(DynamicBlockShape.STAR, DynamicBlockShape.parse("star"));
+		assertEquals("fence", DynamicBlockShape.FENCE.serializedName());
+		assertEquals(DynamicBlockShape.FENCE, DynamicBlockShape.parse("fence"));
+	}
+
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
 		return new DynamicContentDefinition(
 				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null, null);

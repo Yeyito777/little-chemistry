@@ -137,7 +137,7 @@ final class ContentGenerationDraft {
 		int[] colorCounts = colorCounts(rows);
 		int luminanceRange = luminanceRange(palette, usedColors);
 		if (type == DynamicContentType.BLOCK) {
-			candidate.requireOpaque();
+			validateBlockTextureAlpha(candidate, blockShape);
 			if (usedColors.size() < 4) {
 				throw new IllegalArgumentException("Block texture uses fewer than four palette colors; add readable material shading and accents");
 			}
@@ -161,6 +161,17 @@ final class ContentGenerationDraft {
 			}
 		} else {
 			candidate.requireBinaryAlpha();
+			int opaquePixels = 0;
+			int usedOpaqueColors = 0;
+			for (int colorIndex = 0; colorIndex < palette.size(); colorIndex++) {
+				if (palette.get(colorIndex).regionMatches(true, 6, "FF", 0, 2)) {
+					opaquePixels += colorCounts[colorIndex];
+					if (colorCounts[colorIndex] > 0) usedOpaqueColors++;
+				}
+			}
+			if (opaquePixels < 12 || usedOpaqueColors < 2) {
+				throw new IllegalArgumentException("Item or armor texture is effectively invisible; draw at least 12 visible pixels using two opaque colors");
+			}
 			if (usedColors.size() < 3 || luminanceRange < 40) {
 				throw new IllegalArgumentException("Item or armor texture needs at least three used colors and stronger readable contrast");
 			}
@@ -227,14 +238,20 @@ final class ContentGenerationDraft {
 
 	private ToolExecution setBlockProperties(JsonObject arguments) {
 		requireOnly(arguments, "material", "hardness", "preferredTool", "requiresCorrectTool", "shape");
-		material = DynamicMaterial.parse(requiredString(arguments, "material"));
-		hardness = requiredFloat(arguments, "hardness");
-		preferredTool = DynamicTool.parse(requiredString(arguments, "preferredTool"));
-		requiresCorrectTool = requiredBoolean(arguments, "requiresCorrectTool");
-		blockShape = DynamicBlockShape.parse(requiredString(arguments, "shape"));
-		if (!Float.isFinite(hardness) || hardness < 0.0F || hardness > 50.0F) {
+		DynamicMaterial candidateMaterial = DynamicMaterial.parse(requiredString(arguments, "material"));
+		float candidateHardness = requiredFloat(arguments, "hardness");
+		DynamicTool candidatePreferredTool = DynamicTool.parse(requiredString(arguments, "preferredTool"));
+		boolean candidateRequiresCorrectTool = requiredBoolean(arguments, "requiresCorrectTool");
+		DynamicBlockShape candidateShape = DynamicBlockShape.parse(requiredString(arguments, "shape"));
+		if (!Float.isFinite(candidateHardness) || candidateHardness < 0.0F || candidateHardness > 50.0F) {
 			throw new IllegalArgumentException("hardness must be between 0 and 50");
 		}
+		if (texture != null) validateBlockTextureAlpha(texture, candidateShape);
+		material = candidateMaterial;
+		hardness = candidateHardness;
+		preferredTool = candidatePreferredTool;
+		requiresCorrectTool = candidateRequiresCorrectTool;
+		blockShape = candidateShape;
 		return ToolExecution.success(message("Block physical properties were accepted."), null);
 	}
 
@@ -741,6 +758,32 @@ final class ContentGenerationDraft {
 			}
 		}
 		return counts;
+	}
+
+	static void validateBlockTextureAlpha(DynamicTextureSpec texture, DynamicBlockShape shape) {
+		if (shape != null && shape != DynamicBlockShape.STAR) {
+			texture.requireOpaque();
+			return;
+		}
+		texture.requireBinaryAlpha();
+		int[] counts = colorCounts(texture.rows());
+		int opaquePixels = 0;
+		int transparentPixels = 0;
+		int opaqueColors = 0;
+		for (int colorIndex = 0; colorIndex < texture.palette().size(); colorIndex++) {
+			if (texture.palette().get(colorIndex).regionMatches(true, 6, "FF", 0, 2)) {
+				opaquePixels += counts[colorIndex];
+				if (counts[colorIndex] > 0) opaqueColors++;
+			} else {
+				transparentPixels += counts[colorIndex];
+			}
+		}
+		if (opaquePixels < 16 || opaqueColors < 3) {
+			throw new IllegalArgumentException("A star-mesh block texture needs at least 16 visible pixels using three opaque colors");
+		}
+		if (shape == DynamicBlockShape.STAR && transparentPixels < 16) {
+			throw new IllegalArgumentException("A star-mesh block texture needs at least 16 transparent pixels around its artwork");
+		}
 	}
 
 	private static int luminanceRange(List<String> palette, Set<Integer> usedColors) {

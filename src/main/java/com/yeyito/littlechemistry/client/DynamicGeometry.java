@@ -114,6 +114,73 @@ final class DynamicGeometry {
 				0.7071F, 0, 0.7071F);
 	}
 
+	static void star(PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int overlay) {
+		star(pose, vertices, maximumLight(faceLight), overlay);
+	}
+
+	static void star(PoseStack.Pose pose, VertexConsumer vertices, int light, int overlay) {
+		float inset = 0.04F;
+		float opposite = 1.0F - inset;
+		float middle = 0.5F;
+		float bottom = 0.002F;
+		quad(pose, vertices, light, overlay,
+				inset, bottom, middle, opposite, bottom, middle,
+				opposite, 1, middle, inset, 1, middle,
+				0, 0, 1);
+		quad(pose, vertices, light, overlay,
+				middle, bottom, opposite, middle, bottom, inset,
+				middle, 1, inset, middle, 1, opposite,
+				1, 0, 0);
+		quad(pose, vertices, light, overlay,
+				inset, bottom, inset, opposite, bottom, opposite,
+				opposite, 1, opposite, inset, 1, inset,
+				0.7071F, 0, -0.7071F);
+		quad(pose, vertices, light, overlay,
+				inset, bottom, opposite, opposite, bottom, inset,
+				opposite, 1, inset, inset, 1, opposite,
+				0.7071F, 0, 0.7071F);
+	}
+
+	static void fence(PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int overlay,
+			boolean north, boolean east, boolean south, boolean west) {
+		fence(pose, vertices, faceLight, 0, overlay, north, east, south, west);
+	}
+
+	static void fence(PoseStack.Pose pose, VertexConsumer vertices, int light, int overlay,
+			boolean north, boolean east, boolean south, boolean west) {
+		fence(pose, vertices, null, light, overlay, north, east, south, west);
+	}
+
+	private static void fence(PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int uniformLight,
+			int overlay, boolean north, boolean east, boolean south, boolean west) {
+		cuboid(pose, vertices, faceLight, uniformLight, overlay,
+				6.0F / 16.0F, 0, 6.0F / 16.0F, 10.0F / 16.0F, 1, 10.0F / 16.0F);
+		if (north) {
+			fenceRail(pose, vertices, faceLight, uniformLight, overlay,
+					7.0F / 16.0F, 0, 9.0F / 16.0F, 8.0F / 16.0F);
+		}
+		if (south) {
+			fenceRail(pose, vertices, faceLight, uniformLight, overlay,
+					7.0F / 16.0F, 8.0F / 16.0F, 9.0F / 16.0F, 1);
+		}
+		if (west) {
+			fenceRail(pose, vertices, faceLight, uniformLight, overlay,
+					0, 7.0F / 16.0F, 8.0F / 16.0F, 9.0F / 16.0F);
+		}
+		if (east) {
+			fenceRail(pose, vertices, faceLight, uniformLight, overlay,
+					8.0F / 16.0F, 7.0F / 16.0F, 1, 9.0F / 16.0F);
+		}
+	}
+
+	private static void fenceRail(PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight,
+			int uniformLight, int overlay, float minX, float minZ, float maxX, float maxZ) {
+		cuboid(pose, vertices, faceLight, uniformLight, overlay,
+				minX, 6.0F / 16.0F, minZ, maxX, 9.0F / 16.0F, maxZ);
+		cuboid(pose, vertices, faceLight, uniformLight, overlay,
+				minX, 12.0F / 16.0F, minZ, maxX, 15.0F / 16.0F, maxZ);
+	}
+
 	static void torch(PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int overlay) {
 		float min = 7.0F / 16.0F;
 		float max = 9.0F / 16.0F;
@@ -147,6 +214,26 @@ final class DynamicGeometry {
 		quad(pose, vertices, faceLight[Direction.WEST.ordinal()], overlay, 0, 0, 0, 0, 0, 1, 0, height, 1, 0, height, 0, -1, 0, 0);
 		quad(pose, vertices, faceLight[Direction.UP.ordinal()], overlay, 0, height, 1, 1, height, 1, 1, height, 0, 0, height, 0, 0, 1, 0);
 		quad(pose, vertices, faceLight[Direction.DOWN.ordinal()], overlay, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, -1, 0);
+	}
+
+	private static void cuboid(PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int uniformLight,
+			int overlay, float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+		quad(pose, vertices, faceLight(faceLight, uniformLight, Direction.SOUTH), overlay,
+				minX, minY, maxZ, maxX, minY, maxZ, maxX, maxY, maxZ, minX, maxY, maxZ, 0, 0, 1);
+		quad(pose, vertices, faceLight(faceLight, uniformLight, Direction.NORTH), overlay,
+				maxX, minY, minZ, minX, minY, minZ, minX, maxY, minZ, maxX, maxY, minZ, 0, 0, -1);
+		quad(pose, vertices, faceLight(faceLight, uniformLight, Direction.EAST), overlay,
+				maxX, minY, maxZ, maxX, minY, minZ, maxX, maxY, minZ, maxX, maxY, maxZ, 1, 0, 0);
+		quad(pose, vertices, faceLight(faceLight, uniformLight, Direction.WEST), overlay,
+				minX, minY, minZ, minX, minY, maxZ, minX, maxY, maxZ, minX, maxY, minZ, -1, 0, 0);
+		quad(pose, vertices, faceLight(faceLight, uniformLight, Direction.UP), overlay,
+				minX, maxY, maxZ, maxX, maxY, maxZ, maxX, maxY, minZ, minX, maxY, minZ, 0, 1, 0);
+		quad(pose, vertices, faceLight(faceLight, uniformLight, Direction.DOWN), overlay,
+				minX, minY, minZ, maxX, minY, minZ, maxX, minY, maxZ, minX, minY, maxZ, 0, -1, 0);
+	}
+
+	private static int faceLight(int[] faceLight, int uniformLight, Direction direction) {
+		return faceLight == null ? uniformLight : faceLight[direction.ordinal()];
 	}
 
 	private static int maximumLight(int[] faceLight) {
