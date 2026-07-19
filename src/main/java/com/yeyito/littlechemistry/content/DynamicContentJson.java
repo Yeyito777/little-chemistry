@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 14;
+	public static final int CURRENT_FORMAT = 15;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -29,34 +29,35 @@ public final class DynamicContentJson {
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
-		for (DynamicContentDefinition definition : definitions) {
-			JsonObject entry = new JsonObject();
-			entry.addProperty("type", definition.type().serializedName());
-			entry.addProperty("name", definition.name());
-			entry.addProperty("displayName", definition.displayName());
-			entry.addProperty("description", definition.description());
-			entry.addProperty("rarity", definition.rarityTier().serializedName());
-			entry.addProperty("textureSeed", definition.textureSeed());
-			entry.addProperty("textureHash", definition.textureHash());
-			if (definition.texture() != null) {
-				entry.add("texture", encodeTexture(definition.texture()));
-			}
-			if (definition.armorDisplayTexture() != null) {
-				entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
-				entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
-			}
-			if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
-			entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
-			switch (definition.type()) {
-				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
-				case ITEM -> entry.add("item", encodeItem(definition.item()));
-				case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
-			}
-			entry.addProperty("behaviorSource", definition.behaviorSource());
-			entries.add(entry);
-		}
+		definitions.stream().map(DynamicContentJson::encodeDefinition).forEach(entries::add);
 		root.add("definitions", entries);
 		return GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+	}
+
+	/** Returns the complete canonical persisted representation of one generated definition. */
+	public static JsonObject encodeDefinition(DynamicContentDefinition definition) {
+		JsonObject entry = new JsonObject();
+		entry.addProperty("type", definition.type().serializedName());
+		entry.addProperty("name", definition.name());
+		entry.addProperty("displayName", definition.displayName());
+		entry.addProperty("description", definition.description());
+		entry.addProperty("rarity", definition.rarityTier().serializedName());
+		entry.addProperty("textureSeed", definition.textureSeed());
+		entry.addProperty("textureHash", definition.textureHash());
+		if (definition.texture() != null) entry.add("texture", encodeTexture(definition.texture()));
+		if (definition.armorDisplayTexture() != null) {
+			entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
+			entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
+		}
+		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
+		entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
+		switch (definition.type()) {
+			case BLOCK -> entry.add("block", encodeBlock(definition.block()));
+			case ITEM -> entry.add("item", encodeItem(definition.item()));
+			case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
+		}
+		entry.addProperty("behaviorSource", definition.behaviorSource());
+		return entry;
 	}
 
 	public static Decoded decode(byte[] bytes) {
@@ -117,7 +118,7 @@ public final class DynamicContentJson {
 					: DynamicRarity.fromProperties(block, item, armor);
 			DynamicBlockModel blockModel = type == DynamicContentType.BLOCK && format >= 10 && entry.has("blockModel")
 					? decodeBlockModel(entry.getAsJsonObject("blockModel")) : null;
-			List<DynamicParticleDefinition> customParticles = format >= 14 && entry.has("customParticles")
+			List<DynamicParticleDefinition> customParticles = entry.has("customParticles")
 					? decodeCustomParticles(entry.getAsJsonArray("customParticles")) : List.of();
 			String behaviorSource;
 			if (format >= 9) {
@@ -346,6 +347,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("preferredTool", block.preferredTool().serializedName());
 		encoded.addProperty("requiresCorrectTool", block.requiresCorrectTool());
 		encoded.addProperty("shape", block.shape().serializedName());
+		encoded.addProperty("directional", block.directional());
 		encoded.addProperty("rarity", block.rarity().getSerializedName());
 		encoded.addProperty("redstonePower", block.redstonePower());
 		encoded.addProperty("comparatorPower", block.comparatorPower());
@@ -387,6 +389,7 @@ public final class DynamicContentJson {
 				DynamicTool.parse(encoded.get("preferredTool").getAsString()),
 				encoded.get("requiresCorrectTool").getAsBoolean(),
 				encoded.has("shape") ? DynamicBlockShape.parse(encoded.get("shape").getAsString()) : DynamicBlockShape.FULL_CUBE,
+				encoded.has("directional") && encoded.get("directional").getAsBoolean(),
 				encoded.has("rarity")
 						? Rarity.valueOf(encoded.get("rarity").getAsString().toUpperCase(Locale.ROOT))
 						: Rarity.COMMON,

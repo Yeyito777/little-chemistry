@@ -17,7 +17,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DynamicContentJsonTest {
 	private static final String TEXTURE_HASH = "0".repeat(64);
@@ -39,6 +41,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
+		assertEquals(15, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
@@ -50,21 +53,28 @@ class DynamicContentJsonTest {
 	void roundTripPreservesDescriptionAndMythicalRarity() {
 		DynamicBlockProperties block = new DynamicBlockProperties(
 				DynamicMaterial.CRYSTAL, 4.0F, DynamicTool.PICKAXE, true, DynamicBlockShape.FULL_CUBE,
-				Rarity.EPIC, 0, 0, 8, true, List.of());
+				true, Rarity.EPIC, 0, 0, 8, true, List.of());
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "moon_crystal", "Moon Crystal",
 				"A crystal that holds a sliver of moonlight.", DynamicRarity.MYTHICAL,
 				0L, TEXTURE_HASH, null,
 				null, null, block, null, null, DynamicBehaviorSource.completeLegacySource(null), null);
 
-		DynamicContentDefinition decoded = DynamicContentJson.decode(
-				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
-				.definitions().getFirst();
+		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition));
+		DynamicContentDefinition decoded = DynamicContentJson.decode(encoded).definitions().getFirst();
+		JsonObject mainFormat = JsonParser.parseString(new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
+		mainFormat.addProperty("format", 14);
+		mainFormat.getAsJsonArray("definitions").get(0).getAsJsonObject().remove("customParticles");
+		DynamicContentDefinition mainFormatDecoded = DynamicContentJson.decode(
+				mainFormat.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
-		assertEquals("A crystal that holds a sliver of moonlight.", decoded.description());
+		assertEquals("A crystal that holds a\nsliver of moonlight.", decoded.description());
 		assertEquals(DynamicRarity.MYTHICAL, decoded.rarityTier());
 		assertEquals(Rarity.EPIC, decoded.rarity());
 		assertEquals(Rarity.EPIC, decoded.block().rarity());
+		assertTrue(decoded.block().directional());
+		assertTrue(mainFormatDecoded.block().directional());
+		assertEquals(List.of(), mainFormatDecoded.customParticles());
 	}
 
 	@Test
@@ -186,11 +196,13 @@ class DynamicContentJsonTest {
 		legacyDefinition.remove("description");
 		legacyDefinition.remove("blockModel");
 		legacyDefinition.getAsJsonObject("block").remove("rarity");
+		legacyDefinition.getAsJsonObject("block").remove("directional");
 
 		DynamicContentDefinition decoded = DynamicContentJson.decode(
 				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
 		assertEquals(DynamicBlockShape.SLAB, decoded.block().shape());
+		assertFalse(decoded.block().directional());
 		assertEquals(Rarity.COMMON, decoded.rarity());
 		assertEquals("", decoded.description());
 		assertNull(decoded.blockModel());
@@ -256,8 +268,13 @@ class DynamicContentJsonTest {
 				DynamicRarity.COMMON, 0L, TEXTURE_HASH, null, null, null,
 				block, null, null, DynamicBehaviorSource.completeLegacySource(null), null, List.of(particle));
 
-		DynamicContentDefinition decoded = DynamicContentJson.decode(
-				DynamicContentJson.encode(UUID.randomUUID(), 4, List.of(definition))).definitions().getFirst();
+		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 4, List.of(definition));
+		DynamicContentDefinition decoded = DynamicContentJson.decode(encoded).definitions().getFirst();
+		JsonObject particleBranchFormat = JsonParser.parseString(
+				new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
+		particleBranchFormat.addProperty("format", 14);
+		DynamicContentDefinition previousFormatDecoded = DynamicContentJson.decode(
+				particleBranchFormat.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
 		assertEquals(1, decoded.customParticles().size());
 		assertEquals("embers", decoded.customParticles().getFirst().id());
@@ -265,6 +282,7 @@ class DynamicContentJsonTest {
 		assertEquals("FF804000", decoded.customParticles().getFirst().endColor());
 		assertEquals("custom:embers", decoded.block().particles().getFirst().particle());
 		assertEquals("embers", decoded.block().particles().getFirst().customParticleId());
+		assertEquals("embers", previousFormatDecoded.customParticles().getFirst().id());
 	}
 
 	@Test

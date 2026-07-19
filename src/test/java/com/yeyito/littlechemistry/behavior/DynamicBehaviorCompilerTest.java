@@ -116,6 +116,10 @@ final class DynamicBehaviorCompilerTest {
 		assertEquals(java.util.List.of("spark"), DynamicBehaviorSource.referencedCustomParticleIds(source));
 		assertThrows(IllegalArgumentException.class, () -> DynamicBehaviorSource.referencedCustomParticleIds(
 				source.replace("\"spark\"", "context.definition().name()")));
+		assertThrows(IllegalArgumentException.class, () -> DynamicBehaviorSource.referencedCustomParticleIds(
+				source.replace(
+						"import com.yeyito.littlechemistry.particle.DynamicParticles;",
+						"import com.yeyito.littlechemistry.particle.DynamicParticleOptions;")));
 	}
 
 	@Test

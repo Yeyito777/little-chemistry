@@ -53,118 +53,273 @@ public final class RuntimeTextureStore {
 		activeServer = serverId;
 	}
 
-	public static CompletableFuture<List<String>> prepare(Minecraft client, UUID serverId,
+	/**
+	 * Inspects and decodes a catalog revision without changing the textures visible to the current catalog.
+	 * The returned preparation must either be committed or closed on the client thread.
+	 */
+	public static CompletableFuture<Preparation> prepare(Minecraft client, UUID serverId,
 			List<DynamicContentDefinition> definitions) throws IOException {
+		if (!client.isSameThread()) throw new IllegalStateException("Runtime textures must be prepared on the client thread");
 		beginServer(client, serverId);
-		DynamicParticleTextures.clear();
-		Set<String> previousParticleHashes = expectedParticleHashes;
-		expectedParticleHashes = definitions.stream()
+		Set<String> particleHashes = definitions.stream()
 				.flatMap(definition -> definition.customParticleTextureHashes().stream())
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
 		Set<String> ordinaryAndParticleHashes = new HashSet<>();
 		for (DynamicContentDefinition definition : definitions) {
 			ordinaryAndParticleHashes.addAll(definition.renderTextureHashes());
 		}
-		ordinaryAndParticleHashes.addAll(expectedParticleHashes);
-		expectedItemHashes = Set.copyOf(ordinaryAndParticleHashes);
-		expectedExtrudedItemHashes = definitions.stream()
+		ordinaryAndParticleHashes.addAll(particleHashes);
+		Set<String> itemHashes = Set.copyOf(ordinaryAndParticleHashes);
+		Set<String> extrudedItemHashes = definitions.stream()
 				.filter(definition -> definition.type() != DynamicContentType.BLOCK)
 				.map(DynamicContentDefinition::textureHash)
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
-		expectedArmorHashes = definitions.stream()
+		Set<String> armorHashes = definitions.stream()
 				.filter(definition -> definition.type() == DynamicContentType.ARMOR)
 				.map(DynamicContentDefinition::effectiveArmorDisplayTextureHash)
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
-		Set<String> allExpectedHashes = new HashSet<>(expectedItemHashes);
-		allExpectedHashes.addAll(expectedArmorHashes);
-		expectedHashes = Set.copyOf(allExpectedHashes);
-		retiredParticleTextureTicks.keySet().removeAll(expectedItemHashes);
+		Set<String> allExpectedHashes = new HashSet<>(itemHashes);
+		allExpectedHashes.addAll(armorHashes);
+		Target target = new Target(Set.copyOf(allExpectedHashes), itemHashes,
+				extrudedItemHashes, armorHashes, particleHashes);
+		Path assetDirectory = assetDirectory(serverId);
+		Files.createDirectories(assetDirectory);
+		List<DynamicContentDefinition> definitionSnapshot = List.copyOf(definitions);
+		Map<String, Roles> hashesToPrepare = new HashMap<>();
+		for (String hash : target.expectedHashes()) {
+			boolean loadItem = target.itemHashes().contains(hash) && !loadedTextures.containsKey(hash);
+			boolean loadOpacity = target.extrudedItemHashes().contains(hash) && opaquePixels.get(hash) == null;
+			boolean loadArmor = target.armorHashes().contains(hash) && !loadedArmorTextures.containsKey(hash);
+			if (loadItem || loadOpacity || loadArmor) {
+				hashesToPrepare.put(hash, new Roles(loadItem, loadOpacity, loadArmor));
+			}
+		}
+
+		return CompletableFuture.supplyAsync(() -> {
+			Map<String, DecodedTexture> decodedAssets = new HashMap<>();
+			List<String> missing = new ArrayList<>();
+			try {
+				for (var entry : hashesToPrepare.entrySet()) {
+					String hash = entry.getKey();
+					byte[] bytes = cachedOrReconstructed(assetDirectory, definitionSnapshot, hash);
+					if (bytes == null) {
+						missing.add(hash);
+						continue;
+					}
+					decodedAssets.put(hash, decodePrepared(bytes, entry.getValue()));
+				}
+				return new Preparation(serverId, target, decodedAssets, List.copyOf(missing));
+			} catch (Throwable error) {
+				for (DecodedTexture decoded : decodedAssets.values()) decoded.close();
+				throw new RuntimeException("Could not prepare Little Chemistry runtime textures", error);
+			}
+		}, DECODER);
+	}
+
+	/** Installs a fully decoded preparation and swaps the catalog in the same client-thread transaction. */
+	public static List<String> commit(Minecraft client, UUID serverId, Preparation preparation,
+			Runnable catalogCommit) {
+		if (!client.isSameThread()) throw new IllegalStateException("Runtime textures must be committed on the client thread");
+		if (!serverId.equals(activeServer) || !serverId.equals(preparation.serverId())) {
+			preparation.close();
+			throw new IllegalStateException("Runtime texture preparation belongs to an inactive server");
+		}
+		preparation.claim();
+
+		Target target = preparation.target();
+		Map<String, Identifier> addedItems = new HashMap<>();
+		Map<String, List<Identifier>> addedArmor = new HashMap<>();
+		Map<String, boolean[]> addedOpacity = new HashMap<>();
+		List<Identifier> registered = new ArrayList<>();
+		Set<String> previousHashes = expectedHashes;
+		Set<String> previousItems = expectedItemHashes;
+		Set<String> previousExtrudedItems = expectedExtrudedItemHashes;
+		Set<String> previousArmor = expectedArmorHashes;
+		Set<String> previousParticles = expectedParticleHashes;
+
+		try {
+			for (var entry : preparation.decodedAssets().entrySet()) {
+				String hash = entry.getKey();
+				DecodedTexture decoded = entry.getValue();
+				if (decoded.image() != null && target.itemHashes().contains(hash)
+						&& !loadedTextures.containsKey(hash)) {
+					Identifier textureId = LittleChemistry.id("runtime/" + hash);
+					register(client, textureId, "Little Chemistry " + hash, decoded.takeImage(), registered);
+					addedItems.put(hash, textureId);
+				}
+				if (decoded.opaquePixels() != null && target.extrudedItemHashes().contains(hash)
+						&& opaquePixels.get(hash) == null) {
+					addedOpacity.put(hash, decoded.opaquePixels());
+				}
+				if (decoded.humanoid() != null && target.armorHashes().contains(hash)
+						&& !loadedArmorTextures.containsKey(hash)) {
+					List<Identifier> ids = armorTextureIds(hash);
+					register(client, ids.get(0), "Little Chemistry armor " + hash,
+							decoded.takeHumanoid(), registered);
+					register(client, ids.get(1), "Little Chemistry armor leggings " + hash,
+							decoded.takeLeggings(), registered);
+					register(client, ids.get(2), "Little Chemistry baby armor " + hash,
+							decoded.takeBaby(), registered);
+					addedArmor.put(hash, ids);
+				}
+			}
+
+			loadedTextures.putAll(addedItems);
+			loadedArmorTextures.putAll(addedArmor);
+			opaquePixels.putAll(addedOpacity);
+			expectedHashes = target.expectedHashes();
+			expectedItemHashes = target.itemHashes();
+			expectedExtrudedItemHashes = target.extrudedItemHashes();
+			expectedArmorHashes = target.armorHashes();
+			expectedParticleHashes = target.particleHashes();
+			catalogCommit.run();
+		} catch (Throwable error) {
+			expectedHashes = previousHashes;
+			expectedItemHashes = previousItems;
+			expectedExtrudedItemHashes = previousExtrudedItems;
+			expectedArmorHashes = previousArmor;
+			expectedParticleHashes = previousParticles;
+			for (var entry : addedItems.entrySet()) loadedTextures.remove(entry.getKey(), entry.getValue());
+			for (var entry : addedArmor.entrySet()) loadedArmorTextures.remove(entry.getKey(), entry.getValue());
+			for (String hash : addedOpacity.keySet()) opaquePixels.remove(hash);
+			for (Identifier texture : registered) safeRelease(client, texture);
+			preparation.closeAfterClaim();
+			if (error instanceof RuntimeException runtimeError) throw runtimeError;
+			if (error instanceof Error fatalError) throw fatalError;
+			throw new RuntimeException(error);
+		}
+
+		preparation.closeAfterClaim();
+		retireObsolete(client, previousParticles, target);
+		DynamicParticleTextures.clear();
+		return preparation.missing();
+	}
+
+	private static byte[] cachedOrReconstructed(Path assetDirectory,
+			List<DynamicContentDefinition> definitions, String hash) {
+		Path cached = assetDirectory.resolve(hash + ".png");
+		try {
+			if (Files.isRegularFile(cached)) {
+				byte[] bytes = Files.readAllBytes(cached);
+				if (hash.equals(DynamicTextureAsset.sha256(bytes))) return bytes;
+				Files.deleteIfExists(cached);
+			}
+		} catch (IOException error) {
+			LittleChemistry.LOGGER.warn("Could not read cached Little Chemistry texture {}", hash, error);
+		}
+		try {
+			byte[] reconstructed = reconstruct(definitions, hash);
+			if (reconstructed != null && hash.equals(DynamicTextureAsset.sha256(reconstructed))) {
+				try {
+					cache(assetDirectory, hash, reconstructed);
+				} catch (IOException error) {
+					LittleChemistry.LOGGER.warn("Could not cache reconstructed Little Chemistry texture {}", hash, error);
+				}
+				return reconstructed;
+			}
+		} catch (IOException error) {
+			LittleChemistry.LOGGER.warn("Could not reconstruct Little Chemistry texture {} from its definition", hash, error);
+		}
+		return null;
+	}
+
+	private static DecodedTexture decodePrepared(byte[] bytes, Roles roles) throws IOException {
+		NativeImage source = NativeImage.read(bytes);
+		NativeImage humanoid = null;
+		NativeImage leggings = null;
+		NativeImage baby = null;
+		try {
+			if (roles.loadOpacity() && (source.getWidth() != DynamicTextureAsset.WIDTH
+					|| source.getHeight() != DynamicTextureAsset.HEIGHT)) {
+				throw new IOException("Runtime inventory texture must be 16x16 pixels");
+			}
+			boolean[] opacity = roles.loadOpacity() ? opacity(source) : null;
+			if (roles.loadArmor()) {
+				if (source.getWidth() == DynamicArmorDisplayTextureSpec.WIDTH
+						&& source.getHeight() == DynamicArmorDisplayTextureSpec.HEIGHT) {
+					humanoid = copyTexture(source);
+					leggings = copyTexture(source);
+					baby = babyArmorTexture(source);
+				} else if (source.getWidth() == DynamicTextureAsset.WIDTH
+						&& source.getHeight() == DynamicTextureAsset.HEIGHT) {
+					// Format 6 and older used the inventory icon for the worn layer.
+					humanoid = legacyArmorTexture(source, 64, 32);
+					leggings = legacyArmorTexture(source, 64, 32);
+					baby = legacyArmorTexture(source, 64, 64);
+				} else {
+					throw new IOException("Runtime armor display texture must be 64x32 pixels");
+				}
+			}
+			NativeImage itemImage = roles.loadItem() ? source : null;
+			if (!roles.loadItem()) source.close();
+			return new DecodedTexture(itemImage, opacity, humanoid, leggings, baby);
+		} catch (Throwable error) {
+			source.close();
+			if (humanoid != null) humanoid.close();
+			if (leggings != null) leggings.close();
+			if (baby != null) baby.close();
+			if (error instanceof IOException ioError) throw ioError;
+			if (error instanceof RuntimeException runtimeError) throw runtimeError;
+			if (error instanceof Error fatalError) throw fatalError;
+			throw new RuntimeException(error);
+		}
+	}
+
+	private static void register(Minecraft client, Identifier id, String label, NativeImage image,
+			List<Identifier> registered) {
+		DynamicTexture texture = new DynamicTexture(() -> label, image);
+		try {
+			client.getTextureManager().register(id, texture);
+			registered.add(id);
+		} catch (Throwable error) {
+			texture.close();
+			if (error instanceof RuntimeException runtimeError) throw runtimeError;
+			if (error instanceof Error fatalError) throw fatalError;
+			throw new RuntimeException(error);
+		}
+	}
+
+	private static List<Identifier> armorTextureIds(String hash) {
+		return List.of(
+				DynamicArmorAssets.textureLocation(hash,
+						net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID),
+				DynamicArmorAssets.textureLocation(hash,
+						net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID_LEGGINGS),
+				DynamicArmorAssets.textureLocation(hash,
+						net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID_BABY));
+	}
+
+	private static void retireObsolete(Minecraft client, Set<String> previousParticleHashes, Target target) {
+		retiredParticleTextureTicks.keySet().removeAll(target.itemHashes());
 		var loadedIterator = loadedTextures.entrySet().iterator();
 		while (loadedIterator.hasNext()) {
 			var entry = loadedIterator.next();
-			if (expectedItemHashes.contains(entry.getKey())) continue;
+			if (target.itemHashes().contains(entry.getKey())) continue;
 			if (previousParticleHashes.contains(entry.getKey())
 					|| retiredParticleTextureTicks.containsKey(entry.getKey())) {
-				retiredParticleTextureTicks.putIfAbsent(
-						entry.getKey(), DynamicParticleDefinition.MAX_LIFETIME_TICKS);
+				retiredParticleTextureTicks.putIfAbsent(entry.getKey(),
+						DynamicParticleDefinition.MAX_LIFETIME_TICKS + 2);
 				continue;
 			}
-			client.getTextureManager().release(entry.getValue());
+			safeRelease(client, entry.getValue());
 			opaquePixels.remove(entry.getKey());
 			loadedIterator.remove();
 		}
 		var armorIterator = loadedArmorTextures.entrySet().iterator();
 		while (armorIterator.hasNext()) {
 			var entry = armorIterator.next();
-			if (expectedArmorHashes.contains(entry.getKey())) continue;
-			for (Identifier texture : entry.getValue()) client.getTextureManager().release(texture);
+			if (target.armorHashes().contains(entry.getKey())) continue;
+			for (Identifier texture : entry.getValue()) safeRelease(client, texture);
 			armorIterator.remove();
 		}
-		Path assetDirectory = assetDirectory(serverId);
-		Files.createDirectories(assetDirectory);
-		List<DynamicContentDefinition> definitionSnapshot = List.copyOf(definitions);
-		List<String> hashesToCheck = new ArrayList<>();
-		for (String hash : expectedHashes) {
-			boolean itemReady = !expectedItemHashes.contains(hash) || loadedTextures.containsKey(hash)
-					&& (!expectedExtrudedItemHashes.contains(hash) || opaquePixels.get(hash) != null);
-			boolean armorReady = !expectedArmorHashes.contains(hash) || loadedArmorTextures.containsKey(hash);
-			if ((itemReady && armorReady) || loadingTextures.containsKey(hash)) {
-				continue;
-			}
-			hashesToCheck.add(hash);
-		}
+	}
 
-		return CompletableFuture.supplyAsync(() -> {
-			Map<String, byte[]> cachedAssets = new HashMap<>();
-			List<String> missing = new ArrayList<>();
-			for (String hash : hashesToCheck) {
-				Path cached = assetDirectory.resolve(hash + ".png");
-				try {
-					if (Files.isRegularFile(cached)) {
-						byte[] bytes = Files.readAllBytes(cached);
-						if (hash.equals(DynamicTextureAsset.sha256(bytes))) {
-							cachedAssets.put(hash, bytes);
-							continue;
-						}
-						Files.deleteIfExists(cached);
-					}
-				} catch (IOException error) {
-					LittleChemistry.LOGGER.warn("Could not read cached Little Chemistry texture {}", hash, error);
-				}
-				try {
-					byte[] reconstructed = reconstruct(definitionSnapshot, hash);
-					if (reconstructed != null && hash.equals(DynamicTextureAsset.sha256(reconstructed))) {
-						cachedAssets.put(hash, reconstructed);
-						try {
-							cache(assetDirectory, hash, reconstructed);
-						} catch (IOException error) {
-							LittleChemistry.LOGGER.warn("Could not cache reconstructed Little Chemistry texture {}", hash, error);
-						}
-						continue;
-					}
-				} catch (IOException error) {
-					LittleChemistry.LOGGER.warn("Could not reconstruct Little Chemistry texture {} from its definition", hash, error);
-				}
-				missing.add(hash);
-			}
-			return new Prepared(cachedAssets, missing);
-		}, DECODER).thenCompose(prepared -> {
-			CompletableFuture<List<String>> result = new CompletableFuture<>();
-			client.execute(() -> {
-				if (!serverId.equals(activeServer)) {
-					result.complete(List.of());
-					return;
-				}
-				CompletableFuture<?>[] decodes = prepared.cachedAssets().entrySet().stream()
-						.map(entry -> decode(client, serverId, entry.getKey(), entry.getValue()))
-						.toArray(CompletableFuture[]::new);
-				CompletableFuture.allOf(decodes).whenComplete((ignored, error) -> {
-					if (error != null) result.completeExceptionally(error);
-					else result.complete(prepared.missing());
-				});
-			});
-			return result;
-		});
+	private static void safeRelease(Minecraft client, Identifier texture) {
+		try {
+			client.getTextureManager().release(texture);
+		} catch (Throwable error) {
+			LittleChemistry.LOGGER.warn("Could not release Little Chemistry runtime texture {}", texture, error);
+		}
 	}
 
 	public static void accept(Minecraft client, UUID serverId, String hash, byte[] bytes) throws IOException {
@@ -218,8 +373,8 @@ public final class RuntimeTextureStore {
 				entry.setValue(remaining);
 				continue;
 			}
-			Identifier texture = loadedTextures.remove(entry.getKey());
-			if (texture != null) client.getTextureManager().release(texture);
+				Identifier texture = loadedTextures.remove(entry.getKey());
+				if (texture != null) safeRelease(client, texture);
 			opaquePixels.remove(entry.getKey());
 			iterator.remove();
 		}
@@ -232,11 +387,9 @@ public final class RuntimeTextureStore {
 		}
 		DynamicParticleTextures.clear();
 		DynamicArmorAssets.clear();
-		for (Identifier texture : loadedTextures.values()) {
-			client.getTextureManager().release(texture);
-		}
+		for (Identifier texture : loadedTextures.values()) safeRelease(client, texture);
 		for (List<Identifier> textures : loadedArmorTextures.values()) {
-			for (Identifier texture : textures) client.getTextureManager().release(texture);
+			for (Identifier texture : textures) safeRelease(client, texture);
 		}
 		loadedTextures.clear();
 		loadedArmorTextures.clear();
@@ -275,46 +428,20 @@ public final class RuntimeTextureStore {
 		if (existing != null) return existing;
 		CompletableFuture<Void> loaded = new CompletableFuture<>();
 		loadingTextures.put(hash, loaded);
+		Roles roles = new Roles(item && !loadedTextures.containsKey(hash),
+				extrudedItem && opaquePixels.get(hash) == null,
+				armor && !loadedArmorTextures.containsKey(hash));
 		CompletableFuture.supplyAsync(() -> {
 			try {
-				NativeImage source = NativeImage.read(bytes);
-				if (extrudedItem && (source.getWidth() != DynamicTextureAsset.WIDTH
-							|| source.getHeight() != DynamicTextureAsset.HEIGHT)) {
-					source.close();
-					throw new IOException("Runtime inventory texture must be 16x16 pixels");
-				}
-				boolean[] opacity = extrudedItem ? opacity(source) : null;
-				NativeImage humanoid = null;
-				NativeImage leggings = null;
-				NativeImage baby = null;
-				if (armor) {
-					if (source.getWidth() == DynamicArmorDisplayTextureSpec.WIDTH
-							&& source.getHeight() == DynamicArmorDisplayTextureSpec.HEIGHT) {
-						humanoid = copyTexture(source);
-						leggings = copyTexture(source);
-						baby = babyArmorTexture(source);
-					} else if (source.getWidth() == DynamicTextureAsset.WIDTH
-							&& source.getHeight() == DynamicTextureAsset.HEIGHT) {
-						// Format 6 and older used the inventory icon for the worn layer. Keep those worlds loadable.
-						humanoid = legacyArmorTexture(source, 64, 32);
-						leggings = legacyArmorTexture(source, 64, 32);
-						baby = legacyArmorTexture(source, 64, 64);
-					} else {
-						source.close();
-						throw new IOException("Runtime armor display texture must be 64x32 pixels");
-					}
-				}
-				NativeImage itemImage = item ? source : null;
-				if (!item) source.close();
-				return new DecodedTexture(itemImage, opacity, humanoid, leggings, baby);
+				return decodePrepared(bytes, roles);
 			} catch (IOException error) {
 				throw new RuntimeException(error);
 			}
 		}, DECODER).whenComplete((decoded, error) -> client.execute(() -> {
 			loadingTextures.remove(hash, loaded);
-			if (error != null) {
-				LittleChemistry.LOGGER.error("Could not decode Little Chemistry texture {}", hash, error);
-				loaded.complete(null);
+				if (error != null) {
+					LittleChemistry.LOGGER.error("Could not decode Little Chemistry texture {}", hash, error);
+					loaded.completeExceptionally(error);
 				return;
 			}
 			if (!serverId.equals(activeServer) || !expectedHashes.contains(hash)) {
@@ -333,33 +460,33 @@ public final class RuntimeTextureStore {
 				return;
 			}
 
+			List<Identifier> registered = new ArrayList<>();
 			try {
-				if (decoded.image() != null) {
-					Identifier textureId = LittleChemistry.id("runtime/" + hash);
-					client.getTextureManager().register(textureId, new DynamicTexture(
-							() -> "Little Chemistry " + hash,
-							decoded.image()
-					));
-					loadedTextures.put(hash, textureId);
-					if (decoded.opaquePixels() != null) opaquePixels.put(hash, decoded.opaquePixels());
-					else opaquePixels.remove(hash);
+				Identifier itemId = null;
+				List<Identifier> armorIds = null;
+				if (decoded.image() != null && !loadedTextures.containsKey(hash)) {
+					itemId = LittleChemistry.id("runtime/" + hash);
+					register(client, itemId, "Little Chemistry " + hash, decoded.takeImage(), registered);
 				}
-
-				if (decoded.humanoid() != null) {
-					List<Identifier> armorTextureIds = List.of(
-							DynamicArmorAssets.textureLocation(hash, net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID),
-							DynamicArmorAssets.textureLocation(hash, net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID_LEGGINGS),
-							DynamicArmorAssets.textureLocation(hash, net.minecraft.client.resources.model.EquipmentClientInfo.LayerType.HUMANOID_BABY));
-					client.getTextureManager().register(armorTextureIds.get(0), new DynamicTexture(
-							() -> "Little Chemistry armor " + hash, decoded.humanoid()));
-					client.getTextureManager().register(armorTextureIds.get(1), new DynamicTexture(
-							() -> "Little Chemistry armor leggings " + hash, decoded.leggings()));
-					client.getTextureManager().register(armorTextureIds.get(2), new DynamicTexture(
-							() -> "Little Chemistry baby armor " + hash, decoded.baby()));
-					loadedArmorTextures.put(hash, armorTextureIds);
+				if (decoded.humanoid() != null && !loadedArmorTextures.containsKey(hash)) {
+					armorIds = armorTextureIds(hash);
+					register(client, armorIds.get(0), "Little Chemistry armor " + hash,
+							decoded.takeHumanoid(), registered);
+					register(client, armorIds.get(1), "Little Chemistry armor leggings " + hash,
+							decoded.takeLeggings(), registered);
+					register(client, armorIds.get(2), "Little Chemistry baby armor " + hash,
+							decoded.takeBaby(), registered);
 				}
+				if (itemId != null) loadedTextures.put(hash, itemId);
+				if (decoded.opaquePixels() != null && opaquePixels.get(hash) == null) {
+					opaquePixels.put(hash, decoded.opaquePixels());
+				}
+				if (armorIds != null) loadedArmorTextures.put(hash, armorIds);
+				decoded.close();
 				loaded.complete(null);
 			} catch (Throwable registrationError) {
+				for (Identifier texture : registered) safeRelease(client, texture);
+				decoded.close();
 				LittleChemistry.LOGGER.error("Could not register Little Chemistry texture {}", hash, registrationError);
 				loaded.completeExceptionally(registrationError);
 			}
@@ -588,21 +715,133 @@ public final class RuntimeTextureStore {
 		}
 	}
 
-	private record Prepared(Map<String, byte[]> cachedAssets, List<String> missing) {
+	private record Target(
+			Set<String> expectedHashes,
+			Set<String> itemHashes,
+			Set<String> extrudedItemHashes,
+			Set<String> armorHashes,
+			Set<String> particleHashes
+	) {
 	}
 
-	private record DecodedTexture(
-			NativeImage image,
-			boolean[] opaquePixels,
-			NativeImage humanoid,
-			NativeImage leggings,
-			NativeImage baby
-	) {
+	private record Roles(boolean loadItem, boolean loadOpacity, boolean loadArmor) {
+	}
+
+	public static final class Preparation implements AutoCloseable {
+		private final UUID serverId;
+		private final Target target;
+		private final Map<String, DecodedTexture> decodedAssets;
+		private final List<String> missing;
+		private boolean claimed;
+		private boolean closed;
+
+		private Preparation(UUID serverId, Target target, Map<String, DecodedTexture> decodedAssets,
+				List<String> missing) {
+			this.serverId = serverId;
+			this.target = target;
+			this.decodedAssets = decodedAssets;
+			this.missing = missing;
+		}
+
+		private UUID serverId() {
+			return serverId;
+		}
+
+		private Target target() {
+			return target;
+		}
+
+		private Map<String, DecodedTexture> decodedAssets() {
+			return decodedAssets;
+		}
+
+		public List<String> missing() {
+			return missing;
+		}
+
+		private void claim() {
+			if (claimed || closed) throw new IllegalStateException("Runtime texture preparation was already consumed");
+			claimed = true;
+		}
+
+		@Override
+		public void close() {
+			if (claimed) throw new IllegalStateException("A claimed runtime texture preparation cannot be closed externally");
+			closeImages();
+		}
+
+		private void closeAfterClaim() {
+			closeImages();
+		}
+
+		private void closeImages() {
+			if (closed) return;
+			closed = true;
+			for (DecodedTexture decoded : decodedAssets.values()) decoded.close();
+		}
+	}
+
+	private static final class DecodedTexture {
+		private NativeImage image;
+		private final boolean[] opaquePixels;
+		private NativeImage humanoid;
+		private NativeImage leggings;
+		private NativeImage baby;
+
+		private DecodedTexture(NativeImage image, boolean[] opaquePixels, NativeImage humanoid,
+				NativeImage leggings, NativeImage baby) {
+			this.image = image;
+			this.opaquePixels = opaquePixels;
+			this.humanoid = humanoid;
+			this.leggings = leggings;
+			this.baby = baby;
+		}
+
+		private NativeImage image() {
+			return image;
+		}
+
+		private boolean[] opaquePixels() {
+			return opaquePixels;
+		}
+
+		private NativeImage humanoid() {
+			return humanoid;
+		}
+
+		private NativeImage takeImage() {
+			NativeImage result = image;
+			image = null;
+			return result;
+		}
+
+		private NativeImage takeHumanoid() {
+			NativeImage result = humanoid;
+			humanoid = null;
+			return result;
+		}
+
+		private NativeImage takeLeggings() {
+			NativeImage result = leggings;
+			leggings = null;
+			return result;
+		}
+
+		private NativeImage takeBaby() {
+			NativeImage result = baby;
+			baby = null;
+			return result;
+		}
+
 		private void close() {
 			if (image != null) image.close();
 			if (humanoid != null) humanoid.close();
 			if (leggings != null) leggings.close();
 			if (baby != null) baby.close();
+			image = null;
+			humanoid = null;
+			leggings = null;
+			baby = null;
 		}
 	}
 }

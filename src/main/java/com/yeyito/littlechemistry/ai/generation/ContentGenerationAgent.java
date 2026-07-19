@@ -14,11 +14,13 @@ import java.io.IOException;
 public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
-			Create the requested Minecraft item, block, or armor piece with the tools. For crafting requests, derive a cohesive result
-				from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Fetch similar vanilla content
-				for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. Complete every
-				applicable property and texture. When distinctive effects improve the concept, author reusable custom particles and emit them
-				from block ambience or GeneratedBehaviorImpl. Author and compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
+			Create the requested Minecraft item, block, or armor piece with the tools. For recipe requests, derive a cohesive result
+			from the supplied process and ingredients, reflecting them in its appearance, properties, and behavior. Search and inspect
+			relevant previously generated content and fetch similar vanilla content for reference. Inspect complete generated behavior
+			source and decompiled classpath Java method bodies when useful, but do not merely copy, reskin, or delegate to existing content
+			when the concept implies special functionality. Complete every applicable property and texture. When distinctive effects
+			improve the concept, author reusable custom particles and emit them from block ambience or GeneratedBehaviorImpl. Author and
+			compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
 			""";
 
 	private final OpenAiClient openAi;
@@ -33,24 +35,24 @@ public final class ContentGenerationAgent {
 	}
 
 	public GeneratedContentSpec generateForRecipe(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
-			String requestedName, int requestedOutputCount, JsonObject craftingContext)
+			String requestedName, int requestedOutputCount, JsonObject recipeContext)
 			throws IOException, InterruptedException {
-		if (craftingContext == null) throw new IllegalArgumentException("craftingContext");
-		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, craftingContext);
+		if (recipeContext == null) throw new IllegalArgumentException("recipeContext");
+		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, recipeContext);
 	}
 
 	private GeneratedContentSpec generate(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
-			String requestedName, int requestedOutputCount, JsonObject craftingContext)
+			String requestedName, int requestedOutputCount, JsonObject recipeContext)
 			throws IOException, InterruptedException {
 		ContentGenerationDraft draft = new ContentGenerationDraft(
 				type, requestedName, requestedArmorSlot, requestedOutputCount);
 		JsonArray history = new JsonArray();
 		JsonObject requestData = new JsonObject();
-		requestData.addProperty("source", craftingContext == null ? "wand" : "crafting");
+		requestData.addProperty("source", recipeContext == null ? "wand" : "recipe");
 		requestData.addProperty("requestedKind", type.serializedName());
 		requestData.addProperty("requestedName", requestedName);
-		if (craftingContext != null) requestData.addProperty("requestedOutputCount", requestedOutputCount);
-		if (craftingContext != null) requestData.add("craftingGrid", craftingContext.deepCopy());
+		if (recipeContext != null) requestData.addProperty("requestedOutputCount", requestedOutputCount);
+		if (recipeContext != null) requestData.add("recipe", recipeContext.deepCopy());
 		if (requestedArmorSlot != null) {
 			requestData.addProperty("requestedArmorSlot", requestedArmorSlot.serializedName());
 		}
@@ -94,14 +96,16 @@ public final class ContentGenerationAgent {
 							call.arguments().get("supportProfile"),
 							call.arguments().has("supports") ? call.arguments().get("supports") : "missing");
 				}
-				ContentGenerationDraft.ToolExecution execution = switch (call.name()) {
-					case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
-					case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
-					case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
-					case "search_java_classes" -> JavaCodeInspector.search(call.arguments());
-					case "inspect_java_class" -> JavaCodeInspector.inspect(call.arguments());
-					default -> draft.execute(call.name(), call.arguments());
-				};
+					ContentGenerationDraft.ToolExecution execution =
+							GenerationInspectionTools.execute(call.name(), call.arguments());
+					if (execution == null) {
+						execution = switch (call.name()) {
+							case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
+							case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
+							case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
+							default -> draft.execute(call.name(), call.arguments());
+						};
+					}
 				if (execution.submitted() != null) {
 					return execution.submitted();
 				}
@@ -134,14 +138,14 @@ public final class ContentGenerationAgent {
 						: "Fetch set_texture-compatible palettes and 16x16 rows from similar vanilla Minecraft item icons or armor item icons.",
 				minecraftContentFetchSchema()));
 		tools.add(tool("set_custom_particles",
-				"Replace the content's reusable AI-authored particle library with zero to four definitions. Each definition has 1-4 square indexed frames, linear size/color transitions, animation, and bounded physics. Block ambient emitters reference custom:<id>. Server-side Java behavior emits a declared string-literal local ID with com.yeyito.littlechemistry.particle.DynamicParticles.spawn.",
+				"Replace the content's reusable AI-authored particle library with zero to four definitions. Each definition has 1-4 square indexed frames, linear size/color transitions, animation, and bounded physics. Block ambient emitters reference custom:<id>. Server-side Java behavior must emit a declared string-literal local ID only through the budgeted com.yeyito.littlechemistry.particle.DynamicParticles.spawn API; never construct particle options or use the particle registry directly.",
 				customParticlesSchema()));
 		if (type == DynamicContentType.BLOCK) {
 			tools.add(tool("set_block_properties",
-					"Choose gameplay properties and the visual/physical model category. Presets are full_cube, slab, no_collision, star, fence, cross, and torch. Use custom for an AI-authored model made from axis-aligned cuboids.",
+					"Choose gameplay properties and the visual/physical model category. Presets are full_cube, slab, no_collision, star, fence, cross, and torch. Use custom for an AI-authored model made from axis-aligned cuboids. Set directional=true only when the block has a meaningful front: the authored north face becomes its front, and its model and collision rotate horizontally to face the placer.",
 					blockPropertiesSchema()));
 			tools.add(tool("set_block_model",
-					"Required after set_block_properties. Define 1-12 named indexed textures at any 1-64 pixel dimensions, choose the breaking-particle texture, and map each block face to a texture. Reuse a texture ID for a single-texture block or choose different top/bottom/sides. Omit UV to let preset/custom cuboid dimensions crop the texture like a vanilla model; supply UV in 0-16 model coordinates to override it. For shape=custom, define 1-24 axis-aligned cuboids with 0-16 bounds, collision control, and optional per-element face overrides; other shapes require an empty elements array.",
+					"Required after set_block_properties. Define 1-12 named indexed textures at any 1-64 pixel dimensions, choose the breaking-particle texture, and map each block face to a texture. Reuse a texture ID for a single-texture block or choose different top/bottom/sides. For a directional block, author its front on the north face. Omit UV to let preset/custom cuboid dimensions crop the texture like a vanilla model; supply UV in 0-16 model coordinates to override it. For shape=custom, define 1-24 axis-aligned cuboids with 0-16 bounds, collision control, and optional per-element face overrides; other shapes require an empty elements array.",
 					blockModelSchema()));
 			tools.add(tool("set_block_redstone", "Set constant weak redstone and comparator output; use zero for neither.", blockRedstoneSchema()));
 			tools.add(tool("set_block_light", "Set true world light and visual emissive rendering.", lightSchema()));
@@ -178,12 +182,7 @@ public final class ContentGenerationAgent {
 		}
 		tools.add(tool("inspect_behavior_api",
 				"Inspect the required server-side Java marker and optional callback capability interfaces. Implement only the capabilities this content actually needs.", emptySchema()));
-		tools.add(tool("search_java_classes",
-				"Search the running Minecraft, Fabric, and Little Chemistry class graph by concept or class-name fragment while authoring behavior.",
-				javaClassSearchSchema()));
-		tools.add(tool("inspect_java_class",
-				"Inspect a runtime Java class's hierarchy, constructors, fields, nested classes, and source-like method signatures without initializing it.",
-				javaClassInspectSchema()));
+		GenerationInspectionTools.addTo(tools);
 		tools.add(tool("set_behavior_source",
 				"Required: set a complete server-side Java compilation unit with no package declaration. Declare public final class GeneratedBehaviorImpl with a public no-argument constructor. It must implement DynamicBehavior plus only the callback capability interfaces it actually uses; a passive class implements only DynamicBehavior. Capability methods have no defaults.",
 				behaviorSourceSchema()));
@@ -257,13 +256,14 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject blockPropertiesSchema() {
-		JsonObject schema = objectSchema("material", "hardness", "preferredTool", "requiresCorrectTool", "shape");
+		JsonObject schema = objectSchema("material", "hardness", "preferredTool", "requiresCorrectTool", "shape", "directional");
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("material", enumSchema("stone", "metal", "wood", "glass", "crystal", "earth", "organic", "cloth"));
 		properties.add("hardness", numberSchema(0, 50));
 		properties.add("preferredTool", enumSchema("none", "pickaxe", "axe", "shovel", "hoe"));
 		properties.add("requiresCorrectTool", typeSchema("boolean"));
 		properties.add("shape", enumSchema("full_cube", "slab", "no_collision", "star", "fence", "cross", "torch", "custom"));
+		properties.add("directional", typeSchema("boolean"));
 		return schema;
 	}
 
@@ -461,31 +461,6 @@ public final class ContentGenerationAgent {
 		source.addProperty("minLength", 1);
 		source.addProperty("maxLength", 60_000);
 		schema.getAsJsonObject("properties").add("source", source);
-		return schema;
-	}
-
-	private static JsonObject javaClassSearchSchema() {
-		JsonObject schema = objectSchema("query");
-		JsonObject properties = schema.getAsJsonObject("properties");
-		JsonObject query = typeSchema("string");
-		query.addProperty("minLength", 1);
-		query.addProperty("maxLength", 120);
-		properties.add("query", query);
-		properties.add("scope", enumSchema("any", "minecraft", "little_chemistry", "fabric"));
-		return schema;
-	}
-
-	private static JsonObject javaClassInspectSchema() {
-		JsonObject schema = objectSchema("className");
-		JsonObject properties = schema.getAsJsonObject("properties");
-		JsonObject className = typeSchema("string");
-		className.addProperty("minLength", 1);
-		className.addProperty("maxLength", 240);
-		properties.add("className", className);
-		JsonObject memberQuery = typeSchema("string");
-		memberQuery.addProperty("maxLength", 120);
-		properties.add("memberQuery", memberQuery);
-		properties.add("includeInherited", typeSchema("boolean"));
 		return schema;
 	}
 

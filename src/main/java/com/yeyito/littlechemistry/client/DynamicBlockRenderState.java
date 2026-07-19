@@ -12,6 +12,7 @@ public final class DynamicBlockRenderState extends BlockEntityRenderState {
 	boolean visuallyEmissive;
 	DynamicBlockShape shape = DynamicBlockShape.FULL_CUBE;
 	DynamicPlacedShape placedShape;
+	Direction facing = Direction.NORTH;
 	boolean fenceNorth;
 	boolean fenceEast;
 	boolean fenceSouth;

@@ -1,7 +1,7 @@
 package com.yeyito.littlechemistry.mixin;
 
 import com.yeyito.littlechemistry.LittleChemistry;
-import com.yeyito.littlechemistry.crafting.AiCraftingMenuAccess;
+import com.yeyito.littlechemistry.crafting.AiRecipeMenuAccess;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.ImageButton;
 import net.minecraft.client.gui.components.Tooltip;
@@ -36,7 +36,7 @@ public abstract class CraftingScreenMixin extends AbstractRecipeBookScreen<Craft
 		littleChemistry$makeRecipeButton = new ImageButton(20, 20, MAKE_RECIPE_SPRITES, button -> {
 			if (this.minecraft != null && this.minecraft.gameMode != null) {
 				this.minecraft.gameMode.handleInventoryButtonClick(this.menu.containerId,
-						AiCraftingMenuAccess.MAKE_RECIPE_BUTTON_ID);
+							AiRecipeMenuAccess.MAKE_RECIPE_BUTTON_ID);
 			}
 		}, MAKE_RECIPE);
 		littleChemistry$makeRecipeButton.setTooltip(Tooltip.create(MAKE_RECIPE));
@@ -53,11 +53,11 @@ public abstract class CraftingScreenMixin extends AbstractRecipeBookScreen<Craft
 	@Unique
 	private void littleChemistry$updateButton() {
 		if (littleChemistry$makeRecipeButton == null) return;
-		int state = ((AiCraftingMenuAccess)this.menu).littleChemistry$getRecipeState();
-		littleChemistry$makeRecipeButton.visible = state != AiCraftingMenuAccess.EMPTY_OR_VALID;
-		littleChemistry$makeRecipeButton.active = state == AiCraftingMenuAccess.MAKE_RECIPE_AVAILABLE;
+		int state = ((AiRecipeMenuAccess)this.menu).littleChemistry$getRecipeState();
+		littleChemistry$makeRecipeButton.visible = state != AiRecipeMenuAccess.EMPTY_OR_VALID;
+		littleChemistry$makeRecipeButton.active = state == AiRecipeMenuAccess.MAKE_RECIPE_AVAILABLE;
 		littleChemistry$makeRecipeButton.setPosition(this.leftPos + this.imageWidth + 4, this.topPos + 34);
 		littleChemistry$makeRecipeButton.setTooltip(Tooltip.create(
-				state == AiCraftingMenuAccess.GENERATING ? MAKING_RECIPE : MAKE_RECIPE));
+					state == AiRecipeMenuAccess.GENERATING ? MAKING_RECIPE : MAKE_RECIPE));
 	}
 }

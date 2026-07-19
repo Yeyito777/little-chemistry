@@ -15,14 +15,19 @@ import com.yeyito.littlechemistry.content.DynamicItemType;
 import com.yeyito.littlechemistry.content.DynamicParticleEmitter;
 import com.yeyito.littlechemistry.content.DynamicPlacementProperties;
 
-/** Produces a compact, complete gameplay view of a generated crafting ingredient for the AI agents. */
+/** Produces complete and summary views of generated content for the AI agents. */
 public final class DynamicContentAiDescription {
-	private static final int MAX_BEHAVIOR_SOURCE_CHARS = 12_000;
-	private static final int BEHAVIOR_SOURCE_TAIL_CHARS = 4_000;
 	private DynamicContentAiDescription() {
 	}
 
 	public static JsonObject describe(DynamicContentDefinition definition) {
+		JsonObject result = summarize(definition);
+		result.getAsJsonObject("behavior").addProperty("javaSource", definition.behaviorSource());
+		return result;
+	}
+
+	/** Returns searchable gameplay and capability data without embedding the potentially large Java source. */
+	public static JsonObject summarize(DynamicContentDefinition definition) {
 		JsonObject result = new JsonObject();
 		result.addProperty("contentId", LittleChemistry.MOD_ID + ":" + definition.name());
 		result.addProperty("type", definition.type().serializedName());
@@ -73,7 +78,7 @@ public final class DynamicContentAiDescription {
 			customParticles.add(encoded);
 		}
 		result.add("customParticles", customParticles);
-		result.add("behavior", describeBehavior(definition.behaviorSource()));
+		result.add("behavior", summarizeBehavior(definition.behaviorSource()));
 		return result;
 	}
 
@@ -84,6 +89,7 @@ public final class DynamicContentAiDescription {
 		result.addProperty("preferredTool", block.preferredTool().serializedName());
 		result.addProperty("requiresCorrectTool", block.requiresCorrectTool());
 		result.addProperty("shape", block.shape().serializedName());
+		result.addProperty("directional", block.directional());
 		result.addProperty("redstonePower", block.redstonePower());
 		result.addProperty("comparatorPower", block.comparatorPower());
 		result.addProperty("lightLevel", block.lightLevel());
@@ -173,23 +179,13 @@ public final class DynamicContentAiDescription {
 		return result;
 	}
 
-	private static JsonObject describeBehavior(String source) {
+	private static JsonObject summarizeBehavior(String source) {
 		JsonObject result = new JsonObject();
 		JsonArray callbacks = new JsonArray();
 		for (DynamicBehaviorCapability capability : DynamicBehaviorSource.capabilities(source)) {
 			callbacks.add(capability.callbackName());
 		}
 		result.add("implementedCallbacks", callbacks);
-		boolean truncated = source.length() > MAX_BEHAVIOR_SOURCE_CHARS;
-		result.addProperty("javaSourceExcerpt", truncated ? abbreviateSource(source) : source);
-		result.addProperty("javaSourceTruncated", truncated);
 		return result;
-	}
-
-	private static String abbreviateSource(String source) {
-		int headLength = MAX_BEHAVIOR_SOURCE_CHARS - BEHAVIOR_SOURCE_TAIL_CHARS;
-		return source.substring(0, headLength)
-				+ "\n/* ... source excerpt truncated for crafting analysis ... */\n"
-				+ source.substring(source.length() - BEHAVIOR_SOURCE_TAIL_CHARS);
 	}
 }

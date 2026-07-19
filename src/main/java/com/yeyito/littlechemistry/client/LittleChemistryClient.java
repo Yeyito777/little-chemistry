@@ -89,15 +89,24 @@ public final class LittleChemistryClient implements ClientModInitializer {
 			activeRevision = payload.revision();
 
 			RuntimeTextureStore.prepare(client, payload.serverId(), decoded.definitions())
-					.whenComplete((missing, error) -> client.execute(() -> {
+					.whenComplete((preparation, error) -> client.execute(() -> {
 						if (!payload.serverId().equals(activeServer) || payload.revision() != activeRevision) {
+							if (preparation != null) preparation.close();
 							return;
 						}
 						if (error != null) {
-							LittleChemistry.LOGGER.error("Could not inspect the Little Chemistry asset cache", error);
+							LittleChemistry.LOGGER.error("Could not prepare the Little Chemistry asset cache", error);
 							return;
 						}
-						DynamicContentCatalog.replace(decoded.definitions());
+						java.util.List<String> missing;
+						try {
+							missing = RuntimeTextureStore.commit(client, payload.serverId(), preparation,
+									() -> DynamicContentCatalog.replace(decoded.definitions()));
+						} catch (Throwable commitError) {
+							LittleChemistry.LOGGER.error("Could not commit the Little Chemistry catalog and textures",
+									commitError);
+							return;
+						}
 						refreshCreativeTabs(client);
 						for (int start = 0; start < missing.size(); start += DynamicAssetRequestPayload.MAX_HASHES) {
 							int end = Math.min(missing.size(), start + DynamicAssetRequestPayload.MAX_HASHES);

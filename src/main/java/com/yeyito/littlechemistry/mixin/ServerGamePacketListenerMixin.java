@@ -1,6 +1,6 @@
 package com.yeyito.littlechemistry.mixin;
 
-import com.yeyito.littlechemistry.crafting.AiCraftingMenuAccess;
+import com.yeyito.littlechemistry.crafting.AiRecipeMenuAccess;
 import net.minecraft.network.protocol.game.ServerboundPlaceRecipePacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -17,9 +17,8 @@ public abstract class ServerGamePacketListenerMixin {
 
 	@Inject(method = "handlePlaceRecipe", at = @At("HEAD"), cancellable = true)
 	private void littleChemistry$blockRecipeBookWhileLocked(ServerboundPlaceRecipePacket packet, CallbackInfo callback) {
-		if (player.containerMenu instanceof AiCraftingMenuAccess access
-				&& access.littleChemistry$getSharedTable() != null
-				&& access.littleChemistry$getSharedTable().isLocked()) {
+		if (player.containerMenu instanceof AiRecipeMenuAccess access
+				&& access.littleChemistry$getRecipeState() == AiRecipeMenuAccess.GENERATING) {
 			callback.cancel();
 		}
 	}

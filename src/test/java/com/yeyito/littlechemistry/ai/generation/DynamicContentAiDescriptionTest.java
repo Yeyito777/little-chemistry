@@ -41,7 +41,7 @@ class DynamicContentAiDescriptionTest {
 	void exposesAllBlockGameplayProperties() {
 		DynamicBlockProperties block = new DynamicBlockProperties(
 				DynamicMaterial.CRYSTAL, 7.5F, DynamicTool.PICKAXE, true, DynamicBlockShape.STAR,
-				11, 6, 13, true,
+				true, Rarity.COMMON, 11, 6, 13, true,
 				List.of(new DynamicParticleEmitter(DynamicParticleType.GLOW, 0.1, 2, 0.05, true)));
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "charged_crystal", "Charged Crystal", 0L, TEXTURE_HASH,
@@ -56,6 +56,7 @@ class DynamicContentAiDescriptionTest {
 		assertEquals("pickaxe", properties.get("preferredTool").getAsString());
 		assertTrue(properties.get("requiresCorrectTool").getAsBoolean());
 		assertEquals("star", properties.get("shape").getAsString());
+		assertTrue(properties.get("directional").getAsBoolean());
 		assertEquals(11, properties.get("redstonePower").getAsInt());
 		assertEquals(6, properties.get("comparatorPower").getAsInt());
 		assertEquals(13, properties.get("lightLevel").getAsInt());
@@ -96,14 +97,33 @@ class DynamicContentAiDescriptionTest {
 		assertEquals(16, properties.get("maxStack").getAsInt());
 		assertEquals("consume", properties.get("craftingUse").getAsString());
 		assertEquals("mythical", description.get("rarity").getAsString());
-		assertEquals("A berry that flickers between nearby moments.", description.get("description").getAsString());
+		assertEquals("A berry that flickers between\nnearby moments.", description.get("description").getAsString());
 		assertTrue(properties.get("foil").getAsBoolean());
 		assertEquals(12, properties.get("enchantability").getAsInt());
 		assertEquals(2.5, properties.get("reach").getAsDouble());
 		assertEquals(8, properties.getAsJsonObject("food").get("hunger").getAsInt());
 		assertEquals("useAir", behavior.getAsJsonArray("implementedCallbacks").get(0).getAsString());
 		assertEquals(1, behavior.getAsJsonArray("implementedCallbacks").size());
-		assertTrue(behavior.get("javaSourceExcerpt").getAsString().contains("GeneratedBehaviorImpl"));
-		assertFalse(behavior.get("javaSourceTruncated").getAsBoolean());
+		assertEquals(source.strip(), behavior.get("javaSource").getAsString());
+		assertFalse(behavior.has("javaSourceTruncated"));
+	}
+
+	@Test
+	void neverTruncatesGeneratedBehaviorSource() {
+		String source = """
+				public final class GeneratedBehaviorImpl implements
+				        com.yeyito.littlechemistry.behavior.DynamicBehavior {
+				    /* %s */
+				    public GeneratedBehaviorImpl() {}
+				}
+				""".formatted("behavior-detail-".repeat(1_500)).strip();
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ITEM, "long_source", "Long Source", 0L, TEXTURE_HASH,
+				null, null, DynamicItemProperties.DEFAULT, source);
+
+		JsonObject behavior = DynamicContentAiDescription.describe(definition).getAsJsonObject("behavior");
+
+		assertTrue(source.length() > 12_000);
+		assertEquals(source, behavior.get("javaSource").getAsString());
 	}
 }

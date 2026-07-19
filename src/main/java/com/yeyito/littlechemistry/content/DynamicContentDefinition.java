@@ -1,5 +1,6 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.Rarity;
 
 import java.util.HashSet;
@@ -24,6 +25,8 @@ public record DynamicContentDefinition(
 		DynamicBlockModel blockModel,
 		List<DynamicParticleDefinition> customParticles
 ) {
+	private static final int DESCRIPTION_WORDS_PER_LINE = 5;
+
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
@@ -92,11 +95,19 @@ public record DynamicContentDefinition(
 		if (behaviorSource == null || behaviorSource.isBlank()) {
 			throw new IllegalArgumentException("Dynamic content requires Java behavior source");
 		}
-		behaviorSource = behaviorSource.strip();
+			behaviorSource = behaviorSource.strip();
 		if (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("Dynamic behavior source is invalid");
 		}
 		customParticles = DynamicParticleDefinition.validateLibrary(customParticles);
+		Set<String> particleIds = customParticles.stream()
+				.map(DynamicParticleDefinition::id)
+				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		for (String referenced : DynamicBehaviorSource.referencedCustomParticleIds(behaviorSource)) {
+			if (!particleIds.contains(referenced)) {
+				throw new IllegalArgumentException("Behavior references undefined custom particle: " + referenced);
+			}
+		}
 		switch (type) {
 			case BLOCK -> {
 				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
@@ -151,10 +162,28 @@ public record DynamicContentDefinition(
 
 	public static String normalizeDescription(String raw) {
 		String normalized = raw == null ? "" : raw.strip();
-		if (normalized.length() > 120 || normalized.chars().anyMatch(Character::isISOControl)) {
-			throw new IllegalArgumentException("Description must contain at most 120 printable characters");
+		if (normalized.chars().anyMatch(character -> Character.isISOControl(character)
+				&& character != '\n' && character != '\r')) {
+			throw new IllegalArgumentException("Description may contain only printable characters and line breaks");
 		}
-		return normalized;
+		String wrapped = wrapDescription(normalized);
+		if (wrapped.length() > 120) {
+			throw new IllegalArgumentException("Description must contain at most 120 characters");
+		}
+		return wrapped;
+	}
+
+	private static String wrapDescription(String description) {
+		if (description.isEmpty()) return description;
+		String[] words = description.split("\\s+");
+		StringBuilder wrapped = new StringBuilder(description.length());
+		for (int index = 0; index < words.length; index++) {
+			if (index > 0) {
+				wrapped.append(index % DESCRIPTION_WORDS_PER_LINE == 0 ? '\n' : ' ');
+			}
+			wrapped.append(words[index]);
+		}
+		return wrapped.toString();
 	}
 
 	/**

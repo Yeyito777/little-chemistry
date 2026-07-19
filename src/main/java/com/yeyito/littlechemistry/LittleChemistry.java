@@ -6,6 +6,7 @@ import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
+import com.yeyito.littlechemistry.item.CraftingTableOnAStickItem;
 import com.yeyito.littlechemistry.item.WandOfCreationItem;
 import com.yeyito.littlechemistry.item.WandOfDeletionItem;
 import com.yeyito.littlechemistry.network.CreateContentRequestPayload;
@@ -60,6 +61,18 @@ public final class LittleChemistry implements ModInitializer {
 			BuiltInRegistries.ITEM,
 			WAND_OF_DELETION_KEY,
 			new WandOfDeletionItem(new Item.Properties().setId(WAND_OF_DELETION_KEY).stacksTo(1))
+	);
+
+	private static final ResourceKey<Item> CRAFTING_TABLE_ON_A_STICK_KEY = ResourceKey.create(
+			Registries.ITEM,
+			id("crafting_table_on_a_stick")
+	);
+
+	public static final Item CRAFTING_TABLE_ON_A_STICK = Registry.register(
+			BuiltInRegistries.ITEM,
+			CRAFTING_TABLE_ON_A_STICK_KEY,
+			new CraftingTableOnAStickItem(
+					new Item.Properties().setId(CRAFTING_TABLE_ON_A_STICK_KEY).stacksTo(1))
 	);
 
 	private static final ResourceKey<CreativeModeTab> CREATIVE_TAB_KEY = ResourceKey.create(
@@ -136,17 +149,18 @@ public final class LittleChemistry implements ModInitializer {
 		Registry.register(
 				BuiltInRegistries.CREATIVE_MODE_TAB,
 				CREATIVE_TAB_KEY,
-					FabricCreativeModeTab.builder()
-							.title(Component.translatable("itemGroup.little_chemistry.main"))
-							.icon(() -> new ItemStack(WAND_OF_CREATION))
-							.displayItems((context, entries) -> {
-								entries.accept(WAND_OF_CREATION);
-								entries.accept(WAND_OF_DELETION);
-								for (var definition : DynamicContentCatalog.definitions()) {
-									entries.accept(DynamicContentObjects.createStack(definition));
-								}
-							})
-							.build()
+				FabricCreativeModeTab.builder()
+						.title(Component.translatable("itemGroup.little_chemistry.main"))
+						.icon(() -> new ItemStack(WAND_OF_CREATION))
+						.displayItems((context, entries) -> {
+							entries.accept(WAND_OF_CREATION);
+							entries.accept(WAND_OF_DELETION);
+							entries.accept(CRAFTING_TABLE_ON_A_STICK);
+							for (var definition : DynamicContentCatalog.definitions()) {
+								entries.accept(DynamicContentObjects.createStack(definition));
+							}
+						})
+						.build()
 		);
 
 		LOGGER.info("Little Chemistry initialized");

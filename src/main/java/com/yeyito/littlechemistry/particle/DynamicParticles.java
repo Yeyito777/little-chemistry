@@ -5,11 +5,13 @@ import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import net.minecraft.server.level.ServerLevel;
 
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Stable server-side API through which generated behavior emits generated particle visuals. */
 public final class DynamicParticles {
 	private static final Set<String> warnedMissingParticles = ConcurrentHashMap.newKeySet();
+	private static final WeakHashMap<ServerLevel, DynamicParticleEmissionBudget> emissionBudgets = new WeakHashMap<>();
 
 	private DynamicParticles() {
 	}
@@ -24,8 +26,17 @@ public final class DynamicParticles {
 		}
 		DynamicParticleOptions options = options(definition, particleId);
 		if (options == null) return 0;
-		return level.sendParticles(options,
-				x, y, z, 0, velocityX, velocityY, velocityZ, 1.0);
+		DynamicParticleEmissionBudget.Reservation reservation = reserve(level, definition, particleId, 1);
+		if (reservation == null) return 0;
+		try {
+			int recipients = level.sendParticles(options,
+					x, y, z, 0, velocityX, velocityY, velocityZ, 1.0);
+			if (recipients == 0) refund(level, reservation);
+			return recipients;
+		} catch (RuntimeException | Error error) {
+			refund(level, reservation);
+			throw error;
+		}
 	}
 
 	/**
@@ -43,8 +54,17 @@ public final class DynamicParticles {
 		}
 		DynamicParticleOptions options = options(definition, particleId);
 		if (options == null) return 0;
-		return level.sendParticles(options,
-				x, y, z, count, spreadX, spreadY, spreadZ, speed);
+		DynamicParticleEmissionBudget.Reservation reservation = reserve(level, definition, particleId, count);
+		if (reservation == null) return 0;
+		try {
+			int recipients = level.sendParticles(options,
+					x, y, z, reservation.count(), spreadX, spreadY, spreadZ, speed);
+			if (recipients == 0) refund(level, reservation);
+			return recipients;
+		} catch (RuntimeException | Error error) {
+			refund(level, reservation);
+			throw error;
+		}
 	}
 
 	private static DynamicParticleOptions options(DynamicContentDefinition definition, String particleId) {
@@ -56,6 +76,21 @@ public final class DynamicParticles {
 			LittleChemistry.LOGGER.warn("Generated behavior tried to emit undefined custom particle {}", key);
 		}
 		return null;
+	}
+
+	private static synchronized DynamicParticleEmissionBudget.Reservation reserve(ServerLevel level,
+			DynamicContentDefinition definition,
+			String particleId, int count) {
+		var particle = definition.customParticle(particleId);
+		if (particle == null) return null;
+		return emissionBudgets.computeIfAbsent(level, ignored -> new DynamicParticleEmissionBudget())
+				.reserve(definition.name(), level.getGameTime(), particle.lifetimeTicks(), count);
+	}
+
+	private static synchronized void refund(ServerLevel level,
+			DynamicParticleEmissionBudget.Reservation reservation) {
+		DynamicParticleEmissionBudget budget = emissionBudgets.get(level);
+		if (budget != null) budget.refund(reservation);
 	}
 
 	private static boolean finite(double... values) {

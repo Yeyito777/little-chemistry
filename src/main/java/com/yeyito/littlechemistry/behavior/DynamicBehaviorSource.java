@@ -25,6 +25,8 @@ public final class DynamicBehaviorSource {
 			"\\bDynamicParticles\\s*\\.\\s*spawn\\s*\\(");
 	private static final Pattern STATIC_DYNAMIC_PARTICLE_IMPORT = Pattern.compile(
 			"\\bimport\\s+static\\s+com\\.yeyito\\.littlechemistry\\.particle\\.DynamicParticles\\.spawn\\s*;");
+	private static final Pattern DIRECT_DYNAMIC_PARTICLE_PACKET = Pattern.compile(
+			"\\b(?:DynamicParticleOptions|DynamicParticleRegistry)\\b");
 	private static final Pattern PARTICLE_ID_LITERAL = Pattern.compile("\"([a-z][a-z0-9_]{0,31})\"");
 	private static final ConcurrentHashMap<String, Set<DynamicBehaviorCapability>> CAPABILITY_CACHE =
 			new ConcurrentHashMap<>();
@@ -95,6 +97,10 @@ public final class DynamicBehaviorSource {
 		if (STATIC_DYNAMIC_PARTICLE_IMPORT.matcher(masked).find()) {
 			throw new IllegalArgumentException(
 					"Call custom particles through DynamicParticles.spawn instead of a static import");
+		}
+		if (DIRECT_DYNAMIC_PARTICLE_PACKET.matcher(masked).find()) {
+			throw new IllegalArgumentException(
+					"Generated behavior must emit custom particles through the budgeted DynamicParticles.spawn API");
 		}
 		List<String> ids = new ArrayList<>();
 		Matcher calls = DYNAMIC_PARTICLE_SPAWN.matcher(masked);
