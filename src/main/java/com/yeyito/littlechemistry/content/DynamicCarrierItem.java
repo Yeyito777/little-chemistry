@@ -182,7 +182,8 @@ public final class DynamicCarrierItem extends Item {
 		super.appendHoverText(stack, context, display, builder, flag);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			builder.accept(Component.literal(definition.description()).withStyle(ChatFormatting.GRAY));
+			definition.description().lines().forEach(line ->
+					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
 		}
 		if (definition != null && definition.item() != null) {
 			switch (definition.item().craftingUse()) {

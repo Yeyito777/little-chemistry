@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "S": "minecraft:stick",
+    "T": "minecraft:crafting_table"
+  },
+  "pattern": [
+    "T ",
+    " S"
+  ],
+  "result": {
+    "id": "little_chemistry:crafting_table_on_a_stick"
+  }
+}

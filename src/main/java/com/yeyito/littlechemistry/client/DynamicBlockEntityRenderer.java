@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.SheetedDecalTextureGenerator;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.math.Axis;
 import com.yeyito.littlechemistry.content.DynamicBlockEntity;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicCarrierBlock;
@@ -46,18 +47,25 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 				|| placement != null && placement.visuallyEmissive();
 		state.shape = definition == null || definition.block() == null
 				? DynamicBlockShape.FULL_CUBE : definition.block().shape();
+		state.facing = definition != null && definition.block() != null && definition.block().directional()
+				? blockEntity.getBlockState().getValue(DynamicCarrierBlock.FACING)
+				: Direction.NORTH;
 		state.fenceNorth = state.shape == DynamicBlockShape.FENCE
 				&& blockEntity.getLevel() != null
-				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(), Direction.NORTH);
+				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(),
+						DynamicCarrierBlock.orientFromNorth(Direction.NORTH, state.facing));
 		state.fenceEast = state.shape == DynamicBlockShape.FENCE
 				&& blockEntity.getLevel() != null
-				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(), Direction.EAST);
+				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(),
+						DynamicCarrierBlock.orientFromNorth(Direction.EAST, state.facing));
 		state.fenceSouth = state.shape == DynamicBlockShape.FENCE
 				&& blockEntity.getLevel() != null
-				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(), Direction.SOUTH);
+				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(),
+						DynamicCarrierBlock.orientFromNorth(Direction.SOUTH, state.facing));
 		state.fenceWest = state.shape == DynamicBlockShape.FENCE
 				&& blockEntity.getLevel() != null
-				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(), Direction.WEST);
+				&& DynamicCarrierBlock.connectsFence(blockEntity.getLevel(), blockEntity.getBlockPos(),
+						DynamicCarrierBlock.orientFromNorth(Direction.WEST, state.facing));
 		if (state.visuallyEmissive) {
 			Arrays.fill(state.faceLightCoords, LightCoordsUtil.FULL_BRIGHT);
 			return;
@@ -68,9 +76,10 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		}
 
 		for (Direction direction : Direction.values()) {
+			Direction worldDirection = DynamicCarrierBlock.orientFromNorth(direction, state.facing);
 			int neighborLight = LightCoordsUtil.getLightCoords(
 					blockEntity.getLevel(),
-					blockEntity.getBlockPos().relative(direction)
+					blockEntity.getBlockPos().relative(worldDirection)
 			);
 			state.faceLightCoords[direction.ordinal()] = LightCoordsUtil.max(state.lightCoords, neighborLight);
 		}
@@ -82,30 +91,37 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		if (state.textureHash == null) {
 			return;
 		}
-		if (state.model == null) {
-			Identifier texture = RuntimeTextureStore.texture(state.textureHash);
-			nodes.order(0).submitCustomGeometry(
-					poseStack,
-					RenderTypes.entityCutout(texture),
-					(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
-			);
-		} else {
-			int order = 0;
-			for (var texture : state.model.textures()) {
-				String textureId = texture.id();
-				nodes.order(order++).submitCustomGeometry(
-						poseStack,
-						RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
-						(pose, vertices) -> renderModelGeometry(state, textureId, pose, vertices)
-				);
+		boolean rotated = state.facing != Direction.NORTH;
+		if (rotated) poseStack.pushPose();
+		try {
+			if (rotated) {
+				poseStack.rotateAround(
+						Axis.YP.rotationDegrees(180.0F - state.facing.toYRot()), 0.5F, 0.5F, 0.5F);
 			}
-		}
-		if (state.breakProgress != null) {
-			int progress = Math.clamp(state.breakProgress.progress(), 0, ModelBakery.DESTROY_TYPES.size() - 1);
-			int breakOrder = state.model == null ? 1 : state.model.textures().size();
-			nodes.order(breakOrder).submitCustomGeometry(
-					poseStack,
-					ModelBakery.DESTROY_TYPES.get(progress),
+			if (state.model == null) {
+				Identifier texture = RuntimeTextureStore.texture(state.textureHash);
+				nodes.order(0).submitCustomGeometry(
+						poseStack,
+						RenderTypes.entityCutout(texture),
+						(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
+				);
+			} else {
+				int order = 0;
+				for (var texture : state.model.textures()) {
+					String textureId = texture.id();
+					nodes.order(order++).submitCustomGeometry(
+							poseStack,
+							RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
+							(pose, vertices) -> renderModelGeometry(state, textureId, pose, vertices)
+					);
+				}
+			}
+			if (state.breakProgress != null) {
+				int progress = Math.clamp(state.breakProgress.progress(), 0, ModelBakery.DESTROY_TYPES.size() - 1);
+				int breakOrder = state.model == null ? 1 : state.model.textures().size();
+				nodes.order(breakOrder).submitCustomGeometry(
+						poseStack,
+						ModelBakery.DESTROY_TYPES.get(progress),
 						(pose, vertices) -> {
 							VertexConsumer decal = new SheetedDecalTextureGenerator(
 									vertices, state.breakProgress.cameraPose(), 1.0F);
@@ -113,6 +129,9 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 							else renderModelGeometry(state, null, pose, decal);
 						}
 				);
+			}
+		} finally {
+			if (rotated) poseStack.popPose();
 		}
 	}
 

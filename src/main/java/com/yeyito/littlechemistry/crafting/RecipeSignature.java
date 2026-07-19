@@ -2,12 +2,8 @@ package com.yeyito.littlechemistry.crafting;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.yeyito.littlechemistry.ai.generation.DynamicContentAiDescription;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
-import com.yeyito.littlechemistry.content.DynamicContentObjects;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.inventory.CraftingContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingInput;
@@ -17,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The exact, trimmed shape of an invented recipe. Stack counts are deliberately
@@ -37,7 +34,7 @@ public final class RecipeSignature {
 		this.height = height;
 		List<ItemStack> normalized = new ArrayList<>(ingredients.size());
 		for (ItemStack ingredient : ingredients) {
-			normalized.add(normalize(Objects.requireNonNull(ingredient, "ingredient")));
+			normalized.add(RecipeIngredient.normalize(Objects.requireNonNull(ingredient, "ingredient")));
 		}
 		this.ingredients = List.copyOf(normalized);
 		this.hashCode = 31 * (31 * width + height) + ItemStack.hashStackList(this.ingredients);
@@ -57,6 +54,18 @@ public final class RecipeSignature {
 	public boolean matches(CraftingInput input) {
 		RecipeSignature candidate = fromInput(input);
 		return equals(candidate) || equals(candidate == null ? null : candidate.mirrored());
+	}
+
+	static boolean matchesIngredient(ItemStack expected, ItemStack candidate) {
+		return RecipeIngredient.matches(expected, candidate);
+	}
+
+	boolean referencesDynamicContent(Set<String> names) {
+		return ingredients.stream().anyMatch(ingredient -> RecipeIngredient.referencesDynamicContent(ingredient, names));
+	}
+
+	boolean referencesUnavailableDynamicContent() {
+		return ingredients.stream().anyMatch(RecipeIngredient::referencesUnavailableDynamicContent);
 	}
 
 	public RecipeSignature mirrored() {
@@ -83,6 +92,8 @@ public final class RecipeSignature {
 
 	public JsonObject toAiContext() {
 		JsonObject context = new JsonObject();
+		context.addProperty("recipeType", "crafting");
+		context.addProperty("process", "minecraft:crafting");
 		context.addProperty("width", width);
 		context.addProperty("height", height);
 		JsonArray grid = new JsonArray();
@@ -94,28 +105,11 @@ public final class RecipeSignature {
 			cell.addProperty("slot", slot);
 			cell.addProperty("x", slot % width);
 			cell.addProperty("y", slot / width);
-			if (stack.isEmpty()) {
-				cell.addProperty("empty", true);
-			} else {
-				cell.addProperty("itemId", BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
-				cell.addProperty("displayName", stack.getHoverName().getString());
-				var dynamicId = stack.get(DynamicContentObjects.CONTENT_ID);
-				if (dynamicId != null) {
-					String id = dynamicId.toString();
-					cell.addProperty("dynamicContentId", id);
-					DynamicContentDefinition definition = contentManager == null ? null : contentManager.findDefinition(dynamicId);
-					if (definition != null) dynamicIngredients.putIfAbsent(id, definition);
-					else cell.addProperty("dynamicDefinitionUnavailable", true);
-				}
-			}
+			RecipeIngredient.describe(stack, cell, contentManager, dynamicIngredients);
 			grid.add(cell);
 		}
 		context.add("grid", grid);
-		JsonArray definitions = new JsonArray();
-		dynamicIngredients.values().stream()
-				.map(DynamicContentAiDescription::describe)
-				.forEach(definitions::add);
-		context.add("dynamicIngredients", definitions);
+		context.add("dynamicIngredients", RecipeIngredient.describeDynamicIngredients(dynamicIngredients));
 		return context;
 	}
 
@@ -136,12 +130,5 @@ public final class RecipeSignature {
 	@Override
 	public int hashCode() {
 		return hashCode;
-	}
-
-	private static ItemStack normalize(ItemStack stack) {
-		if (stack.isEmpty()) return ItemStack.EMPTY;
-		ItemStack normalized = stack.copyWithCount(1);
-		if (normalized.has(DataComponents.DAMAGE)) normalized.setDamageValue(0);
-		return normalized;
 	}
 }

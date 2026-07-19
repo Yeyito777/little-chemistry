@@ -27,13 +27,16 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
@@ -46,17 +49,29 @@ import java.util.List;
 public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	public static final IntegerProperty LIGHT_LEVEL = IntegerProperty.create("light_level", 0, 15);
 	public static final EnumProperty<DynamicMaterial> MATERIAL = EnumProperty.create("material", DynamicMaterial.class);
+	public static final EnumProperty<Direction> FACING = BlockStateProperties.HORIZONTAL_FACING;
 
 	public DynamicCarrierBlock(Properties properties) {
 		super(properties);
 		registerDefaultState(stateDefinition.any()
 				.setValue(LIGHT_LEVEL, 0)
-				.setValue(MATERIAL, DynamicMaterial.STONE));
+				.setValue(MATERIAL, DynamicMaterial.STONE)
+				.setValue(FACING, Direction.NORTH));
 	}
 
 	@Override
 	protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-		builder.add(LIGHT_LEVEL, MATERIAL);
+		builder.add(LIGHT_LEVEL, MATERIAL, FACING);
+	}
+
+	@Override
+	protected BlockState rotate(BlockState state, Rotation rotation) {
+		return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
+	}
+
+	@Override
+	protected BlockState mirror(BlockState state, Mirror mirror) {
+		return state.rotate(mirror.getRotation(state.getValue(FACING)));
 	}
 
 	@Override
@@ -121,17 +136,18 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			case STAR, CROSS -> Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
 			case TORCH -> Shapes.box(7.0 / 16.0, 0, 7.0 / 16.0, 9.0 / 16.0, 10.0 / 16.0, 9.0 / 16.0);
 			case FENCE -> fenceShape(level, position, 1.0);
-			case CUSTOM -> customShape(definition.blockModel(), false);
+			case CUSTOM -> customShape(definition.blockModel(), false, modelFacing(definition, state));
 		};
 	}
 
 	@Override
 	protected VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos position, CollisionContext context) {
 		DynamicContentDefinition definition = definition(level, position);
-		return collisionShape(definition, level, position);
+		return collisionShape(definition, state, level, position);
 	}
 
-	static VoxelShape collisionShape(DynamicContentDefinition definition, BlockGetter level, BlockPos position) {
+	static VoxelShape collisionShape(DynamicContentDefinition definition, BlockState state,
+			BlockGetter level, BlockPos position) {
 		if (definition != null && definition.item() != null && definition.item().placement() != null) return Shapes.empty();
 		if (definition == null || definition.block() == null) return Shapes.block();
 		return switch (definition.block().shape()) {
@@ -139,11 +155,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
 			case NO_COLLISION, STAR, CROSS, TORCH -> Shapes.empty();
 			case FENCE -> fenceShape(level, position, 1.5);
-			case CUSTOM -> customShape(definition.blockModel(), true);
+			case CUSTOM -> customShape(definition.blockModel(), true, modelFacing(definition, state));
 		};
 	}
 
-	private static VoxelShape customShape(DynamicBlockModel model, boolean collisionOnly) {
+	static VoxelShape customShape(DynamicBlockModel model, boolean collisionOnly, Direction facing) {
 		if (model == null) return collisionOnly ? Shapes.empty() : Shapes.block();
 		VoxelShape result = Shapes.empty();
 		for (DynamicBlockModelElement element : model.elements()) {
@@ -152,7 +168,27 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 					element.fromX() / 16.0, element.fromY() / 16.0, element.fromZ() / 16.0,
 					element.toX() / 16.0, element.toY() / 16.0, element.toZ() / 16.0));
 		}
-		return result;
+		return switch (facing) {
+			case EAST -> Shapes.rotate(result, Rotation.CLOCKWISE_90.rotation());
+			case SOUTH -> Shapes.rotate(result, Rotation.CLOCKWISE_180.rotation());
+			case WEST -> Shapes.rotate(result, Rotation.COUNTERCLOCKWISE_90.rotation());
+			default -> result;
+		};
+	}
+
+	private static Direction modelFacing(DynamicContentDefinition definition, BlockState state) {
+		return definition.block().directional() ? state.getValue(FACING) : Direction.NORTH;
+	}
+
+	/** Maps a model-local direction to the world direction when its north face points toward {@code facing}. */
+	public static Direction orientFromNorth(Direction direction, Direction facing) {
+		if (direction.getAxis().isVertical()) return direction;
+		return switch (facing) {
+			case EAST -> direction.getClockWise();
+			case SOUTH -> direction.getOpposite();
+			case WEST -> direction.getCounterClockWise();
+			default -> direction;
+		};
 	}
 
 	public static boolean connectsFence(BlockGetter level, BlockPos position, Direction direction) {

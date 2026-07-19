@@ -45,7 +45,8 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		super.appendHoverText(stack, context, display, builder, flag);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			builder.accept(Component.literal(definition.description()).withStyle(ChatFormatting.GRAY));
+			definition.description().lines().forEach(line ->
+					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
 		}
 	}
 
@@ -56,9 +57,13 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		if (state == null || definition == null || definition.block() == null) {
 			return state;
 		}
-		return state
+		state = state
 				.setValue(DynamicCarrierBlock.LIGHT_LEVEL, definition.block().lightLevel())
 				.setValue(DynamicCarrierBlock.MATERIAL, definition.block().material());
+		if (definition.block().directional()) {
+			state = state.setValue(DynamicCarrierBlock.FACING, context.getHorizontalDirection().getOpposite());
+		}
+		return state;
 	}
 
 	@Override
@@ -68,7 +73,8 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		BlockPos position = context.getClickedPos();
 		return stateForPlacement.canSurvive(context.getLevel(), position)
 				&& context.getLevel().isUnobstructed(null,
-						DynamicCarrierBlock.collisionShape(definition, context.getLevel(), position).move(position));
+						DynamicCarrierBlock.collisionShape(
+								definition, stateForPlacement, context.getLevel(), position).move(position));
 	}
 
 	@Override

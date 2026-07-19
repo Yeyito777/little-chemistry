@@ -199,6 +199,19 @@ class ContentGenerationDraftTest {
 	}
 
 	@Test
+	void blockPropertiesStoreTheAiDirectionalChoice() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "facing machine");
+		JsonObject properties = blockPropertiesArguments("full_cube");
+		properties.addProperty("directional", true);
+
+		ContentGenerationDraft.ToolExecution set = draft.execute("set_block_properties", properties);
+		ContentGenerationDraft.ToolExecution inspected = draft.execute("inspect_draft", new JsonObject());
+
+		assertTrue(set.output().get("ok").getAsBoolean(), set.output().toString());
+		assertTrue(inspected.output().get("directional").getAsBoolean(), inspected.output().toString());
+	}
+
+	@Test
 	void customBlockModelAcceptsAiAuthoredCuboids() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "crystal pedestal");
 		draft.execute("set_block_properties", blockPropertiesArguments("custom"));
@@ -227,7 +240,9 @@ class ContentGenerationDraftTest {
 	void completeTransparentBlockModelSubmitsWithCompiledBehavior() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "ember spray");
 		draft.execute("set_metadata", metadataArguments("uncommon", "A warm spray of suspended embers."));
-		draft.execute("set_block_properties", blockPropertiesArguments("star"));
+		JsonObject blockProperties = blockPropertiesArguments("star");
+		blockProperties.addProperty("directional", true);
+		draft.execute("set_block_properties", blockProperties);
 		draft.execute("set_block_model", starBlockModelArguments());
 		JsonObject redstone = new JsonObject();
 		redstone.addProperty("redstonePower", 0);
@@ -247,6 +262,7 @@ class ContentGenerationDraftTest {
 
 		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
 		assertEquals(DynamicBlockShape.STAR, submitted.submitted().block().shape());
+		assertTrue(submitted.submitted().block().directional());
 		assertEquals(net.minecraft.world.item.Rarity.UNCOMMON, submitted.submitted().block().rarity());
 		assertEquals(1, submitted.submitted().blockModel().textures().size());
 	}
@@ -332,7 +348,7 @@ class ContentGenerationDraftTest {
 		assertTrue(inspected.output().get("complete").getAsBoolean(), inspected.output().toString());
 		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
 		assertTrue(submitted.submitted().behaviorSource().contains("GeneratedBehaviorImpl"));
-		assertEquals("A dense cobalt bar with an icy sheen.", submitted.submitted().description());
+		assertEquals("A dense cobalt bar with\nan icy sheen.", submitted.submitted().description());
 		assertEquals(net.minecraft.world.item.Rarity.RARE, submitted.submitted().item().rarity());
 	}
 
@@ -350,6 +366,18 @@ class ContentGenerationDraftTest {
 		assertTrue(inspected.output().get("metadataSet").getAsBoolean(), inspected.output().toString());
 		assertEquals("mythical", inspected.output().get("rarity").getAsString());
 		assertFalse(rejected.output().get("ok").getAsBoolean(), rejected.output().toString());
+	}
+
+	@Test
+	void metadataWrapsTooltipDescriptionAfterEveryFiveWords() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
+
+		ContentGenerationDraft.ToolExecution result = draft.execute(
+				"set_metadata", metadataArguments("rare", "One two three four five six seven eight nine ten eleven."));
+
+		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
+		assertEquals("One two three four five\nsix seven eight nine ten\neleven.",
+				result.output().get("description").getAsString());
 	}
 
 	@Test
@@ -484,6 +512,7 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("preferredTool", "pickaxe");
 		arguments.addProperty("requiresCorrectTool", false);
 		arguments.addProperty("shape", shape);
+		arguments.addProperty("directional", false);
 		return arguments;
 	}
 

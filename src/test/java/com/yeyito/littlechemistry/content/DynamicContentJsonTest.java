@@ -17,7 +17,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DynamicContentJsonTest {
 	private static final String TEXTURE_HASH = "0".repeat(64);
@@ -50,7 +52,7 @@ class DynamicContentJsonTest {
 	void roundTripPreservesDescriptionAndMythicalRarity() {
 		DynamicBlockProperties block = new DynamicBlockProperties(
 				DynamicMaterial.CRYSTAL, 4.0F, DynamicTool.PICKAXE, true, DynamicBlockShape.FULL_CUBE,
-				Rarity.EPIC, 0, 0, 8, true, List.of());
+				true, Rarity.EPIC, 0, 0, 8, true, List.of());
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "moon_crystal", "Moon Crystal",
 				"A crystal that holds a sliver of moonlight.", DynamicRarity.MYTHICAL,
@@ -61,10 +63,11 @@ class DynamicContentJsonTest {
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
 				.definitions().getFirst();
 
-		assertEquals("A crystal that holds a sliver of moonlight.", decoded.description());
+		assertEquals("A crystal that holds a\nsliver of moonlight.", decoded.description());
 		assertEquals(DynamicRarity.MYTHICAL, decoded.rarityTier());
 		assertEquals(Rarity.EPIC, decoded.rarity());
 		assertEquals(Rarity.EPIC, decoded.block().rarity());
+		assertTrue(decoded.block().directional());
 	}
 
 	@Test
@@ -186,11 +189,13 @@ class DynamicContentJsonTest {
 		legacyDefinition.remove("description");
 		legacyDefinition.remove("blockModel");
 		legacyDefinition.getAsJsonObject("block").remove("rarity");
+		legacyDefinition.getAsJsonObject("block").remove("directional");
 
 		DynamicContentDefinition decoded = DynamicContentJson.decode(
 				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
 		assertEquals(DynamicBlockShape.SLAB, decoded.block().shape());
+		assertFalse(decoded.block().directional());
 		assertEquals(Rarity.COMMON, decoded.rarity());
 		assertEquals("", decoded.description());
 		assertNull(decoded.blockModel());

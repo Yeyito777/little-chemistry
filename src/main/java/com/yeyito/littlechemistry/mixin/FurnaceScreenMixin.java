@@ -6,37 +6,40 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.ImageButton;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.WidgetSprites;
-import net.minecraft.client.gui.screens.inventory.AbstractRecipeBookScreen;
-import net.minecraft.client.gui.screens.inventory.CraftingScreen;
+import net.minecraft.client.gui.screens.inventory.AbstractFurnaceScreen;
+import net.minecraft.client.gui.screens.inventory.FurnaceScreen;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.inventory.CraftingMenu;
+import net.minecraft.world.inventory.FurnaceMenu;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(CraftingScreen.class)
-public abstract class CraftingScreenMixin extends AbstractRecipeBookScreen<CraftingMenu> {
-	@Unique private static final Component MAKE_RECIPE = Component.translatable("button.little_chemistry.make_recipe");
-	@Unique private static final Component MAKING_RECIPE = Component.translatable("button.little_chemistry.making_recipe");
+import java.util.List;
+
+@Mixin(FurnaceScreen.class)
+public abstract class FurnaceScreenMixin extends AbstractFurnaceScreen<FurnaceMenu> {
+	@Unique private static final Component MAKE_RECIPE = Component.translatable("button.little_chemistry.make_smelting_recipe");
+	@Unique private static final Component MAKING_RECIPE = Component.translatable("button.little_chemistry.making_smelting_recipe");
 	@Unique private static final WidgetSprites MAKE_RECIPE_SPRITES = new WidgetSprites(
 			LittleChemistry.id("make_recipe"), LittleChemistry.id("make_recipe_disabled"),
 			LittleChemistry.id("make_recipe_highlighted"));
 	@Unique private ImageButton littleChemistry$makeRecipeButton;
 
-	protected CraftingScreenMixin(CraftingMenu menu, RecipeBookComponent<?> recipeBook, Inventory inventory, Component title) {
-		super(menu, recipeBook, inventory, title);
+	protected FurnaceScreenMixin(FurnaceMenu menu, Inventory inventory, Component title, Component filterName,
+			Identifier texture, Identifier litProgressSprite, Identifier burnProgressSprite,
+			List<RecipeBookComponent.TabInfo> tabs) {
+		super(menu, inventory, title, filterName, texture, litProgressSprite, burnProgressSprite, tabs);
 	}
 
-	@Inject(method = "init", at = @At("TAIL"))
-	private void littleChemistry$addMakeRecipeButton(CallbackInfo callback) {
+	@Override
+	public void init() {
+		super.init();
 		littleChemistry$makeRecipeButton = new ImageButton(20, 20, MAKE_RECIPE_SPRITES, button -> {
 			if (this.minecraft != null && this.minecraft.gameMode != null) {
 				this.minecraft.gameMode.handleInventoryButtonClick(this.menu.containerId,
-							AiRecipeMenuAccess.MAKE_RECIPE_BUTTON_ID);
+						AiRecipeMenuAccess.MAKE_RECIPE_BUTTON_ID);
 			}
 		}, MAKE_RECIPE);
 		littleChemistry$makeRecipeButton.setTooltip(Tooltip.create(MAKE_RECIPE));
@@ -44,10 +47,10 @@ public abstract class CraftingScreenMixin extends AbstractRecipeBookScreen<Craft
 		littleChemistry$updateButton();
 	}
 
-	@Inject(method = "extractBackground", at = @At("HEAD"))
-	private void littleChemistry$refreshMakeRecipeButton(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
-			float partialTick, CallbackInfo callback) {
+	@Override
+	public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
 		littleChemistry$updateButton();
+		super.extractBackground(graphics, mouseX, mouseY, partialTick);
 	}
 
 	@Unique
@@ -58,6 +61,6 @@ public abstract class CraftingScreenMixin extends AbstractRecipeBookScreen<Craft
 		littleChemistry$makeRecipeButton.active = state == AiRecipeMenuAccess.MAKE_RECIPE_AVAILABLE;
 		littleChemistry$makeRecipeButton.setPosition(this.leftPos + this.imageWidth + 4, this.topPos + 34);
 		littleChemistry$makeRecipeButton.setTooltip(Tooltip.create(
-					state == AiRecipeMenuAccess.GENERATING ? MAKING_RECIPE : MAKE_RECIPE));
+				state == AiRecipeMenuAccess.GENERATING ? MAKING_RECIPE : MAKE_RECIPE));
 	}
 }

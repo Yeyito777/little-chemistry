@@ -10,15 +10,16 @@ import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 
 import java.io.IOException;
 
-/** Lets the AI choose an output and then author that output from a crafting grid. */
+	/** Lets the AI choose and author an output for a supplied crafting or cooking recipe. */
 public final class RecipeGenerationAgent {
 	private static final String CHOICE_PROMPT = """
-			You invent sensible, surprising Minecraft crafting results. Inspect the exact shaped crafting grid and choose one
-			coherent output whose identity and quantity follow from those ingredients. Choose an item, block, or one armor piece,
-			a short printable display name, and an output count from 1 to 64 that fits one resulting stack. Armor and other
-			non-stackable results must use count 1. A grid cell's dynamicContentId references its authoritative entry in
+			You invent sensible, surprising Minecraft recipe results. Inspect recipeType, process, and the exact supplied ingredients,
+			then choose one coherent output whose identity and quantity follow from both the ingredients and process. Furnace smelting
+			must feel like a plausible transformation by sustained heat rather than shaped assembly. Choose an item, block, or one armor
+			piece, a short printable display name, and an output count from 1 to 64 that fits one resulting stack. Armor and other
+			non-stackable results must use count 1. An ingredient's dynamicContentId references its authoritative entry in
 			dynamicIngredients; use that entry's gameplayProperties and behavior when reasoning about generated Little Chemistry
-			ingredients rather than treating the shared carrier itemId as their identity. Search and inspect other previously generated
+			ingredients rather than treating the shared carrier itemId as its identity. Search and inspect other previously generated
 			content when useful so the output can build on the world's history without accidentally duplicating it. Runtime Java source
 			inspection is also available when implementation details matter. Do not choose existing vanilla content merely to duplicate
 			a normal recipe. Call choose_output when the choice is complete.
@@ -30,15 +31,15 @@ public final class RecipeGenerationAgent {
 		this.openAi = openAi;
 	}
 
-	public GeneratedRecipe generate(JsonObject craftingContext) throws IOException, InterruptedException {
-		Choice choice = choose(craftingContext);
+	public GeneratedRecipe generate(JsonObject recipeContext) throws IOException, InterruptedException {
+		Choice choice = choose(recipeContext);
 		GeneratedContentSpec content = new ContentGenerationAgent(openAi).generateForRecipe(
-				choice.type(), choice.armorSlot(), choice.displayName(), choice.outputCount(), craftingContext);
+				choice.type(), choice.armorSlot(), choice.displayName(), choice.outputCount(), recipeContext);
 		validateOutputCount(choice, content);
 		return new GeneratedRecipe(choice.type(), choice.armorSlot(), choice.displayName(), choice.outputCount(), content);
 	}
 
-	private Choice choose(JsonObject craftingContext) throws IOException, InterruptedException {
+	private Choice choose(JsonObject recipeContext) throws IOException, InterruptedException {
 		JsonArray history = new JsonArray();
 		JsonObject message = new JsonObject();
 		message.addProperty("type", "message");
@@ -46,7 +47,7 @@ public final class RecipeGenerationAgent {
 		JsonArray content = new JsonArray();
 		JsonObject text = new JsonObject();
 		text.addProperty("type", "input_text");
-		text.addProperty("text", "Crafting grid data:\n" + craftingContext);
+		text.addProperty("text", "Recipe request data:\n" + recipeContext);
 		content.add(text);
 		message.add("content", content);
 		history.add(message);
@@ -81,7 +82,7 @@ public final class RecipeGenerationAgent {
 		JsonObject tool = new JsonObject();
 		tool.addProperty("type", "function");
 		tool.addProperty("name", "choose_output");
-		tool.addProperty("description", "Choose the new dynamic content and stack count produced by this exact crafting recipe.");
+		tool.addProperty("description", "Choose the new dynamic content and stack count produced by this exact recipe.");
 		tool.add("parameters", schema);
 		tool.addProperty("strict", false);
 		JsonArray tools = new JsonArray();

@@ -41,7 +41,7 @@ class DynamicContentAiDescriptionTest {
 	void exposesAllBlockGameplayProperties() {
 		DynamicBlockProperties block = new DynamicBlockProperties(
 				DynamicMaterial.CRYSTAL, 7.5F, DynamicTool.PICKAXE, true, DynamicBlockShape.STAR,
-				11, 6, 13, true,
+				true, Rarity.COMMON, 11, 6, 13, true,
 				List.of(new DynamicParticleEmitter(DynamicParticleType.GLOW, 0.1, 2, 0.05, true)));
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "charged_crystal", "Charged Crystal", 0L, TEXTURE_HASH,
@@ -56,6 +56,7 @@ class DynamicContentAiDescriptionTest {
 		assertEquals("pickaxe", properties.get("preferredTool").getAsString());
 		assertTrue(properties.get("requiresCorrectTool").getAsBoolean());
 		assertEquals("star", properties.get("shape").getAsString());
+		assertTrue(properties.get("directional").getAsBoolean());
 		assertEquals(11, properties.get("redstonePower").getAsInt());
 		assertEquals(6, properties.get("comparatorPower").getAsInt());
 		assertEquals(13, properties.get("lightLevel").getAsInt());
@@ -96,7 +97,7 @@ class DynamicContentAiDescriptionTest {
 		assertEquals(16, properties.get("maxStack").getAsInt());
 		assertEquals("consume", properties.get("craftingUse").getAsString());
 		assertEquals("mythical", description.get("rarity").getAsString());
-		assertEquals("A berry that flickers between nearby moments.", description.get("description").getAsString());
+		assertEquals("A berry that flickers between\nnearby moments.", description.get("description").getAsString());
 		assertTrue(properties.get("foil").getAsBoolean());
 		assertEquals(12, properties.get("enchantability").getAsInt());
 		assertEquals(2.5, properties.get("reach").getAsDouble());

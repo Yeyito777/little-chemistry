@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 13;
+	public static final int CURRENT_FORMAT = 14;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -283,6 +283,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("preferredTool", block.preferredTool().serializedName());
 		encoded.addProperty("requiresCorrectTool", block.requiresCorrectTool());
 		encoded.addProperty("shape", block.shape().serializedName());
+		encoded.addProperty("directional", block.directional());
 		encoded.addProperty("rarity", block.rarity().getSerializedName());
 		encoded.addProperty("redstonePower", block.redstonePower());
 		encoded.addProperty("comparatorPower", block.comparatorPower());
@@ -323,6 +324,7 @@ public final class DynamicContentJson {
 				DynamicTool.parse(encoded.get("preferredTool").getAsString()),
 				encoded.get("requiresCorrectTool").getAsBoolean(),
 				encoded.has("shape") ? DynamicBlockShape.parse(encoded.get("shape").getAsString()) : DynamicBlockShape.FULL_CUBE,
+				encoded.has("directional") && encoded.get("directional").getAsBoolean(),
 				encoded.has("rarity")
 						? Rarity.valueOf(encoded.get("rarity").getAsString().toUpperCase(Locale.ROOT))
 						: Rarity.COMMON,
