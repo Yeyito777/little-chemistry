@@ -35,6 +35,7 @@ public final class RuntimeTextureStore {
 	private static final Map<String, CompletableFuture<Void>> loadingTextures = new HashMap<>();
 	private static Set<String> expectedHashes = Set.of();
 	private static Set<String> expectedItemHashes = Set.of();
+	private static Set<String> expectedExtrudedItemHashes = Set.of();
 	private static Set<String> expectedArmorHashes = Set.of();
 	private static UUID activeServer;
 
@@ -53,7 +54,11 @@ public final class RuntimeTextureStore {
 			List<DynamicContentDefinition> definitions) throws IOException {
 		beginServer(client, serverId);
 		DynamicParticleTextures.clear();
-		expectedItemHashes = definitions.stream().map(DynamicContentDefinition::textureHash)
+		expectedItemHashes = definitions.stream().flatMap(definition -> definition.renderTextureHashes().stream())
+				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		expectedExtrudedItemHashes = definitions.stream()
+				.filter(definition -> definition.type() != DynamicContentType.BLOCK)
+				.map(DynamicContentDefinition::textureHash)
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
 		expectedArmorHashes = definitions.stream()
 				.filter(definition -> definition.type() == DynamicContentType.ARMOR)
@@ -82,7 +87,8 @@ public final class RuntimeTextureStore {
 		List<DynamicContentDefinition> definitionSnapshot = List.copyOf(definitions);
 		List<String> hashesToCheck = new ArrayList<>();
 		for (String hash : expectedHashes) {
-			boolean itemReady = !expectedItemHashes.contains(hash) || loadedTextures.containsKey(hash);
+			boolean itemReady = !expectedItemHashes.contains(hash) || loadedTextures.containsKey(hash)
+					&& (!expectedExtrudedItemHashes.contains(hash) || opaquePixels.containsKey(hash));
 			boolean armorReady = !expectedArmorHashes.contains(hash) || loadedArmorTextures.containsKey(hash);
 			if ((itemReady && armorReady) || loadingTextures.containsKey(hash)) {
 				continue;
@@ -165,6 +171,14 @@ public final class RuntimeTextureStore {
 		}));
 	}
 
+	public static boolean isItemTextureReady(String hash) {
+		return loadedTextures.containsKey(hash);
+	}
+
+	public static boolean areTexturesReady(java.util.Collection<String> hashes) {
+		return hashes.stream().allMatch(loadedTextures::containsKey);
+	}
+
 	public static Identifier texture(String hash) {
 		return loadedTextures.getOrDefault(hash, MissingTextureAtlasSprite.getLocation());
 	}
@@ -192,6 +206,7 @@ public final class RuntimeTextureStore {
 		loadingTextures.clear();
 		expectedHashes = Set.of();
 		expectedItemHashes = Set.of();
+		expectedExtrudedItemHashes = Set.of();
 		expectedArmorHashes = Set.of();
 		activeServer = null;
 	}
@@ -209,8 +224,10 @@ public final class RuntimeTextureStore {
 			return CompletableFuture.completedFuture(null);
 		}
 		boolean item = expectedItemHashes.contains(hash);
+		boolean extrudedItem = expectedExtrudedItemHashes.contains(hash);
 		boolean armor = expectedArmorHashes.contains(hash);
-		if ((!item || loadedTextures.containsKey(hash))
+		if ((!item || loadedTextures.containsKey(hash)
+				&& (!extrudedItem || opaquePixels.containsKey(hash)))
 				&& (!armor || loadedArmorTextures.containsKey(hash))) {
 			return CompletableFuture.completedFuture(null);
 		}
@@ -221,12 +238,12 @@ public final class RuntimeTextureStore {
 		CompletableFuture.supplyAsync(() -> {
 			try {
 				NativeImage source = NativeImage.read(bytes);
-				if (item && (source.getWidth() != DynamicTextureAsset.WIDTH
-						|| source.getHeight() != DynamicTextureAsset.HEIGHT)) {
+				if (extrudedItem && (source.getWidth() != DynamicTextureAsset.WIDTH
+							|| source.getHeight() != DynamicTextureAsset.HEIGHT)) {
 					source.close();
 					throw new IOException("Runtime inventory texture must be 16x16 pixels");
 				}
-				boolean[] opacity = item ? opacity(source) : null;
+				boolean[] opacity = extrudedItem ? opacity(source) : null;
 				NativeImage humanoid = null;
 				NativeImage leggings = null;
 				NativeImage baby = null;
@@ -265,7 +282,9 @@ public final class RuntimeTextureStore {
 				loaded.complete(null);
 				return;
 			}
-			if (item != expectedItemHashes.contains(hash) || armor != expectedArmorHashes.contains(hash)) {
+			if (item != expectedItemHashes.contains(hash)
+					|| extrudedItem != expectedExtrudedItemHashes.contains(hash)
+					|| armor != expectedArmorHashes.contains(hash)) {
 				decoded.close();
 				decode(client, serverId, hash, bytes).whenComplete((ignored, retryError) -> {
 					if (retryError != null) loaded.completeExceptionally(retryError);
@@ -492,7 +511,12 @@ public final class RuntimeTextureStore {
 			if (hash.equals(definition.textureHash())) {
 				return definition.texture() == null
 						? DynamicTextureAsset.generate(definition.textureSeed())
-						: definition.texture().renderPng();
+							: definition.texture().renderPng();
+			}
+			if (definition.blockModel() != null) {
+				for (var texture : definition.blockModel().textures()) {
+					if (hash.equals(texture.hash())) return texture.texture().renderPng();
+				}
 			}
 			if (hash.equals(definition.armorDisplayTextureHash()) && definition.armorDisplayTexture() != null) {
 				return definition.armorDisplayTexture().renderPng();

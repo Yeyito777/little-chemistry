@@ -2,7 +2,12 @@ package com.yeyito.littlechemistry.content;
 
 public enum DynamicHeldType {
 	REGULAR("regular"),
-	TOOL("tool");
+	TOOL("tool"),
+	ROD("rod"),
+	BOW("bow"),
+	CROSSBOW("crossbow"),
+	MACE("mace"),
+	SPEAR("spear");
 
 	private final String serializedName;
 

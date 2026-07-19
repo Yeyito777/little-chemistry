@@ -9,9 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class JavaCodeInspectorTest {
 	@Test
-	void inspectsGeneratedBehaviorApiWithoutInitializingTarget() {
+	void inspectsGeneratedBehaviorCapabilityWithoutInitializingTarget() {
 		JsonObject input = new JsonObject();
-		input.addProperty("className", "com.yeyito.littlechemistry.behavior.DynamicBehavior");
+		input.addProperty("className", "com.yeyito.littlechemistry.behavior.UseAirBehavior");
 		input.addProperty("memberQuery", "use");
 		input.addProperty("includeInherited", false);
 		ContentGenerationDraft.ToolExecution result = JavaCodeInspector.inspect(input);

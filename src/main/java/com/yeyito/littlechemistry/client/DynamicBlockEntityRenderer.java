@@ -36,6 +36,7 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		Identifier contentId = blockEntity.contentId();
 		DynamicContentDefinition definition = DynamicContentCatalog.find(contentId);
 		state.textureHash = definition == null ? null : definition.textureHash();
+		state.model = definition == null ? null : definition.blockModel();
 		if (state.textureHash != null && blockEntity.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
 			DynamicParticleTextures.remember(clientLevel, blockEntity.getBlockPos(), state.textureHash);
 		}
@@ -81,24 +82,41 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		if (state.textureHash == null) {
 			return;
 		}
-		Identifier texture = RuntimeTextureStore.texture(state.textureHash);
-		nodes.order(0).submitCustomGeometry(
-				poseStack,
-				RenderTypes.entityCutout(texture),
-				(pose, vertices) -> renderGeometry(state, pose, vertices)
-		);
+		if (state.model == null) {
+			Identifier texture = RuntimeTextureStore.texture(state.textureHash);
+			nodes.order(0).submitCustomGeometry(
+					poseStack,
+					RenderTypes.entityCutout(texture),
+					(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
+			);
+		} else {
+			int order = 0;
+			for (var texture : state.model.textures()) {
+				String textureId = texture.id();
+				nodes.order(order++).submitCustomGeometry(
+						poseStack,
+						RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
+						(pose, vertices) -> renderModelGeometry(state, textureId, pose, vertices)
+				);
+			}
+		}
 		if (state.breakProgress != null) {
 			int progress = Math.clamp(state.breakProgress.progress(), 0, ModelBakery.DESTROY_TYPES.size() - 1);
-			nodes.order(1).submitCustomGeometry(
+			int breakOrder = state.model == null ? 1 : state.model.textures().size();
+			nodes.order(breakOrder).submitCustomGeometry(
 					poseStack,
 					ModelBakery.DESTROY_TYPES.get(progress),
-					(pose, vertices) -> renderGeometry(state, pose, new SheetedDecalTextureGenerator(
-							vertices, state.breakProgress.cameraPose(), 1.0F))
-			);
+						(pose, vertices) -> {
+							VertexConsumer decal = new SheetedDecalTextureGenerator(
+									vertices, state.breakProgress.cameraPose(), 1.0F);
+							if (state.model == null) renderLegacyGeometry(state, pose, decal);
+							else renderModelGeometry(state, null, pose, decal);
+						}
+				);
 		}
 	}
 
-	private static void renderGeometry(DynamicBlockRenderState state, PoseStack.Pose pose, VertexConsumer vertices) {
+	private static void renderLegacyGeometry(DynamicBlockRenderState state, PoseStack.Pose pose, VertexConsumer vertices) {
 		if (state.placedShape == DynamicPlacedShape.CROSS) {
 			DynamicGeometry.cross(pose, vertices, state.faceLightCoords, OverlayTexture.NO_OVERLAY);
 		} else if (state.placedShape == DynamicPlacedShape.TORCH) {
@@ -111,5 +129,12 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 					state.fenceSouth, state.fenceWest);
 			default -> DynamicGeometry.cube(pose, vertices, state.faceLightCoords, OverlayTexture.NO_OVERLAY);
 		}
+	}
+
+	private static void renderModelGeometry(DynamicBlockRenderState state, String textureFilter,
+			PoseStack.Pose pose, VertexConsumer vertices) {
+		DynamicBlockModelRenderer.render(state.shape, state.model, textureFilter, pose, vertices,
+				state.faceLightCoords, OverlayTexture.NO_OVERLAY, state.fenceNorth, state.fenceEast,
+				state.fenceSouth, state.fenceWest);
 	}
 }

@@ -71,7 +71,7 @@ public final class DynamicContentManager {
 			DynamicContentManager manager;
 			if (Files.isRegularFile(dataFile)) {
 				DynamicContentJson.Decoded decoded = DynamicContentJson.decode(Files.readAllBytes(dataFile));
-				if (decoded.format() < 8) {
+				if (decoded.format() < DynamicContentJson.CURRENT_FORMAT) {
 					backupLegacyCatalog(dataFile, decoded.format());
 				}
 				manager = new DynamicContentManager(server, dataFile, decoded.serverId(), decoded.revision(), decoded.definitions());
@@ -121,8 +121,22 @@ public final class DynamicContentManager {
 						|| generated.armor().slot() != requireArmorSlot(requestedArmorSlot)))) {
 			throw new IllegalArgumentException("Generated properties do not match the requested content type");
 		}
+		Map<String, byte[]> textureAssets = new HashMap<>();
 		byte[] textureBytes = generated.texture().renderPng();
 		String textureHash = DynamicTextureAsset.sha256(textureBytes);
+		textureAssets.put(textureHash, textureBytes);
+		if (generated.blockModel() != null) {
+			for (DynamicBlockTexture modelTexture : generated.blockModel().textures()) {
+				byte[] bytes = modelTexture.texture().renderPng();
+				String actualHash = DynamicTextureAsset.sha256(bytes);
+				if (!actualHash.equals(modelTexture.hash())) {
+					throw new IOException("Generated block model texture hash mismatch for " + modelTexture.id());
+				}
+				textureAssets.put(actualHash, bytes);
+			}
+			DynamicBlockTexture primary = generated.blockModel().particleTextureAsset();
+			textureHash = primary.hash();
+		}
 		byte[] armorDisplayTextureBytes = generated.armorDisplayTexture() == null
 				? null : generated.armorDisplayTexture().renderPng();
 		String armorDisplayTextureHash = armorDisplayTextureBytes == null
@@ -134,6 +148,8 @@ public final class DynamicContentManager {
 				type,
 				name,
 				displayName,
+				generated.description(),
+				generated.rarityTier(),
 				RANDOM.nextLong(),
 				textureHash,
 				generated.texture(),
@@ -142,9 +158,10 @@ public final class DynamicContentManager {
 				generated.block(),
 				generated.item(),
 				generated.armor(),
-				behaviorSource
+				behaviorSource,
+				generated.blockModel()
 		);
-		return commit(definition, textureBytes, armorDisplayTextureBytes, compiledBehavior, behavior);
+		return commit(definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
 	}
 
 	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName,
@@ -152,14 +169,14 @@ public final class DynamicContentManager {
 		return createGenerated(type, generated.armor() == null ? null : generated.armor().slot(), requestedName, generated);
 	}
 
-	private DynamicContentDefinition commit(DynamicContentDefinition definition, byte[] textureBytes,
+	private DynamicContentDefinition commit(DynamicContentDefinition definition, Map<String, byte[]> textureAssets,
 			byte[] armorDisplayTextureBytes,
 			DynamicBehaviorCompiler.Compiled compiledBehavior, DynamicBehavior behavior) throws IOException {
 		List<DynamicContentDefinition> updatedDefinitions = new ArrayList<>(definitions);
 		updatedDefinitions.add(definition);
 		long updatedRevision = revision + 1;
 		DynamicContentPayload updatedPayload = buildPayload(updatedRevision, updatedDefinitions);
-		storeAsset(definition.textureHash(), textureBytes);
+		for (var asset : textureAssets.entrySet()) storeAsset(asset.getKey(), asset.getValue());
 		if (armorDisplayTextureBytes != null) {
 			storeAsset(definition.armorDisplayTextureHash(), armorDisplayTextureBytes);
 		}
@@ -252,7 +269,7 @@ public final class DynamicContentManager {
 	private void removeUnusedAssets() {
 		Set<String> retained = new HashSet<>();
 		for (DynamicContentDefinition definition : definitions) {
-			retained.add(definition.textureHash());
+			retained.addAll(definition.renderTextureHashes());
 			if (definition.armorDisplayTextureHash() != null) retained.add(definition.armorDisplayTextureHash());
 		}
 		var iterator = assets.entrySet().iterator();
@@ -327,7 +344,14 @@ public final class DynamicContentManager {
 		byte[] textureBytes = definition.texture() == null
 				? DynamicTextureAsset.generate(definition.textureSeed())
 				: definition.texture().renderPng();
-		ensureAsset(definition.textureHash(), textureBytes, definition.name() + " inventory texture");
+		ensureAsset(definition.textureHash(), textureBytes, definition.name() + " primary texture");
+		if (definition.blockModel() != null) {
+			for (DynamicBlockTexture texture : definition.blockModel().textures()) {
+				if (texture.hash().equals(definition.textureHash())) continue;
+				ensureAsset(texture.hash(), texture.texture().renderPng(),
+						definition.name() + " block model texture " + texture.id());
+			}
+		}
 		if (definition.armorDisplayTexture() != null) {
 			ensureAsset(definition.armorDisplayTextureHash(), definition.armorDisplayTexture().renderPng(),
 					definition.name() + " armor display texture");

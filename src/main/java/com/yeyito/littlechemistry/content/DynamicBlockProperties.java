@@ -1,27 +1,38 @@
 package com.yeyito.littlechemistry.content;
 
+import net.minecraft.world.item.Rarity;
+
 import java.util.List;
 
 public record DynamicBlockProperties(
-		DynamicMaterial material,
-		float hardness,
-		DynamicTool preferredTool,
-		boolean requiresCorrectTool,
-		DynamicBlockShape shape,
-		int redstonePower,
-		int comparatorPower,
-		int lightLevel,
+			DynamicMaterial material,
+			float hardness,
+			DynamicTool preferredTool,
+			boolean requiresCorrectTool,
+			DynamicBlockShape shape,
+			Rarity rarity,
+			int redstonePower,
+			int comparatorPower,
+			int lightLevel,
 		boolean visuallyEmissive,
 		List<DynamicParticleEmitter> particles
 ) {
 	public static final DynamicBlockProperties DEFAULT = new DynamicBlockProperties(
 			DynamicMaterial.STONE, 1.5F, DynamicTool.NONE, false, DynamicBlockShape.FULL_CUBE,
-			0, 0, 0, false, List.of()
+			Rarity.COMMON, 0, 0, 0, false, List.of()
 	);
 
+	/** Compatibility constructor for catalogs and callers predating block rarity. */
+	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
+			boolean requiresCorrectTool, DynamicBlockShape shape, int redstonePower, int comparatorPower,
+			int lightLevel, boolean visuallyEmissive, List<DynamicParticleEmitter> particles) {
+		this(material, hardness, preferredTool, requiresCorrectTool, shape, Rarity.COMMON,
+				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles);
+	}
+
 	public DynamicBlockProperties {
-		if (material == null || preferredTool == null || shape == null) {
-			throw new IllegalArgumentException("Block material, preferred tool, and shape are required");
+		if (material == null || preferredTool == null || shape == null || rarity == null) {
+			throw new IllegalArgumentException("Block material, preferred tool, shape, and rarity are required");
 		}
 		if (!Float.isFinite(hardness) || hardness < 0.0F || hardness > 50.0F) {
 			throw new IllegalArgumentException("Block hardness must be between 0 and 50");

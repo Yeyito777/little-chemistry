@@ -6,10 +6,12 @@ import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.component.Tool;
 import net.minecraft.world.item.component.Weapon;
@@ -28,13 +30,16 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class DynamicContentObjects {
 	public static DataComponentType<Identifier> CONTENT_ID;
 	public static DynamicCarrierItem ITEM;
 	public static DynamicCarrierItem TOOL_HELD_ITEM;
+	private static final Map<DynamicHeldType, DynamicCarrierItem> HELD_ITEMS = new EnumMap<>(DynamicHeldType.class);
 	public static DynamicCarrierItem ARMOR_HEAD;
 	public static DynamicCarrierItem ARMOR_CHEST;
 	public static DynamicCarrierItem ARMOR_LEGGINGS;
@@ -56,19 +61,13 @@ public final class DynamicContentObjects {
 						.build()
 		);
 
-		ResourceKey<Item> itemKey = ResourceKey.create(Registries.ITEM, LittleChemistry.id("dynamic_item"));
-		ITEM = Registry.register(
-				BuiltInRegistries.ITEM,
-				itemKey,
-				new DynamicCarrierItem(new Item.Properties().setId(itemKey))
-		);
-
-		ResourceKey<Item> toolItemKey = ResourceKey.create(Registries.ITEM, LittleChemistry.id("dynamic_tool"));
-		TOOL_HELD_ITEM = Registry.register(
-				BuiltInRegistries.ITEM,
-				toolItemKey,
-				new DynamicCarrierItem(new Item.Properties().setId(toolItemKey).stacksTo(1))
-		);
+		ITEM = registerHeldCarrier(DynamicHeldType.REGULAR, "dynamic_item", false);
+		TOOL_HELD_ITEM = registerHeldCarrier(DynamicHeldType.TOOL, "dynamic_tool", true);
+		registerHeldCarrier(DynamicHeldType.ROD, "dynamic_rod", false);
+		registerHeldCarrier(DynamicHeldType.BOW, "dynamic_bow", false);
+		registerHeldCarrier(DynamicHeldType.CROSSBOW, "dynamic_crossbow", false);
+		registerHeldCarrier(DynamicHeldType.MACE, "dynamic_mace", false);
+		registerHeldCarrier(DynamicHeldType.SPEAR, "dynamic_spear", false);
 
 		ARMOR_HEAD = registerArmorCarrier("dynamic_armor_head");
 		ARMOR_CHEST = registerArmorCarrier("dynamic_armor_chest");
@@ -105,15 +104,15 @@ public final class DynamicContentObjects {
 	public static ItemStack createStack(DynamicContentDefinition definition) {
 		Item carrier = switch (definition.type()) {
 			case BLOCK -> BLOCK_ITEM;
-			case ITEM -> definition.item().heldType() == DynamicHeldType.TOOL ? TOOL_HELD_ITEM : ITEM;
+			case ITEM -> heldCarrier(definition.item().heldType());
 			case ARMOR -> armorCarrier(definition.armor().slot());
 		};
 		ItemStack stack = new ItemStack(carrier);
 		stack.set(CONTENT_ID, LittleChemistry.id(definition.name()));
+		stack.set(DataComponents.RARITY, definition.rarity());
 		if (definition.item() != null) {
 			DynamicItemProperties properties = definition.item();
 			stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
-			stack.set(DataComponents.RARITY, properties.rarity());
 			stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, properties.foil());
 			if (properties.enchantability() > 0) {
 				stack.set(DataComponents.ENCHANTABLE, new Enchantable(properties.enchantability()));
@@ -142,7 +141,6 @@ public final class DynamicContentObjects {
 		if (definition.armor() != null) {
 			DynamicArmorProperties armor = definition.armor();
 			stack.set(DataComponents.MAX_STACK_SIZE, 1);
-			stack.set(DataComponents.RARITY, armor.rarity());
 			stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, armor.foil());
 			if (armor.enchantability() > 0) {
 				stack.set(DataComponents.ENCHANTABLE, new Enchantable(armor.enchantability()));
@@ -157,9 +155,16 @@ public final class DynamicContentObjects {
 		return stack;
 	}
 
+	/** A tellraw-style item link with the custom tier color and vanilla item hover event. */
+	public static Component displayName(DynamicContentDefinition definition) {
+		return createStack(definition).getDisplayName().copy().withStyle(definition.rarityTier().color());
+	}
+
 	public static void refreshDynamicAttributes(ItemStack stack) {
 		DynamicContentDefinition definition = definition(stack);
 		if (definition == null) return;
+		Rarity currentRarity = stack.getOrDefault(DataComponents.RARITY, Rarity.COMMON);
+		if (currentRarity != definition.rarity()) stack.set(DataComponents.RARITY, definition.rarity());
 		ItemAttributeModifiers expected = definition.armor() != null
 				? attributes(definition.armor())
 				: definition.item() != null ? attributes(definition.item()) : null;
@@ -217,6 +222,21 @@ public final class DynamicContentObjects {
 		return ResourceKey.create(EquipmentAssets.ROOT_ID, LittleChemistry.id("dynamic/" + textureHash));
 	}
 
+	private static DynamicCarrierItem registerHeldCarrier(DynamicHeldType heldType, String name, boolean stacksToOne) {
+		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, LittleChemistry.id(name));
+		Item.Properties properties = new Item.Properties().setId(key);
+		if (stacksToOne) properties.stacksTo(1);
+		DynamicCarrierItem carrier = Registry.register(BuiltInRegistries.ITEM, key, new DynamicCarrierItem(properties));
+		HELD_ITEMS.put(heldType, carrier);
+		return carrier;
+	}
+
+	private static DynamicCarrierItem heldCarrier(DynamicHeldType heldType) {
+		DynamicCarrierItem carrier = HELD_ITEMS.get(heldType);
+		if (carrier == null) throw new IllegalStateException("No carrier registered for held type " + heldType);
+		return carrier;
+	}
+
 	private static DynamicCarrierItem registerArmorCarrier(String name) {
 		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, LittleChemistry.id(name));
 		return Registry.register(BuiltInRegistries.ITEM, key,
@@ -233,6 +253,10 @@ public final class DynamicContentObjects {
 	}
 
 	public static ItemStack createBlockStack(Identifier contentId) {
+		DynamicContentDefinition definition = DynamicContentCatalog.find(contentId);
+		if (definition != null && definition.type() == DynamicContentType.BLOCK) {
+			return createStack(definition);
+		}
 		ItemStack stack = new ItemStack(BLOCK_ITEM);
 		if (contentId != null) {
 			stack.set(CONTENT_ID, contentId);

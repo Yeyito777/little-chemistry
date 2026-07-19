@@ -12,6 +12,7 @@ import com.yeyito.littlechemistry.ai.generation.GenerationModel;
 import com.yeyito.littlechemistry.ai.generation.RecipeGenerationAgent;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
@@ -53,7 +54,8 @@ import java.util.concurrent.Future;
 
 /** Owns persistent table inventories, cached AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
-	private static final int FORMAT = 1;
+	private static final int TABLES_FORMAT = 1;
+	private static final int RECIPES_FORMAT = 2;
 	private static final int MAX_ACTIVE_JOBS = 8;
 	private static final String REASONING_EFFORT = "low";
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
@@ -257,9 +259,12 @@ public final class AiCraftingManager {
 			createdDefinition = generated.armorSlot() == null
 					? contentManager.createGenerated(generated.type(), displayName, generated.content())
 					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
-			installRecipe(job.signature, createdDefinition.name());
-			notifyRequesters(job, Component.literal("[Little Chemistry] Recipe invented: " + createdDefinition.displayName() + ".")
-					.withStyle(ChatFormatting.GREEN));
+			installRecipe(job.signature, createdDefinition.name(), generated.outputCount());
+			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
+			notifyRequesters(job, Component.literal("[Little Chemistry] Recipe invented: " + quantity)
+					.withStyle(ChatFormatting.GREEN)
+					.append(DynamicContentObjects.displayName(createdDefinition))
+					.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
 		} catch (Exception error) {
 			if (createdDefinition != null && contentManager != null) {
 				try {
@@ -278,9 +283,9 @@ public final class AiCraftingManager {
 		}
 	}
 
-	private void installRecipe(RecipeSignature signature, String outputName) throws IOException {
+	private void installRecipe(RecipeSignature signature, String outputName, int outputCount) throws IOException {
 		Map<RecipeSignature, AiCraftingRecipe> updated = new LinkedHashMap<>(recipes);
-		updated.put(signature, new AiCraftingRecipe(signature, outputName));
+		updated.put(signature, new AiCraftingRecipe(signature, outputName, outputCount));
 		saveRecipes(updated);
 		recipes.clear();
 		recipes.putAll(updated);
@@ -308,7 +313,7 @@ public final class AiCraftingManager {
 	private void loadTables() throws IOException {
 		if (!Files.isRegularFile(tablesFile)) return;
 		JsonObject root = parseObject(tablesFile);
-		requireFormat(root);
+		requireFormat(root, TABLES_FORMAT, TABLES_FORMAT);
 		JsonArray encodedTables = root.getAsJsonArray("tables");
 		if (encodedTables == null || encodedTables.size() > 100_000) throw new IOException("Invalid shared crafting table list");
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
@@ -330,7 +335,7 @@ public final class AiCraftingManager {
 	private void loadRecipes() throws IOException {
 		if (!Files.isRegularFile(recipesFile)) return;
 		JsonObject root = parseObject(recipesFile);
-		requireFormat(root);
+		int format = requireFormat(root, 1, RECIPES_FORMAT);
 		JsonArray encodedRecipes = root.getAsJsonArray("recipes");
 		if (encodedRecipes == null || encodedRecipes.size() > 100_000) throw new IOException("Invalid AI recipe list");
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
@@ -349,14 +354,20 @@ public final class AiCraftingManager {
 			RecipeSignature signature = new RecipeSignature(width, height, ingredients);
 			String output = encoded.get("output").getAsString();
 			if (!output.matches("[a-z0-9_]{1,64}")) throw new IOException("Invalid AI recipe output identifier");
-			recipes.put(signature, new AiCraftingRecipe(signature, output));
+			double rawOutputCount = format >= 2 && encoded.has("outputCount")
+					? encoded.get("outputCount").getAsDouble() : 1.0;
+			if (!Double.isFinite(rawOutputCount) || rawOutputCount != Math.rint(rawOutputCount)
+					|| rawOutputCount < 1 || rawOutputCount > 64) {
+				throw new IOException("Invalid AI recipe output count");
+			}
+			recipes.put(signature, new AiCraftingRecipe(signature, output, (int) rawOutputCount));
 		}
 	}
 
 	private void flushTables() throws IOException {
 		if (!tablesDirty) return;
 		JsonObject root = new JsonObject();
-		root.addProperty("format", FORMAT);
+		root.addProperty("format", TABLES_FORMAT);
 		JsonArray encodedTables = new JsonArray();
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
 		for (SharedCraftingContainer table : tables.values()) {
@@ -378,7 +389,7 @@ public final class AiCraftingManager {
 
 	private void saveRecipes(Map<RecipeSignature, AiCraftingRecipe> savedRecipes) throws IOException {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", FORMAT);
+		root.addProperty("format", RECIPES_FORMAT);
 		JsonArray encodedRecipes = new JsonArray();
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
 		for (AiCraftingRecipe recipe : savedRecipes.values()) {
@@ -391,6 +402,7 @@ public final class AiCraftingManager {
 			}
 			encoded.add("ingredients", ingredients);
 			encoded.addProperty("output", recipe.outputName());
+			encoded.addProperty("outputCount", recipe.outputCount());
 			encodedRecipes.add(encoded);
 		}
 		root.add("recipes", encodedRecipes);
@@ -407,10 +419,15 @@ public final class AiCraftingManager {
 		}
 	}
 
-	private static void requireFormat(JsonObject root) throws IOException {
-		if (!root.has("format") || root.get("format").getAsInt() != FORMAT) {
+	private static int requireFormat(JsonObject root, int minimum, int maximum) throws IOException {
+		if (!root.has("format")) {
 			throw new IOException("Unsupported Little Chemistry crafting data format");
 		}
+		int format = root.get("format").getAsInt();
+		if (format < minimum || format > maximum) {
+			throw new IOException("Unsupported Little Chemistry crafting data format");
+		}
+		return format;
 	}
 
 	private static void writeAtomically(Path destination, JsonObject root) throws IOException {

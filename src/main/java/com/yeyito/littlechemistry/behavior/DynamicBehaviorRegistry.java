@@ -66,13 +66,14 @@ public final class DynamicBehaviorRegistry {
 
 	public static InteractionResult useAir(DynamicContentDefinition definition, ServerLevel level,
 			ServerPlayer player, InteractionHand hand, ItemStack stack) {
-		return interaction(definition, player, behavior -> behavior.useAir(
+		return interaction(definition, player, UseAirBehavior.class, behavior -> behavior.useAir(
 				new DynamicItemUseContext(level, player, hand, stack, definition)));
 	}
 
 	public static InteractionResult useOnBlock(DynamicContentDefinition definition, UseOnContext context,
 			ServerLevel level, ServerPlayer player) {
-		return interaction(definition, player, behavior -> behavior.useOnBlock(new DynamicBlockUseContext(
+		return interaction(definition, player, UseOnBlockBehavior.class,
+				behavior -> behavior.useOnBlock(new DynamicBlockUseContext(
 				level,
 				player,
 				context.getHand(),
@@ -86,13 +87,15 @@ public final class DynamicBehaviorRegistry {
 
 	public static InteractionResult interactLivingEntity(DynamicContentDefinition definition, ServerLevel level,
 			ServerPlayer player, InteractionHand hand, ItemStack stack, LivingEntity target) {
-		return interaction(definition, player, behavior -> behavior.interactLivingEntity(
+		return interaction(definition, player, InteractLivingEntityBehavior.class,
+				behavior -> behavior.interactLivingEntity(
 				new DynamicEntityUseContext(level, player, hand, stack, target, definition)));
 	}
 
 	public static void inventoryTick(DynamicContentDefinition definition, ServerLevel level, Entity owner,
 			@Nullable EquipmentSlot slot, ItemStack stack) {
-		invoke(definition, owner instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, owner instanceof ServerPlayer player ? player : null,
+				InventoryTickBehavior.class, null, null, behavior -> {
 			behavior.inventoryTick(level, owner, slot, stack, definition);
 			return null;
 		});
@@ -100,7 +103,8 @@ public final class DynamicBehaviorRegistry {
 
 	public static void postHurtEnemy(DynamicContentDefinition definition, ServerLevel level, LivingEntity attacker,
 			LivingEntity target, ItemStack stack) {
-		invoke(definition, attacker instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, attacker instanceof ServerPlayer player ? player : null,
+				PostHurtEnemyBehavior.class, null, null, behavior -> {
 			behavior.postHurtEnemy(level, attacker, target, stack, definition);
 			return null;
 		});
@@ -108,7 +112,8 @@ public final class DynamicBehaviorRegistry {
 
 	public static void mineBlock(DynamicContentDefinition definition, ServerLevel level, LivingEntity miner,
 			BlockPos position, BlockState state, ItemStack stack) {
-		invoke(definition, miner instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, miner instanceof ServerPlayer player ? player : null,
+				MineBlockBehavior.class, null, null, behavior -> {
 			behavior.mineBlock(level, miner, position, state, stack, definition);
 			return null;
 		});
@@ -117,13 +122,14 @@ public final class DynamicBehaviorRegistry {
 	public static ItemStack finishUsing(DynamicContentDefinition definition, ServerLevel level,
 			LivingEntity consumer, ItemStack originalStack, ItemStack resultStack) {
 		ItemStack result = invoke(definition, consumer instanceof ServerPlayer player ? player : null,
-				resultStack, behavior -> behavior.finishUsing(level, consumer, originalStack, resultStack, definition));
+				FinishUsingBehavior.class, resultStack, resultStack,
+				behavior -> behavior.finishUsing(level, consumer, originalStack, resultStack, definition));
 		return result == null ? resultStack : result;
 	}
 
 	public static void crafted(DynamicContentDefinition definition, ServerLevel level, ServerPlayer player,
 			ItemStack stack) {
-		invoke(definition, player, null, behavior -> {
+		invoke(definition, player, CraftedBehavior.class, null, null, behavior -> {
 			behavior.crafted(level, player, stack, definition);
 			return null;
 		});
@@ -132,13 +138,14 @@ public final class DynamicBehaviorRegistry {
 	public static InteractionResult usePlacedBlock(DynamicContentDefinition definition, ServerLevel level,
 			ServerPlayer player, @Nullable InteractionHand hand, ItemStack heldStack, BlockPos position,
 			BlockState state, BlockHitResult hit) {
-		return interaction(definition, player, behavior -> behavior.usePlacedBlock(
+		return interaction(definition, player, UsePlacedBlockBehavior.class,
+				behavior -> behavior.usePlacedBlock(
 				new DynamicPlacedBlockUseContext(level, player, hand, heldStack, position, state, hit, definition)));
 	}
 
 	public static void attackPlacedBlock(DynamicContentDefinition definition, ServerLevel level,
 			ServerPlayer player, BlockPos position, BlockState state) {
-		invoke(definition, player, null, behavior -> {
+		invoke(definition, player, AttackPlacedBlockBehavior.class, null, null, behavior -> {
 			behavior.attackPlacedBlock(level, player, position, state, definition);
 			return null;
 		});
@@ -146,7 +153,8 @@ public final class DynamicBehaviorRegistry {
 
 	public static void placedBlock(DynamicContentDefinition definition, ServerLevel level,
 			@Nullable LivingEntity placer, BlockPos position, BlockState state, ItemStack placedFrom) {
-		invoke(definition, placer instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, placer instanceof ServerPlayer player ? player : null,
+				PlacedBlockBehavior.class, null, null, behavior -> {
 			behavior.placedBlock(level, placer, position, state, placedFrom, definition);
 			return null;
 		});
@@ -154,7 +162,7 @@ public final class DynamicBehaviorRegistry {
 
 	public static void brokenBlock(DynamicContentDefinition definition, ServerLevel level, ServerPlayer player,
 			BlockPos position, BlockState state, ItemStack tool) {
-		invoke(definition, player, null, behavior -> {
+		invoke(definition, player, BrokenBlockBehavior.class, null, null, behavior -> {
 			behavior.brokenBlock(level, player, position, state, tool, definition);
 			return null;
 		});
@@ -162,7 +170,8 @@ public final class DynamicBehaviorRegistry {
 
 	public static void stepOnBlock(DynamicContentDefinition definition, ServerLevel level, BlockPos position,
 			BlockState state, Entity entity) {
-		invoke(definition, entity instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, entity instanceof ServerPlayer player ? player : null,
+				StepOnBlockBehavior.class, null, null, behavior -> {
 			behavior.stepOnBlock(level, position, state, entity, definition);
 			return null;
 		});
@@ -170,7 +179,8 @@ public final class DynamicBehaviorRegistry {
 
 	public static void fallOnBlock(DynamicContentDefinition definition, ServerLevel level, BlockPos position,
 			BlockState state, Entity entity, double fallDistance) {
-		invoke(definition, entity instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, entity instanceof ServerPlayer player ? player : null,
+				FallOnBlockBehavior.class, null, null, behavior -> {
 			behavior.fallOnBlock(level, position, state, entity, fallDistance, definition);
 			return null;
 		});
@@ -178,7 +188,8 @@ public final class DynamicBehaviorRegistry {
 
 	public static void entityInsideBlock(DynamicContentDefinition definition, ServerLevel level, BlockPos position,
 			BlockState state, Entity entity, InsideBlockEffectApplier effects, boolean isEntry) {
-		invoke(definition, entity instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, entity instanceof ServerPlayer player ? player : null,
+				EntityInsideBlockBehavior.class, null, null, behavior -> {
 			behavior.entityInsideBlock(level, position, state, entity, effects, isEntry, definition);
 			return null;
 		});
@@ -186,7 +197,7 @@ public final class DynamicBehaviorRegistry {
 
 	public static void randomTickBlock(DynamicContentDefinition definition, ServerLevel level, BlockPos position,
 			BlockState state, RandomSource random) {
-		invoke(definition, null, null, behavior -> {
+		invoke(definition, null, RandomTickBlockBehavior.class, null, null, behavior -> {
 			behavior.randomTickBlock(level, position, state, random, definition);
 			return null;
 		});
@@ -194,7 +205,7 @@ public final class DynamicBehaviorRegistry {
 
 	public static void scheduledTickBlock(DynamicContentDefinition definition, ServerLevel level, BlockPos position,
 			BlockState state, RandomSource random) {
-		invoke(definition, null, null, behavior -> {
+		invoke(definition, null, ScheduledTickBlockBehavior.class, null, null, behavior -> {
 			behavior.scheduledTickBlock(level, position, state, random, definition);
 			return null;
 		});
@@ -203,7 +214,7 @@ public final class DynamicBehaviorRegistry {
 	public static void neighborChangedBlock(DynamicContentDefinition definition, ServerLevel level,
 			BlockPos position, BlockState state, Block neighbor, @Nullable Orientation orientation,
 			boolean movedByPiston) {
-		invoke(definition, null, null, behavior -> {
+		invoke(definition, null, NeighborChangedBlockBehavior.class, null, null, behavior -> {
 			behavior.neighborChangedBlock(level, position, state, neighbor, orientation, movedByPiston, definition);
 			return null;
 		});
@@ -211,33 +222,32 @@ public final class DynamicBehaviorRegistry {
 
 	public static void projectileHitBlock(DynamicContentDefinition definition, ServerLevel level,
 			BlockPos position, BlockState state, BlockHitResult hit, Projectile projectile) {
-		invoke(definition, projectile.getOwner() instanceof ServerPlayer player ? player : null, null, behavior -> {
+		invoke(definition, projectile.getOwner() instanceof ServerPlayer player ? player : null,
+				ProjectileHitBlockBehavior.class, null, null, behavior -> {
 			behavior.projectileHitBlock(level, position, state, hit, projectile, definition);
 			return null;
 		});
 	}
 
-	private static InteractionResult interaction(DynamicContentDefinition definition, ServerPlayer player,
-			BehaviorCall<InteractionResult> call) {
-		InteractionResult result = invoke(definition, player, InteractionResult.FAIL, call);
+	private static <B extends DynamicBehavior> InteractionResult interaction(
+			DynamicContentDefinition definition, ServerPlayer player, Class<B> capability,
+			BehaviorCall<B, InteractionResult> call) {
+		InteractionResult result = invoke(definition, player, capability,
+				InteractionResult.PASS, InteractionResult.FAIL, call);
 		return result == null ? InteractionResult.PASS : result;
 	}
 
-	private static <T> T invoke(DynamicContentDefinition definition, @Nullable ServerPlayer player, T failureResult,
-			BehaviorCall<T> call) {
+	private static <B extends DynamicBehavior, T> T invoke(DynamicContentDefinition definition,
+			@Nullable ServerPlayer player, Class<B> capability, T unhandledResult, T failureResult,
+			BehaviorCall<B, T> call) {
 		Loaded loaded = loaded(definition.name());
-		if (loaded == null) return failureResult == InteractionResult.FAIL ? castPass() : failureResult;
+		if (loaded == null || !capability.isInstance(loaded.behavior)) return unhandledResult;
 		try {
-			return call.invoke(loaded.behavior);
+			return call.invoke(capability.cast(loaded.behavior));
 		} catch (Throwable error) {
 			disableAfterFailure(definition, loaded, player, error);
 			return failureResult;
 		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private static <T> T castPass() {
-		return (T) InteractionResult.PASS;
 	}
 
 	private static synchronized Loaded loaded(String name) {
@@ -263,8 +273,8 @@ public final class DynamicBehaviorRegistry {
 	}
 
 	@FunctionalInterface
-	private interface BehaviorCall<T> {
-		T invoke(DynamicBehavior behavior);
+	private interface BehaviorCall<B extends DynamicBehavior, T> {
+		T invoke(B behavior);
 	}
 
 	private record Loaded(DynamicBehavior behavior, ClassLoader classLoader) {

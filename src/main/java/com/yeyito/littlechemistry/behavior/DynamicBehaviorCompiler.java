@@ -4,6 +4,8 @@ import org.codehaus.commons.compiler.CompileException;
 import org.codehaus.janino.SimpleCompiler;
 
 import java.lang.reflect.Constructor;
+import java.util.Arrays;
+import java.util.Set;
 
 public final class DynamicBehaviorCompiler {
 	public static final String GENERATED_CLASS_NAME = "GeneratedBehaviorImpl";
@@ -21,6 +23,7 @@ public final class DynamicBehaviorCompiler {
 			if (!DynamicBehavior.class.isAssignableFrom(generated)) {
 				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must implement DynamicBehavior");
 			}
+			validateCapabilities(normalized, generated);
 			@SuppressWarnings("unchecked")
 			Class<? extends DynamicBehavior> behaviorClass = (Class<? extends DynamicBehavior>) generated;
 			Constructor<? extends DynamicBehavior> constructor = behaviorClass.getConstructor();
@@ -29,6 +32,25 @@ public final class DynamicBehaviorCompiler {
 			throw new IllegalArgumentException("Java compilation failed: " + safeMessage(error), error);
 		} catch (ReflectiveOperationException | LinkageError error) {
 			throw new IllegalArgumentException("Generated behavior class is invalid: " + safeMessage(error), error);
+		}
+	}
+
+	private static void validateCapabilities(String source, Class<?> generated) {
+		Set<DynamicBehaviorCapability> declared = DynamicBehaviorSource.capabilities(source);
+		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
+			boolean implemented = capability.interfaceClass().isAssignableFrom(generated);
+			if (implemented != declared.contains(capability)) {
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must declare "
+						+ capability.interfaceName() + " directly when implementing "
+						+ capability.callbackName());
+			}
+			boolean declaresCallback = Arrays.stream(generated.getDeclaredMethods())
+					.anyMatch(method -> method.getName().equals(capability.callbackName()));
+			if (declaresCallback && !implemented) {
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " declares "
+						+ capability.callbackName() + " but does not implement "
+						+ capability.interfaceName());
+			}
 		}
 	}
 

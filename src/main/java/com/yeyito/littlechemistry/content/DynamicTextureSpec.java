@@ -8,6 +8,7 @@ import java.util.List;
 
 public record DynamicTextureSpec(List<String> palette, List<String> rows) {
 	private static final String KEYS = "0123456789ABCDEF";
+	public static final int MAX_DIMENSION = 64;
 
 	public DynamicTextureSpec {
 		palette = List.copyOf(palette);
@@ -20,12 +21,16 @@ public record DynamicTextureSpec(List<String> palette, List<String> rows) {
 				throw new IllegalArgumentException("Texture colors must use RRGGBBAA hexadecimal notation");
 			}
 		}
-		if (rows.size() != DynamicTextureAsset.HEIGHT) {
-			throw new IllegalArgumentException("Texture must contain exactly 16 rows");
+		if (rows.isEmpty() || rows.size() > MAX_DIMENSION) {
+			throw new IllegalArgumentException("Texture height must be between 1 and 64 pixels");
+		}
+		int width = rows.getFirst() == null ? 0 : rows.getFirst().length();
+		if (width < 1 || width > MAX_DIMENSION) {
+			throw new IllegalArgumentException("Texture width must be between 1 and 64 pixels");
 		}
 		for (String row : rows) {
-			if (row == null || row.length() != DynamicTextureAsset.WIDTH) {
-				throw new IllegalArgumentException("Every texture row must contain exactly 16 palette keys");
+			if (row == null || row.length() != width) {
+				throw new IllegalArgumentException("Every texture row must have the same width");
 			}
 			for (int index = 0; index < row.length(); index++) {
 				int paletteIndex = KEYS.indexOf(Character.toUpperCase(row.charAt(index)));
@@ -36,10 +41,24 @@ public record DynamicTextureSpec(List<String> palette, List<String> rows) {
 		}
 	}
 
+	public int width() {
+		return rows.getFirst().length();
+	}
+
+	public int height() {
+		return rows.size();
+	}
+
+	public void requireDimensions(int expectedWidth, int expectedHeight) {
+		if (width() != expectedWidth || height() != expectedHeight) {
+			throw new IllegalArgumentException("Texture must be exactly " + expectedWidth + "x" + expectedHeight + " pixels");
+		}
+	}
+
 	public void requireOpaque() {
 		for (String color : palette) {
 			if (!color.regionMatches(true, 6, "FF", 0, 2)) {
-				throw new IllegalArgumentException("Block textures must be fully opaque");
+				throw new IllegalArgumentException("This block model requires fully opaque textures");
 			}
 		}
 	}
@@ -48,13 +67,13 @@ public record DynamicTextureSpec(List<String> palette, List<String> rows) {
 		for (String color : palette) {
 			String alpha = color.substring(6, 8);
 			if (!alpha.equalsIgnoreCase("00") && !alpha.equalsIgnoreCase("FF")) {
-				throw new IllegalArgumentException("Item and armor textures may use only fully transparent or fully opaque pixels");
+				throw new IllegalArgumentException("Textures may use only fully transparent or fully opaque pixels");
 			}
 		}
 	}
 
 	public byte[] renderPng() throws IOException {
-		BufferedImage image = new BufferedImage(DynamicTextureAsset.WIDTH, DynamicTextureAsset.HEIGHT, BufferedImage.TYPE_INT_ARGB);
+		BufferedImage image = new BufferedImage(width(), height(), BufferedImage.TYPE_INT_ARGB);
 		for (int y = 0; y < rows.size(); y++) {
 			String row = rows.get(y);
 			for (int x = 0; x < row.length(); x++) {

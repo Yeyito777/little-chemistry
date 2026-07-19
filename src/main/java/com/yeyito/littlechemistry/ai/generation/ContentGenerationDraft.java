@@ -3,13 +3,20 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
+import com.yeyito.littlechemistry.content.DynamicBlockModel;
+import com.yeyito.littlechemistry.content.DynamicBlockModelElement;
+import com.yeyito.littlechemistry.content.DynamicBlockModelFace;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
+import com.yeyito.littlechemistry.content.DynamicBlockTexture;
+import com.yeyito.littlechemistry.content.DynamicBlockUv;
 import com.yeyito.littlechemistry.content.DynamicBreakingPower;
+import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicFoodEffect;
 import com.yeyito.littlechemistry.content.DynamicFoodProperties;
@@ -21,23 +28,28 @@ import com.yeyito.littlechemistry.content.DynamicParticleEmitter;
 import com.yeyito.littlechemistry.content.DynamicParticleType;
 import com.yeyito.littlechemistry.content.DynamicPlacedShape;
 import com.yeyito.littlechemistry.content.DynamicPlacementProperties;
+import com.yeyito.littlechemistry.content.DynamicRarity;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
+import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicTool;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 import net.minecraft.resources.Identifier;
-import net.minecraft.world.item.Rarity;
+import net.minecraft.core.Direction;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.Map;
+import java.util.EnumMap;
 
 final class ContentGenerationDraft {
 	private final DynamicContentType type;
 	private final String requestedName;
 	private final DynamicArmorSlot requestedArmorSlot;
+	private final int requestedOutputCount;
 	private DynamicTextureSpec texture;
+	private DynamicBlockModel blockModel;
 	private DynamicArmorDisplayTextureSpec armorDisplayTexture;
 	private DynamicArmorSlot armorDisplaySlot;
 	private DynamicMaterial material;
@@ -51,7 +63,8 @@ final class ContentGenerationDraft {
 	private Boolean visuallyEmissive;
 	private List<DynamicParticleEmitter> particles;
 	private Integer maxStack;
-	private Rarity rarity;
+	private DynamicRarity rarity;
+	private String description;
 	private Boolean foil;
 	private DynamicItemType itemType;
 	private DynamicHeldType heldType;
@@ -68,7 +81,6 @@ final class ContentGenerationDraft {
 	private Integer durability;
 	private Integer damagePerBlock;
 	private Integer damagePerAttack;
-	private Rarity armorRarity;
 	private Boolean armorFoil;
 	private Integer armorEnchantability;
 	private Double armorDefense;
@@ -80,13 +92,25 @@ final class ContentGenerationDraft {
 	private boolean behaviorCompiled;
 
 	ContentGenerationDraft(DynamicContentType type, String requestedName) {
-		this(type, requestedName, null);
+		this(type, requestedName, null, 1);
 	}
 
 	ContentGenerationDraft(DynamicContentType type, String requestedName, DynamicArmorSlot requestedArmorSlot) {
+		this(type, requestedName, requestedArmorSlot, 1);
+	}
+
+	ContentGenerationDraft(DynamicContentType type, String requestedName, DynamicArmorSlot requestedArmorSlot,
+			int requestedOutputCount) {
 		this.type = type;
 		this.requestedName = requestedName;
 		this.requestedArmorSlot = requestedArmorSlot;
+		if (requestedOutputCount < 1 || requestedOutputCount > 64) {
+			throw new IllegalArgumentException("Recipe output count must be between 1 and 64");
+		}
+		if (type == DynamicContentType.ARMOR && requestedOutputCount != 1) {
+			throw new IllegalArgumentException("Armor recipe outputs must contain exactly one item");
+		}
+		this.requestedOutputCount = requestedOutputCount;
 		if (type != DynamicContentType.ARMOR && requestedArmorSlot != null) {
 			throw new IllegalArgumentException("Only armor generation may specify an armor slot");
 		}
@@ -98,22 +122,24 @@ final class ContentGenerationDraft {
 				throw new IllegalArgumentException("Tool arguments were not valid JSON");
 			}
 			return switch (tool) {
+				case "set_metadata" -> setMetadata(arguments);
 				case "set_texture" -> setTexture(arguments);
+				case "set_block_model" -> requireBlock(() -> setBlockModel(arguments));
 				case "set_armor_display_texture" -> requireArmor(() -> setArmorDisplayTexture(arguments));
 				case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
 				case "set_block_redstone" -> requireBlock(() -> setBlockRedstone(arguments));
 				case "set_block_light" -> requireBlock(() -> setBlockLight(arguments));
 				case "set_block_particles" -> requireBlock(() -> setBlockParticles(arguments));
 				case "set_item_properties" -> requireItem(() -> setItemProperties(arguments));
-					case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
-					case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
-					case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
-					case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
-					case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
-					case "set_behavior_source" -> setBehaviorSource(arguments);
-					case "compile_behavior" -> compileBehavior(arguments);
-					case "inspect_behavior_source" -> inspectBehaviorSource(arguments);
-					case "inspect_draft" -> ToolExecution.success(inspect(), null);
+				case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
+				case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
+				case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
+				case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
+				case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
+				case "set_behavior_source" -> setBehaviorSource(arguments);
+				case "compile_behavior" -> compileBehavior(arguments);
+				case "inspect_behavior_source" -> inspectBehaviorSource(arguments);
+				case "inspect_draft" -> ToolExecution.success(inspect(), null);
 				case "submit" -> submit(arguments);
 				default -> ToolExecution.error("UNKNOWN_TOOL", "Unknown generation tool: " + tool);
 			};
@@ -124,53 +150,48 @@ final class ContentGenerationDraft {
 		}
 	}
 
+	private ToolExecution setMetadata(JsonObject arguments) {
+		requireOnly(arguments, "rarity", "description");
+		DynamicRarity candidateRarity = DynamicRarity.parse(requiredString(arguments, "rarity"));
+		String candidateDescription = DynamicContentDefinition.normalizeDescription(
+				requiredString(arguments, "description"));
+		if (candidateDescription.isBlank()) {
+			throw new IllegalArgumentException("description must be a short, non-empty sentence");
+		}
+		rarity = candidateRarity;
+		description = candidateDescription;
+		JsonObject details = message("Rarity and tooltip description were accepted.");
+		details.addProperty("rarity", rarity.serializedName());
+		details.addProperty("description", description);
+		return ToolExecution.success(details, null);
+	}
+
 	private ToolExecution setTexture(JsonObject arguments) {
+		if (type == DynamicContentType.BLOCK) {
+			return ToolExecution.error("WRONG_TEXTURE_TOOL", "Blocks define one or more textures through set_block_model");
+		}
 		requireOnly(arguments, "palette", "rows");
 		List<String> palette = strings(requiredArray(arguments, "palette"));
 		List<String> rows = strings(requiredArray(arguments, "rows"));
 		DynamicTextureSpec candidate = new DynamicTextureSpec(palette, rows);
+		candidate.requireDimensions(DynamicTextureAsset.WIDTH, DynamicTextureAsset.HEIGHT);
 		Set<Integer> usedColors = usedColors(rows);
 		int[] colorCounts = colorCounts(rows);
 		int luminanceRange = luminanceRange(palette, usedColors);
-		if (type == DynamicContentType.BLOCK) {
-			validateBlockTextureAlpha(candidate, blockShape);
-			if (usedColors.size() < 4) {
-				throw new IllegalArgumentException("Block texture uses fewer than four palette colors; add readable material shading and accents");
+		candidate.requireBinaryAlpha();
+		int opaquePixels = 0;
+		int usedOpaqueColors = 0;
+		for (int colorIndex = 0; colorIndex < palette.size(); colorIndex++) {
+			if (palette.get(colorIndex).regionMatches(true, 6, "FF", 0, 2)) {
+				opaquePixels += colorCounts[colorIndex];
+				if (colorCounts[colorIndex] > 0) usedOpaqueColors++;
 			}
-			if (luminanceRange < 48) {
-				throw new IllegalArgumentException("Block texture contrast is too low; increase the luminance range to at least 48");
-			}
-			int substantialColors = 0;
-			int dominantPixels = 0;
-			for (int count : colorCounts) {
-				if (count >= 8) substantialColors++;
-				dominantPixels = Math.max(dominantPixels, count);
-			}
-			if (substantialColors < 4 || dominantPixels > 184) {
-				throw new IllegalArgumentException("Block texture is too visually flat; use at least four colors across substantial pixel clusters and keep the dominant color below 72% of the image");
-			}
-			double symmetry = symmetryScore(rows);
-			if (symmetry > 0.82) {
-				throw new IllegalArgumentException(String.format(Locale.ROOT,
-						"Block texture symmetry is %.2f; revise it below 0.82 with irregular material detail rather than a mirrored gradient or emblem",
-						symmetry));
-			}
-		} else {
-			candidate.requireBinaryAlpha();
-			int opaquePixels = 0;
-			int usedOpaqueColors = 0;
-			for (int colorIndex = 0; colorIndex < palette.size(); colorIndex++) {
-				if (palette.get(colorIndex).regionMatches(true, 6, "FF", 0, 2)) {
-					opaquePixels += colorCounts[colorIndex];
-					if (colorCounts[colorIndex] > 0) usedOpaqueColors++;
-				}
-			}
-			if (opaquePixels < 12 || usedOpaqueColors < 2) {
-				throw new IllegalArgumentException("Item or armor texture is effectively invisible; draw at least 12 visible pixels using two opaque colors");
-			}
-			if (usedColors.size() < 3 || luminanceRange < 40) {
-				throw new IllegalArgumentException("Item or armor texture needs at least three used colors and stronger readable contrast");
-			}
+		}
+		if (opaquePixels < 12 || usedOpaqueColors < 2) {
+			throw new IllegalArgumentException("Item or armor texture is effectively invisible; draw at least 12 visible pixels using two opaque colors");
+		}
+		if (usedColors.size() < 3 || luminanceRange < 40) {
+			throw new IllegalArgumentException("Item or armor texture needs at least three used colors and stronger readable contrast");
 		}
 		texture = candidate;
 		JsonObject details = new JsonObject();
@@ -180,6 +201,70 @@ final class ContentGenerationDraft {
 		details.addProperty("dominantColorFraction", java.util.Arrays.stream(colorCounts).max().orElse(0) / 256.0);
 		details.addProperty("symmetryScore", symmetryScore(rows));
 		details.addProperty("message", "The 16x16 texture was accepted.");
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setBlockModel(JsonObject arguments) throws Exception {
+		if (blockShape == null) {
+			return ToolExecution.error("MISSING_BLOCK_SHAPE", "Call set_block_properties before set_block_model");
+		}
+		requireOnly(arguments, "textures", "particleTexture", "faces", "elements");
+		JsonArray encodedTextures = requiredArray(arguments, "textures");
+		if (encodedTextures.isEmpty() || encodedTextures.size() > DynamicBlockModel.MAX_TEXTURES) {
+			throw new IllegalArgumentException("Block models require 1-12 textures");
+		}
+		List<DynamicBlockTexture> textures = new ArrayList<>();
+		int totalPixels = 0;
+		for (JsonElement element : encodedTextures) {
+			if (!(element instanceof JsonObject encoded)) throw new IllegalArgumentException("Every block texture must be an object");
+			requireOnly(encoded, "id", "width", "height", "palette", "rows");
+			int width = requiredInt(encoded, "width");
+			int height = requiredInt(encoded, "height");
+			DynamicTextureSpec specification = new DynamicTextureSpec(
+					strings(requiredArray(encoded, "palette")), strings(requiredArray(encoded, "rows")));
+			specification.requireDimensions(width, height);
+			totalPixels += width * height;
+			if (totalPixels > 16_384) throw new IllegalArgumentException("Block model textures exceed the 16,384-pixel budget");
+			validateBlockModelTexture(specification);
+			byte[] png = specification.renderPng();
+			textures.add(new DynamicBlockTexture(requiredString(encoded, "id"),
+					DynamicTextureAsset.sha256(png), specification));
+		}
+
+		Map<Direction, DynamicBlockModelFace> defaultFaces = parseBlockFaces(
+				requiredObject(arguments, "faces"), Map.of(), true);
+		JsonArray encodedElements = requiredArray(arguments, "elements");
+		if (blockShape == DynamicBlockShape.CUSTOM && encodedElements.isEmpty()) {
+			throw new IllegalArgumentException("shape=custom requires at least one cuboid element");
+		}
+		if (blockShape != DynamicBlockShape.CUSTOM && !encodedElements.isEmpty()) {
+			throw new IllegalArgumentException("Only shape=custom accepts cuboid elements");
+		}
+		if (encodedElements.size() > DynamicBlockModel.MAX_ELEMENTS) {
+			throw new IllegalArgumentException("Custom block models may have at most 24 cuboid elements");
+		}
+		List<DynamicBlockModelElement> elements = new ArrayList<>();
+		for (JsonElement element : encodedElements) {
+			if (!(element instanceof JsonObject encoded)) throw new IllegalArgumentException("Every custom block element must be an object");
+			requireOnly(encoded, "from", "to", "collision", "faces");
+			float[] from = coordinates(requiredArray(encoded, "from"), 3);
+			float[] to = coordinates(requiredArray(encoded, "to"), 3);
+			Map<Direction, DynamicBlockModelFace> faces = parseBlockFaces(
+					requiredObject(encoded, "faces"), defaultFaces, false);
+			elements.add(new DynamicBlockModelElement(from[0], from[1], from[2], to[0], to[1], to[2],
+					requiredBoolean(encoded, "collision"), faces));
+		}
+		DynamicBlockModel candidate = new DynamicBlockModel(textures, requiredString(arguments, "particleTexture"),
+				defaultFaces, elements);
+		candidate.validateFor(blockShape);
+		validateCutoutModel(candidate, blockShape);
+		blockModel = candidate;
+		texture = candidate.particleTextureAsset().texture();
+		JsonObject details = message("The block model and all of its textures were accepted.");
+		details.addProperty("textureCount", textures.size());
+		details.addProperty("totalTexturePixels", totalPixels);
+		details.addProperty("elementCount", elements.size());
+		details.addProperty("shape", blockShape.serializedName());
 		return ToolExecution.success(details, null);
 	}
 
@@ -242,13 +327,27 @@ final class ContentGenerationDraft {
 		if (!Float.isFinite(candidateHardness) || candidateHardness < 0.0F || candidateHardness > 50.0F) {
 			throw new IllegalArgumentException("hardness must be between 0 and 50");
 		}
-		if (texture != null) validateBlockTextureAlpha(texture, candidateShape);
+		boolean clearedModel = false;
+		if (blockModel != null) {
+			try {
+				blockModel.validateFor(candidateShape);
+				validateCutoutModel(blockModel, candidateShape);
+			} catch (IllegalArgumentException incompatible) {
+				blockModel = null;
+				texture = null;
+				clearedModel = true;
+			}
+		}
 		material = candidateMaterial;
 		hardness = candidateHardness;
 		preferredTool = candidatePreferredTool;
 		requiresCorrectTool = candidateRequiresCorrectTool;
 		blockShape = candidateShape;
-		return ToolExecution.success(message("Block physical properties were accepted."), null);
+		JsonObject details = message(clearedModel
+				? "Block physical properties were accepted. The incompatible previous model was cleared; call set_block_model again."
+				: "Block physical properties were accepted.");
+		details.addProperty("modelCleared", clearedModel);
+		return ToolExecution.success(details, null);
 	}
 
 	private ToolExecution setBlockRedstone(JsonObject arguments) {
@@ -300,24 +399,47 @@ final class ContentGenerationDraft {
 	}
 
 	private ToolExecution setItemProperties(JsonObject arguments) {
-		requireOnly(arguments, "itemType", "heldType", "maxStack", "rarity", "foil", "enchantability", "reach", "placeable");
-		itemType = DynamicItemType.parse(requiredString(arguments, "itemType"));
-		heldType = DynamicHeldType.parse(requiredString(arguments, "heldType"));
-		maxStack = requiredInt(arguments, "maxStack");
-		rarity = Rarity.valueOf(requiredString(arguments, "rarity").toUpperCase(Locale.ROOT));
-		foil = requiredBoolean(arguments, "foil");
-		enchantability = requiredInt(arguments, "enchantability");
-		reach = requiredDouble(arguments, "reach");
-		placeable = requiredBoolean(arguments, "placeable");
-		if (itemType != DynamicItemType.FOOD) foodProperties = null;
-		if (!placeable) placementProperties = null;
-		if (itemType != DynamicItemType.ITEM && placeable) throw new IllegalArgumentException("Only ordinary items can be placeable");
-		if (itemType == DynamicItemType.ITEM) {
-			new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
+		requireOnly(arguments, "itemType", "heldType", "maxStack", "foil", "enchantability", "reach", "placeable");
+		DynamicItemType candidateItemType = DynamicItemType.parse(requiredString(arguments, "itemType"));
+		DynamicHeldType candidateHeldType = DynamicHeldType.parse(requiredString(arguments, "heldType"));
+		int candidateMaxStack = requiredInt(arguments, "maxStack");
+		boolean candidateFoil = requiredBoolean(arguments, "foil");
+		int candidateEnchantability = requiredInt(arguments, "enchantability");
+		double candidateReach = requiredDouble(arguments, "reach");
+		boolean candidatePlaceable = requiredBoolean(arguments, "placeable");
+		if (candidateMaxStack < 1 || candidateMaxStack > 64) {
+			throw new IllegalArgumentException("maxStack must be between 1 and 64");
+		}
+		if (candidateEnchantability < 0 || candidateEnchantability > 255) {
+			throw new IllegalArgumentException("enchantability must be between 0 and 255");
+		}
+		if (!Double.isFinite(candidateReach) || candidateReach < 0 || candidateReach > 16) {
+			throw new IllegalArgumentException("reach must be between 0 and 16");
+		}
+		if (candidateMaxStack < requestedOutputCount) {
+			throw new IllegalArgumentException("maxStack must be at least the requested recipe output count of "
+					+ requestedOutputCount);
+		}
+		if (candidateItemType != DynamicItemType.ITEM && candidatePlaceable) {
+			throw new IllegalArgumentException("Only ordinary items can be placeable");
+		}
+		if (candidateItemType == DynamicItemType.ITEM) {
+			new DynamicItemProperties(candidateItemType, candidateHeldType, candidateMaxStack,
+					rarity == null ? net.minecraft.world.item.Rarity.COMMON : rarity.vanillaRarity(),
+					candidateFoil, candidateEnchantability, candidateReach,
 					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0, null, null);
-		} else if (itemType == DynamicItemType.TOOL && maxStack != 1) {
+		} else if (candidateItemType == DynamicItemType.TOOL && candidateMaxStack != 1) {
 			throw new IllegalArgumentException("Tools must use maxStack 1");
 		}
+		itemType = candidateItemType;
+		heldType = candidateHeldType;
+		maxStack = candidateMaxStack;
+		foil = candidateFoil;
+		enchantability = candidateEnchantability;
+		reach = candidateReach;
+		placeable = candidatePlaceable;
+		if (itemType != DynamicItemType.FOOD) foodProperties = null;
+		if (!placeable) placementProperties = null;
 		return ToolExecution.success(message("General item properties were accepted."), null);
 	}
 
@@ -335,7 +457,9 @@ final class ContentGenerationDraft {
 		durability = requiredInt(arguments, "durability");
 		damagePerBlock = requiredInt(arguments, "damagePerBlock");
 		damagePerAttack = requiredInt(arguments, "damagePerAttack");
-		new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
+		new DynamicItemProperties(itemType, heldType, maxStack,
+				rarity == null ? net.minecraft.world.item.Rarity.COMMON : rarity.vanillaRarity(),
+				foil, enchantability, reach,
 				itemTool, breakingPower, breakingSpeed, attackDamage, attackSpeed,
 				durability, damagePerBlock, damagePerAttack, null, null);
 		return ToolExecution.success(message("Tool mining, combat, and durability properties were accepted."), null);
@@ -407,7 +531,7 @@ final class ContentGenerationDraft {
 	}
 
 	private ToolExecution setArmorProperties(JsonObject arguments) {
-		requireOnly(arguments, "slot", "rarity", "foil", "enchantability", "defense", "toughness",
+		requireOnly(arguments, "slot", "foil", "enchantability", "defense", "toughness",
 				"knockbackResistance", "durability");
 		DynamicArmorSlot slot = DynamicArmorSlot.parse(requiredString(arguments, "slot"));
 		if (requestedArmorSlot != null && slot != requestedArmorSlot) {
@@ -417,17 +541,17 @@ final class ContentGenerationDraft {
 			throw new IllegalArgumentException("Armor slot must match the display texture slot "
 					+ armorDisplaySlot.serializedName());
 		}
-		Rarity candidateRarity = Rarity.valueOf(requiredString(arguments, "rarity").toUpperCase(Locale.ROOT));
 		boolean candidateFoil = requiredBoolean(arguments, "foil");
 		int candidateEnchantability = requiredInt(arguments, "enchantability");
 		double candidateDefense = requiredDouble(arguments, "defense");
 		double candidateToughness = requiredDouble(arguments, "toughness");
 		double candidateKnockbackResistance = requiredDouble(arguments, "knockbackResistance");
 		int candidateDurability = requiredInt(arguments, "durability");
-		new DynamicArmorProperties(slot, candidateRarity, candidateFoil, candidateEnchantability,
+		new DynamicArmorProperties(slot,
+				rarity == null ? net.minecraft.world.item.Rarity.COMMON : rarity.vanillaRarity(),
+				candidateFoil, candidateEnchantability,
 				candidateDefense, candidateToughness, candidateKnockbackResistance, candidateDurability);
 		armorSlot = slot;
-		armorRarity = candidateRarity;
 		armorFoil = candidateFoil;
 		armorEnchantability = candidateEnchantability;
 		armorDefense = candidateDefense;
@@ -443,9 +567,16 @@ final class ContentGenerationDraft {
 		details.addProperty("required", true);
 		details.addProperty("requiredClass", "public final class GeneratedBehaviorImpl implements DynamicBehavior");
 		details.addProperty("constructor", "public GeneratedBehaviorImpl()");
-		details.addProperty("implementationScope", "Every DynamicBehavior method is abstract and must be implemented explicitly by GeneratedBehaviorImpl.");
-		details.addProperty("callbacks", "The API includes held-item use in air/on blocks/on entities, inventory ticks, attacks, mining, consumption, crafting, placed-block use/attack/placement/breaking, entity contact/falls, random and scheduled ticks, neighbor updates, and projectile hits.");
-		details.addProperty("inspection", "Call inspect_java_class for com.yeyito.littlechemistry.behavior.DynamicBehavior and its context records to get the exact current signatures.");
+		details.addProperty("implementationScope", "DynamicBehavior is an empty marker. Add only the callback capability interfaces the content actually needs; each selected interface has one abstract method and no default implementation.");
+		JsonArray capabilities = new JsonArray();
+		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
+			JsonObject encoded = new JsonObject();
+			encoded.addProperty("interface", capability.interfaceName());
+			encoded.addProperty("callback", capability.callbackName());
+			capabilities.add(encoded);
+		}
+		details.add("capabilities", capabilities);
+		details.addProperty("inspection", "Call inspect_java_class on a capability in com.yeyito.littlechemistry.behavior for its exact method signature, and inspect its context record when applicable.");
 		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
 		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
 		details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
@@ -512,28 +643,32 @@ final class ContentGenerationDraft {
 			generated = new GeneratedContentSpec(
 					texture,
 					new DynamicBlockProperties(material, hardness, preferredTool, requiresCorrectTool,
-							blockShape, redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles),
+							blockShape, rarity.vanillaRarity(), redstonePower, comparatorPower, lightLevel,
+							visuallyEmissive, particles),
 					null,
 					null,
 					null,
-					behaviorSource
+					behaviorSource,
+					blockModel,
+					rarity,
+					description
 			);
 		} else if (type == DynamicContentType.ITEM) {
 			DynamicItemProperties item = itemType == DynamicItemType.TOOL
-					? new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
+					? new DynamicItemProperties(itemType, heldType, maxStack, rarity.vanillaRarity(), foil, enchantability, reach,
 							itemTool, breakingPower, breakingSpeed, attackDamage, attackSpeed,
 							durability, damagePerBlock, damagePerAttack, null, null)
-					: new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
+					: new DynamicItemProperties(itemType, heldType, maxStack, rarity.vanillaRarity(), foil, enchantability, reach,
 							DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
 							itemType == DynamicItemType.FOOD ? foodProperties : null,
 							itemType == DynamicItemType.ITEM && Boolean.TRUE.equals(placeable) ? placementProperties : null);
-			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource);
+			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource, null, rarity, description);
 		} else {
 			generated = new GeneratedContentSpec(texture, null, null,
-					new DynamicArmorProperties(armorSlot, armorRarity, armorFoil, armorEnchantability,
+					new DynamicArmorProperties(armorSlot, rarity.vanillaRarity(), armorFoil, armorEnchantability,
 							armorDefense, armorToughness, armorKnockbackResistance, armorDurability),
 					armorDisplayTexture,
-					behaviorSource);
+					behaviorSource, null, rarity, description);
 		}
 		JsonObject details = message("The draft passed validation and was submitted.");
 		details.addProperty("submitted", true);
@@ -545,23 +680,35 @@ final class ContentGenerationDraft {
 		result.addProperty("ok", true);
 		result.addProperty("kind", type.serializedName());
 		result.addProperty("requestedName", requestedName);
+		result.addProperty("requestedOutputCount", requestedOutputCount);
 		if (requestedArmorSlot != null) result.addProperty("requestedArmorSlot", requestedArmorSlot.serializedName());
 		JsonArray missing = new JsonArray();
 		missing().forEach(missing::add);
 		result.add("missing", missing);
 		result.addProperty("complete", missing.isEmpty());
+		result.addProperty("metadataSet", rarity != null && description != null);
+		if (rarity != null) result.addProperty("rarity", rarity.serializedName());
+		if (description != null) result.addProperty("description", description);
 		result.addProperty("behaviorRequired", true);
 		result.addProperty("behaviorSourceSet", behaviorSource != null);
 		result.addProperty("behaviorCompiled", behaviorCompiled);
 		result.addProperty("behaviorStatus", behaviorSource == null ? "none" : behaviorCompiled ? "compiled" : "needs_compilation");
 		result.addProperty("armorDisplayTextureSet", armorDisplayTexture != null);
 		if (armorDisplaySlot != null) result.addProperty("armorDisplayTextureSlot", armorDisplaySlot.serializedName());
+		result.addProperty("blockModelSet", blockModel != null);
+		if (blockModel != null) {
+			result.addProperty("blockModelTextureCount", blockModel.textures().size());
+			result.addProperty("blockModelElementCount", blockModel.elements().size());
+		}
 		return result;
 	}
 
 	private List<String> missing() {
 		List<String> missing = new ArrayList<>();
-		if (texture == null) missing.add("texture");
+		if (rarity == null || description == null) missing.add("metadata");
+		if (type == DynamicContentType.BLOCK) {
+			if (blockModel == null) missing.add("blockModel");
+		} else if (texture == null) missing.add("texture");
 		if (type == DynamicContentType.ARMOR && armorDisplayTexture == null) missing.add("armorDisplayTexture");
 		if (behaviorSource == null) missing.add("behaviorSource");
 		else if (!behaviorCompiled) missing.add("behaviorCompilation");
@@ -573,7 +720,7 @@ final class ContentGenerationDraft {
 			if (lightLevel == null || visuallyEmissive == null) missing.add("light");
 			if (particles == null) missing.add("particles");
 		} else if (type == DynamicContentType.ITEM) {
-			if (itemType == null || heldType == null || maxStack == null || rarity == null || foil == null
+			if (itemType == null || heldType == null || maxStack == null || foil == null
 					|| enchantability == null || reach == null || placeable == null) {
 				missing.add("itemProperties");
 			} else if (itemType == DynamicItemType.FOOD && foodProperties == null) {
@@ -585,7 +732,7 @@ final class ContentGenerationDraft {
 					|| damagePerBlock == null || damagePerAttack == null)) {
 				missing.add("toolProperties");
 			}
-		} else if (armorSlot == null || armorRarity == null || armorFoil == null || armorEnchantability == null || armorDefense == null
+		} else if (armorSlot == null || armorFoil == null || armorEnchantability == null || armorDefense == null
 				|| armorToughness == null || armorKnockbackResistance == null || armorDurability == null) {
 			missing.add("armorProperties");
 		}
@@ -627,6 +774,11 @@ final class ContentGenerationDraft {
 		return object.getAsJsonArray(key);
 	}
 
+	private static JsonObject requiredObject(JsonObject object, String key) {
+		if (!object.has(key) || !object.get(key).isJsonObject()) throw new IllegalArgumentException("Missing object: " + key);
+		return object.getAsJsonObject(key);
+	}
+
 	private static String requiredString(JsonObject object, String key) {
 		if (!object.has(key) || !object.get(key).isJsonPrimitive()) throw new IllegalArgumentException("Missing string: " + key);
 		return object.get(key).getAsString();
@@ -662,11 +814,12 @@ final class ContentGenerationDraft {
 		int matching = 0;
 		int comparisons = 0;
 		for (int y = 0; y < rows.size(); y++) {
-			for (int x = 0; x < rows.get(y).length(); x++) {
+			int width = rows.get(y).length();
+			for (int x = 0; x < width; x++) {
 				char value = Character.toUpperCase(rows.get(y).charAt(x));
-				if (value == Character.toUpperCase(rows.get(y).charAt(15 - x))) matching++;
+				if (value == Character.toUpperCase(rows.get(y).charAt(width - 1 - x))) matching++;
 				comparisons++;
-				if (value == Character.toUpperCase(rows.get(15 - y).charAt(x))) matching++;
+				if (value == Character.toUpperCase(rows.get(rows.size() - 1 - y).charAt(x))) matching++;
 				comparisons++;
 			}
 		}
@@ -696,7 +849,8 @@ final class ContentGenerationDraft {
 	}
 
 	static void validateBlockTextureAlpha(DynamicTextureSpec texture, DynamicBlockShape shape) {
-		if (shape != null && shape != DynamicBlockShape.STAR) {
+		if (shape != null && shape != DynamicBlockShape.STAR && shape != DynamicBlockShape.CROSS
+				&& shape != DynamicBlockShape.TORCH && shape != DynamicBlockShape.CUSTOM) {
 			texture.requireOpaque();
 			return;
 		}
@@ -716,9 +870,79 @@ final class ContentGenerationDraft {
 		if (opaquePixels < 16 || opaqueColors < 3) {
 			throw new IllegalArgumentException("A star-mesh block texture needs at least 16 visible pixels using three opaque colors");
 		}
-		if (shape == DynamicBlockShape.STAR && transparentPixels < 16) {
+		if ((shape == DynamicBlockShape.STAR || shape == DynamicBlockShape.CROSS) && transparentPixels < 16) {
 			throw new IllegalArgumentException("A star-mesh block texture needs at least 16 transparent pixels around its artwork");
 		}
+	}
+
+	private static void validateBlockModelTexture(DynamicTextureSpec texture) {
+		Set<Integer> used = usedColors(texture.rows());
+		int[] counts = colorCounts(texture.rows());
+		int opaquePixels = 0;
+		for (int index = 0; index < texture.palette().size(); index++) {
+			if (texture.palette().get(index).regionMatches(true, 6, "FF", 0, 2)) opaquePixels += counts[index];
+		}
+		if (opaquePixels == 0) throw new IllegalArgumentException("Block model textures must contain at least one visible pixel");
+		if (texture.width() * texture.height() > 1 && used.size() < 2) {
+			throw new IllegalArgumentException("Block model textures with multiple pixels need at least two used colors");
+		}
+		if (used.size() > 1 && luminanceRange(texture.palette(), used) < 20) {
+			throw new IllegalArgumentException("Block model texture contrast is too low");
+		}
+	}
+
+	private static void validateCutoutModel(DynamicBlockModel model, DynamicBlockShape shape) {
+		if (shape != DynamicBlockShape.STAR && shape != DynamicBlockShape.CROSS) return;
+		for (Direction direction : new Direction[] {Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST}) {
+			DynamicTextureSpec texture = model.texture(model.faces().get(direction).texture()).texture();
+			if (!hasTransparentPixel(texture)) {
+				throw new IllegalArgumentException(shape.serializedName()
+						+ " model textures used on crossed planes need transparent background pixels");
+			}
+		}
+	}
+
+	private static boolean hasTransparentPixel(DynamicTextureSpec texture) {
+		int[] counts = colorCounts(texture.rows());
+		for (int index = 0; index < texture.palette().size(); index++) {
+			if (counts[index] > 0 && texture.palette().get(index).regionMatches(true, 6, "00", 0, 2)) return true;
+		}
+		return false;
+	}
+
+	private static Map<Direction, DynamicBlockModelFace> parseBlockFaces(JsonObject encoded,
+			Map<Direction, DynamicBlockModelFace> inherited, boolean requireAll) {
+		requireOnly(encoded, "down", "up", "north", "south", "west", "east");
+		EnumMap<Direction, DynamicBlockModelFace> faces = new EnumMap<>(Direction.class);
+		faces.putAll(inherited);
+		for (var entry : encoded.entrySet()) {
+			Direction direction = Direction.byName(entry.getKey());
+			if (direction == null || !entry.getValue().isJsonObject()) {
+				throw new IllegalArgumentException("Invalid block model face: " + entry.getKey());
+			}
+			JsonObject face = entry.getValue().getAsJsonObject();
+			requireOnly(face, "texture", "uv");
+			DynamicBlockUv uv = face.has("uv")
+					? uv(coordinates(requiredArray(face, "uv"), 4)) : null;
+			faces.put(direction, new DynamicBlockModelFace(requiredString(face, "texture"), uv));
+		}
+		if (requireAll) {
+			for (Direction direction : Direction.values()) {
+				if (!faces.containsKey(direction)) throw new IllegalArgumentException("Missing default face: " + direction.getSerializedName());
+			}
+		}
+		return faces;
+	}
+
+	private static DynamicBlockUv uv(float[] values) {
+		return new DynamicBlockUv(values[0], values[1], values[2], values[3]);
+	}
+
+	private static float[] coordinates(JsonArray encoded, int expected) {
+		if (encoded.size() != expected) throw new IllegalArgumentException("Expected " + expected + " coordinates");
+		float[] values = new float[expected];
+		for (int index = 0; index < expected; index++) values[index] = encoded.get(index).getAsFloat();
+		return values;
 	}
 
 	private static int luminanceRange(List<String> palette, Set<Integer> usedColors) {

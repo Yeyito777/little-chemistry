@@ -2,10 +2,15 @@ package com.yeyito.littlechemistry.content;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.Rarity;
+import net.minecraft.core.Direction;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -16,6 +21,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class DynamicContentJsonTest {
 	private static final String TEXTURE_HASH = "0".repeat(64);
+
+	@BeforeAll
+	static void bootstrapMinecraftRegistries() {
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
+	}
 
 	@Test
 	void roundTripPreservesToolPoseOnOrdinaryItem() {
@@ -28,10 +39,31 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(8, decoded.format());
+		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 		DynamicBehaviorCompiler.compile(decoded.definitions().getFirst().behaviorSource());
+	}
+
+	@Test
+	void roundTripPreservesDescriptionAndMythicalRarity() {
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.CRYSTAL, 4.0F, DynamicTool.PICKAXE, true, DynamicBlockShape.FULL_CUBE,
+				Rarity.EPIC, 0, 0, 8, true, List.of());
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "moon_crystal", "Moon Crystal",
+				"A crystal that holds a sliver of moonlight.", DynamicRarity.MYTHICAL,
+				0L, TEXTURE_HASH, null,
+				null, null, block, null, null, DynamicBehaviorSource.completeLegacySource(null), null);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
+				.definitions().getFirst();
+
+		assertEquals("A crystal that holds a sliver of moonlight.", decoded.description());
+		assertEquals(DynamicRarity.MYTHICAL, decoded.rarityTier());
+		assertEquals(Rarity.EPIC, decoded.rarity());
+		assertEquals(Rarity.EPIC, decoded.block().rarity());
 	}
 
 	@Test
@@ -108,11 +140,96 @@ class DynamicContentJsonTest {
 	}
 
 	@Test
+	void formatEightMonolithicBehaviorMigratesToSelectedCapabilities() {
+		byte[] current = DynamicContentJson.encode(
+				UUID.randomUUID(), 1, List.of(definition("legacy_wand", DynamicItemProperties.DEFAULT)));
+		JsonObject legacy = JsonParser.parseString(new String(current, StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 8);
+		legacy.getAsJsonArray("definitions").get(0).getAsJsonObject().addProperty("behaviorSource", """
+				import com.yeyito.littlechemistry.behavior.*;
+				import net.minecraft.world.InteractionResult;
+				public final class GeneratedBehaviorImpl implements DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    @Override public InteractionResult useAir(DynamicItemUseContext context) {
+				        return InteractionResult.SUCCESS;
+				    }
+				    @Override public InteractionResult useOnBlock(DynamicBlockUseContext context) {
+				        return InteractionResult.PASS;
+				    }
+				}
+				""");
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertEquals(java.util.Set.of(DynamicBehaviorCapability.USE_AIR),
+				DynamicBehaviorSource.capabilities(decoded.behaviorSource()));
+		DynamicBehaviorCompiler.compile(decoded.behaviorSource());
+	}
+
+	@Test
+	void formatNineCapabilityBehaviorAndSingleTextureBlocksRemainLoadable() {
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 1.5F, DynamicTool.PICKAXE, false, DynamicBlockShape.SLAB,
+				0, 0, 0, false, List.of());
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "legacy_slab", "Legacy Slab", 0L, TEXTURE_HASH,
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
+		JsonObject legacy = JsonParser.parseString(new String(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)), StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 9);
+		JsonObject legacyDefinition = legacy.getAsJsonArray("definitions").get(0).getAsJsonObject();
+		legacyDefinition.remove("description");
+		legacyDefinition.remove("blockModel");
+		legacyDefinition.getAsJsonObject("block").remove("rarity");
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertEquals(DynamicBlockShape.SLAB, decoded.block().shape());
+		assertEquals(Rarity.COMMON, decoded.rarity());
+		assertEquals("", decoded.description());
+		assertNull(decoded.blockModel());
+		assertEquals(DynamicBehaviorSource.completeLegacySource(null), decoded.behaviorSource());
+	}
+
+	@Test
 	void newBlockMeshesHaveStableSerializedNames() {
 		assertEquals("star", DynamicBlockShape.STAR.serializedName());
 		assertEquals(DynamicBlockShape.STAR, DynamicBlockShape.parse("star"));
 		assertEquals("fence", DynamicBlockShape.FENCE.serializedName());
 		assertEquals(DynamicBlockShape.FENCE, DynamicBlockShape.parse("fence"));
+		assertEquals("custom", DynamicBlockShape.CUSTOM.serializedName());
+	}
+
+	@Test
+	void roundTripPreservesMultiTextureBlockModelAndCustomElements() {
+		DynamicTextureSpec stone = rectangularTexture(8, 8, "203040FF", "90B0D0FF");
+		DynamicTextureSpec glow = rectangularTexture(32, 16, "402000FF", "FFD080FF");
+		java.util.EnumMap<Direction, DynamicBlockModelFace> defaults = new java.util.EnumMap<>(Direction.class);
+		for (Direction direction : Direction.values()) defaults.put(direction, new DynamicBlockModelFace("stone", null));
+		defaults.put(Direction.UP, new DynamicBlockModelFace("glow", new DynamicBlockUv(0, 0, 16, 16)));
+		java.util.EnumMap<Direction, DynamicBlockModelFace> elementFaces = new java.util.EnumMap<>(defaults);
+		DynamicBlockModel model = new DynamicBlockModel(
+				List.of(new DynamicBlockTexture("stone", TEXTURE_HASH, stone),
+						new DynamicBlockTexture("glow", "2".repeat(64), glow)),
+				"stone", defaults,
+				List.of(new DynamicBlockModelElement(2, 0, 2, 14, 12, 14, true, elementFaces)));
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 2.0F, DynamicTool.PICKAXE, false, DynamicBlockShape.CUSTOM,
+				0, 0, 0, false, List.of());
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "model_block", "Model Block", 0L, TEXTURE_HASH, stone,
+				null, null, block, null, null, DynamicBehaviorSource.completeLegacySource(null), model);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition))).definitions().getFirst();
+
+		assertEquals(2, decoded.blockModel().textures().size());
+		assertEquals(32, decoded.blockModel().texture("glow").texture().width());
+		assertEquals("glow", decoded.blockModel().faces().get(Direction.UP).texture());
+		assertEquals(1, decoded.blockModel().elements().size());
+		assertEquals(14.0F, decoded.blockModel().elements().getFirst().toX());
 	}
 
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
@@ -125,5 +242,15 @@ class DynamicContentJsonTest {
 		List<String> rows = new java.util.ArrayList<>();
 		for (int y = 0; y < 32; y++) rows.add("1".repeat(32) + "0".repeat(32));
 		return new DynamicArmorDisplayTextureSpec(List.of("00000000", "80A0C0FF"), rows);
+	}
+
+	private static DynamicTextureSpec rectangularTexture(int width, int height, String dark, String light) {
+		List<String> rows = new java.util.ArrayList<>();
+		for (int y = 0; y < height; y++) {
+			StringBuilder row = new StringBuilder(width);
+			for (int x = 0; x < width; x++) row.append((x + y) % 2);
+			rows.add(row.toString());
+		}
+		return new DynamicTextureSpec(List.of(dark, light), rows);
 	}
 }

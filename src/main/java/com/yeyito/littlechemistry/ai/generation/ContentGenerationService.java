@@ -5,6 +5,7 @@ import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
@@ -150,9 +151,11 @@ public final class ContentGenerationService {
 			if (recipient != null) {
 				String createdKind = type == DynamicContentType.ARMOR
 						? definition.armor().slot().serializedName() + " armor" : type.serializedName();
-				recipient.sendSystemMessage(Component.literal("Created " + createdKind + " '" +
-						definition.displayName() + "' as little_chemistry:" + definition.name() + ".")
-						.withStyle(ChatFormatting.GREEN));
+				recipient.sendSystemMessage(Component.literal("Created " + createdKind + " ")
+						.withStyle(ChatFormatting.GREEN)
+						.append(DynamicContentObjects.displayName(definition))
+						.append(Component.literal(" as little_chemistry:" + definition.name() + ".")
+								.withStyle(ChatFormatting.GREEN)));
 			}
 		} catch (Exception error) {
 			if (recipient != null) recipient.sendSystemMessage(ContentGenerationService.error(safeMessage(error)));

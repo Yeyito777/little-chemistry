@@ -15,10 +15,15 @@ import net.minecraft.world.level.Level;
 final class AiCraftingRecipe implements CraftingRecipe {
 	private final RecipeSignature signature;
 	private final String outputName;
+	private final int outputCount;
 
-	AiCraftingRecipe(RecipeSignature signature, String outputName) {
+	AiCraftingRecipe(RecipeSignature signature, String outputName, int outputCount) {
+		if (outputCount < 1 || outputCount > 64) {
+			throw new IllegalArgumentException("AI recipe output count must be between 1 and 64");
+		}
 		this.signature = signature;
 		this.outputName = outputName;
+		this.outputCount = outputCount;
 	}
 
 	RecipeSignature signature() {
@@ -29,8 +34,12 @@ final class AiCraftingRecipe implements CraftingRecipe {
 		return outputName;
 	}
 
+	int outputCount() {
+		return outputCount;
+	}
+
 	boolean outputAvailable() {
-		return DynamicContentCatalog.find(outputName) != null;
+		return !outputStack().isEmpty();
 	}
 
 	@Override
@@ -40,8 +49,16 @@ final class AiCraftingRecipe implements CraftingRecipe {
 
 	@Override
 	public ItemStack assemble(CraftingInput input) {
+		return outputStack();
+	}
+
+	private ItemStack outputStack() {
 		DynamicContentDefinition definition = DynamicContentCatalog.find(outputName);
-		return definition == null ? ItemStack.EMPTY : DynamicContentObjects.createStack(definition);
+		if (definition == null) return ItemStack.EMPTY;
+		ItemStack stack = DynamicContentObjects.createStack(definition);
+		if (outputCount > stack.getMaxStackSize()) return ItemStack.EMPTY;
+		stack.setCount(outputCount);
+		return stack;
 	}
 
 	@Override

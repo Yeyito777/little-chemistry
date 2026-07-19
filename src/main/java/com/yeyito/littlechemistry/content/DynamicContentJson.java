@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
+	public static final int CURRENT_FORMAT = 12;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -24,7 +25,7 @@ public final class DynamicContentJson {
 
 	public static byte[] encode(UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", 8);
+		root.addProperty("format", CURRENT_FORMAT);
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
@@ -33,6 +34,8 @@ public final class DynamicContentJson {
 			entry.addProperty("type", definition.type().serializedName());
 			entry.addProperty("name", definition.name());
 			entry.addProperty("displayName", definition.displayName());
+			entry.addProperty("description", definition.description());
+			entry.addProperty("rarity", definition.rarityTier().serializedName());
 			entry.addProperty("textureSeed", definition.textureSeed());
 			entry.addProperty("textureHash", definition.textureHash());
 			if (definition.texture() != null) {
@@ -42,6 +45,7 @@ public final class DynamicContentJson {
 				entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
 				entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
 			}
+			if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
 			switch (definition.type()) {
 				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
 				case ITEM -> entry.add("item", encodeItem(definition.item()));
@@ -57,7 +61,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = root.get("format").getAsInt();
-		if (format < 1 || format > 8) {
+		if (format < 1 || format > CURRENT_FORMAT) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -79,6 +83,8 @@ public final class DynamicContentJson {
 					|| displayName.chars().anyMatch(Character::isISOControl)) {
 				throw new IllegalArgumentException("Invalid dynamic content display name in synchronized data");
 			}
+			String description = format >= 11 && entry.has("description")
+					? entry.get("description").getAsString() : "";
 			long textureSeed = entry.get("textureSeed").getAsLong();
 			String textureHash;
 			if (format >= 2) {
@@ -105,20 +111,31 @@ public final class DynamicContentJson {
 			DynamicArmorProperties armor = type == DynamicContentType.ARMOR
 					? format >= 6 && entry.has("armor") ? decodeArmor(entry.getAsJsonObject("armor")) : null
 					: null;
+			DynamicRarity rarityTier = format >= 12 && entry.has("rarity")
+					? DynamicRarity.parse(entry.get("rarity").getAsString())
+					: DynamicRarity.fromProperties(block, item, armor);
+			DynamicBlockModel blockModel = type == DynamicContentType.BLOCK && format >= 10 && entry.has("blockModel")
+					? decodeBlockModel(entry.getAsJsonObject("blockModel")) : null;
 			String behaviorSource;
-			if (format >= 8) {
+			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
 					throw new IllegalArgumentException("Dynamic content is missing required Java behavior source");
 				}
 				behaviorSource = entry.get("behaviorSource").getAsString();
+			} else if (format == 8) {
+				if (!entry.has("behaviorSource")) {
+					throw new IllegalArgumentException("Dynamic content is missing required Java behavior source");
+				}
+				behaviorSource = DynamicBehaviorSource.migrateMonolithicSource(
+						entry.get("behaviorSource").getAsString());
 			} else {
 				String legacySource = format >= 4 && entry.has("behaviorSource")
 						? entry.get("behaviorSource").getAsString() : null;
 				behaviorSource = DynamicBehaviorSource.completeLegacySource(legacySource);
 			}
 			definitions.add(new DynamicContentDefinition(
-					type, name, displayName, textureSeed, textureHash, texture,
-					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource
+					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel
 			));
 		}
 		validateUniqueNames(definitions);
@@ -142,6 +159,101 @@ public final class DynamicContentJson {
 		List<String> rows = new ArrayList<>();
 		encoded.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
 		return new DynamicTextureSpec(palette, rows);
+	}
+
+	private static JsonObject encodeBlockModel(DynamicBlockModel model) {
+		JsonObject encoded = new JsonObject();
+		encoded.addProperty("particleTexture", model.particleTexture());
+		JsonArray textures = new JsonArray();
+		for (DynamicBlockTexture texture : model.textures()) {
+			JsonObject value = new JsonObject();
+			value.addProperty("id", texture.id());
+			value.addProperty("hash", texture.hash());
+			value.add("texture", encodeTexture(texture.texture()));
+			textures.add(value);
+		}
+		encoded.add("textures", textures);
+		encoded.add("faces", encodeBlockFaces(model.faces()));
+		JsonArray elements = new JsonArray();
+		for (DynamicBlockModelElement element : model.elements()) {
+			JsonObject value = new JsonObject();
+			value.add("from", coordinates(element.fromX(), element.fromY(), element.fromZ()));
+			value.add("to", coordinates(element.toX(), element.toY(), element.toZ()));
+			value.addProperty("collision", element.collision());
+			value.add("faces", encodeBlockFaces(element.faces()));
+			elements.add(value);
+		}
+		encoded.add("elements", elements);
+		return encoded;
+	}
+
+	private static DynamicBlockModel decodeBlockModel(JsonObject encoded) {
+		List<DynamicBlockTexture> textures = new ArrayList<>();
+		for (JsonElement element : encoded.getAsJsonArray("textures")) {
+			JsonObject value = element.getAsJsonObject();
+			textures.add(new DynamicBlockTexture(value.get("id").getAsString(), value.get("hash").getAsString(),
+					decodeTexture(value.getAsJsonObject("texture"))));
+		}
+		List<DynamicBlockModelElement> elements = new ArrayList<>();
+		for (JsonElement element : encoded.getAsJsonArray("elements")) {
+			JsonObject value = element.getAsJsonObject();
+			float[] from = decodeCoordinates(value.getAsJsonArray("from"));
+			float[] to = decodeCoordinates(value.getAsJsonArray("to"));
+			elements.add(new DynamicBlockModelElement(from[0], from[1], from[2], to[0], to[1], to[2],
+					value.get("collision").getAsBoolean(), decodeBlockFaces(value.getAsJsonObject("faces"))));
+		}
+		return new DynamicBlockModel(textures, encoded.get("particleTexture").getAsString(),
+				decodeBlockFaces(encoded.getAsJsonObject("faces")), elements);
+	}
+
+	private static JsonObject encodeBlockFaces(java.util.Map<net.minecraft.core.Direction, DynamicBlockModelFace> faces) {
+		JsonObject encoded = new JsonObject();
+		for (var entry : faces.entrySet()) {
+			JsonObject face = new JsonObject();
+			face.addProperty("texture", entry.getValue().texture());
+			if (entry.getValue().uv() != null) {
+				DynamicBlockUv uv = entry.getValue().uv();
+				JsonArray coordinates = new JsonArray();
+				coordinates.add(uv.u0()); coordinates.add(uv.v0()); coordinates.add(uv.u1()); coordinates.add(uv.v1());
+				face.add("uv", coordinates);
+			}
+			encoded.add(entry.getKey().getSerializedName(), face);
+		}
+		return encoded;
+	}
+
+	private static java.util.Map<net.minecraft.core.Direction, DynamicBlockModelFace> decodeBlockFaces(JsonObject encoded) {
+		java.util.EnumMap<net.minecraft.core.Direction, DynamicBlockModelFace> faces =
+				new java.util.EnumMap<>(net.minecraft.core.Direction.class);
+		for (var entry : encoded.entrySet()) {
+			net.minecraft.core.Direction direction = net.minecraft.core.Direction.byName(entry.getKey());
+			if (direction == null) throw new IllegalArgumentException("Unknown block model face: " + entry.getKey());
+			JsonObject face = entry.getValue().getAsJsonObject();
+			DynamicBlockUv uv = null;
+			if (face.has("uv")) {
+				float[] values = decodeCoordinates(face.getAsJsonArray("uv"), 4);
+				uv = new DynamicBlockUv(values[0], values[1], values[2], values[3]);
+			}
+			faces.put(direction, new DynamicBlockModelFace(face.get("texture").getAsString(), uv));
+		}
+		return faces;
+	}
+
+	private static JsonArray coordinates(float... values) {
+		JsonArray encoded = new JsonArray();
+		for (float value : values) encoded.add(value);
+		return encoded;
+	}
+
+	private static float[] decodeCoordinates(JsonArray encoded) {
+		return decodeCoordinates(encoded, 3);
+	}
+
+	private static float[] decodeCoordinates(JsonArray encoded, int expected) {
+		if (encoded.size() != expected) throw new IllegalArgumentException("Invalid block model coordinate count");
+		float[] values = new float[expected];
+		for (int index = 0; index < expected; index++) values[index] = encoded.get(index).getAsFloat();
+		return values;
 	}
 
 	private static JsonObject encodeArmorDisplayTexture(DynamicArmorDisplayTextureSpec texture) {
@@ -170,6 +282,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("preferredTool", block.preferredTool().serializedName());
 		encoded.addProperty("requiresCorrectTool", block.requiresCorrectTool());
 		encoded.addProperty("shape", block.shape().serializedName());
+		encoded.addProperty("rarity", block.rarity().getSerializedName());
 		encoded.addProperty("redstonePower", block.redstonePower());
 		encoded.addProperty("comparatorPower", block.comparatorPower());
 		encoded.addProperty("lightLevel", block.lightLevel());
@@ -209,6 +322,9 @@ public final class DynamicContentJson {
 				DynamicTool.parse(encoded.get("preferredTool").getAsString()),
 				encoded.get("requiresCorrectTool").getAsBoolean(),
 				encoded.has("shape") ? DynamicBlockShape.parse(encoded.get("shape").getAsString()) : DynamicBlockShape.FULL_CUBE,
+				encoded.has("rarity")
+						? Rarity.valueOf(encoded.get("rarity").getAsString().toUpperCase(Locale.ROOT))
+						: Rarity.COMMON,
 				encoded.has("redstonePower") ? encoded.get("redstonePower").getAsInt() : 0,
 				encoded.has("comparatorPower") ? encoded.get("comparatorPower").getAsInt() : 0,
 				encoded.get("lightLevel").getAsInt(),

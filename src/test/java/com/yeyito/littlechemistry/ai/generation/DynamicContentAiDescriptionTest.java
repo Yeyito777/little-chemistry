@@ -14,6 +14,7 @@ import com.yeyito.littlechemistry.content.DynamicItemType;
 import com.yeyito.littlechemistry.content.DynamicMaterial;
 import com.yeyito.littlechemistry.content.DynamicParticleEmitter;
 import com.yeyito.littlechemistry.content.DynamicParticleType;
+import com.yeyito.littlechemistry.content.DynamicRarity;
 import com.yeyito.littlechemistry.content.DynamicTool;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
@@ -61,20 +62,31 @@ class DynamicContentAiDescriptionTest {
 		assertTrue(properties.get("visuallyEmissive").getAsBoolean());
 		assertEquals("glow", properties.getAsJsonArray("particles").get(0).getAsJsonObject()
 				.get("type").getAsString());
-		assertEquals(19, description.getAsJsonObject("behavior").getAsJsonArray("implementedCallbacks").size());
+		assertEquals(0, description.getAsJsonObject("behavior").getAsJsonArray("implementedCallbacks").size());
 	}
 
 	@Test
 	void exposesItemFoodAndCodeBehavior() {
 		DynamicFoodProperties food = new DynamicFoodProperties(8, 6.5F, 1.2F, true, List.of());
 		DynamicItemProperties item = new DynamicItemProperties(
-				DynamicItemType.FOOD, DynamicHeldType.REGULAR, 16, Rarity.RARE, true, 12, 2.5,
+				DynamicItemType.FOOD, DynamicHeldType.REGULAR, 16, Rarity.EPIC, true, 12, 2.5,
 				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
 				0, 0, 0, food, null);
-		String source = DynamicBehaviorSource.completeLegacySource(null);
+		String source = """
+				public final class GeneratedBehaviorImpl implements
+				        com.yeyito.littlechemistry.behavior.DynamicBehavior,
+				        com.yeyito.littlechemistry.behavior.UseAirBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    public net.minecraft.world.InteractionResult useAir(
+				            com.yeyito.littlechemistry.behavior.DynamicItemUseContext context) {
+				        return net.minecraft.world.InteractionResult.SUCCESS;
+				    }
+				}
+				""";
 		DynamicContentDefinition definition = new DynamicContentDefinition(
-				DynamicContentType.ITEM, "phase_berry", "Phase Berry", 0L, TEXTURE_HASH,
-				null, null, item, null, source);
+				DynamicContentType.ITEM, "phase_berry", "Phase Berry",
+				"A berry that flickers between nearby moments.", DynamicRarity.MYTHICAL,
+				0L, TEXTURE_HASH, null, null, null, null, item, null, source, null);
 
 		JsonObject description = DynamicContentAiDescription.describe(definition);
 		JsonObject properties = description.getAsJsonObject("gameplayProperties");
@@ -82,13 +94,14 @@ class DynamicContentAiDescriptionTest {
 
 		assertEquals("food", properties.get("itemType").getAsString());
 		assertEquals(16, properties.get("maxStack").getAsInt());
-		assertEquals("rare", properties.get("rarity").getAsString());
+		assertEquals("mythical", description.get("rarity").getAsString());
+		assertEquals("A berry that flickers between nearby moments.", description.get("description").getAsString());
 		assertTrue(properties.get("foil").getAsBoolean());
 		assertEquals(12, properties.get("enchantability").getAsInt());
 		assertEquals(2.5, properties.get("reach").getAsDouble());
 		assertEquals(8, properties.getAsJsonObject("food").get("hunger").getAsInt());
 		assertEquals("useAir", behavior.getAsJsonArray("implementedCallbacks").get(0).getAsString());
-		assertEquals(19, behavior.getAsJsonArray("implementedCallbacks").size());
+		assertEquals(1, behavior.getAsJsonArray("implementedCallbacks").size());
 		assertTrue(behavior.get("javaSourceExcerpt").getAsString().contains("GeneratedBehaviorImpl"));
 		assertFalse(behavior.get("javaSourceTruncated").getAsBoolean());
 	}

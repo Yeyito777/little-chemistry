@@ -1,6 +1,8 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleOptions;
@@ -76,7 +78,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected InteractionResult useItemOn(ItemStack heldStack, BlockState state, Level level, BlockPos position,
 			Player player, InteractionHand hand, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null) {
+		if (definition != null && DynamicBehaviorSource.supports(
+				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
@@ -91,7 +94,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos position,
 			Player player, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null) {
+		if (definition != null && DynamicBehaviorSource.supports(
+				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
@@ -114,22 +118,41 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		return switch (definition.block().shape()) {
 			case FULL_CUBE, NO_COLLISION -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
-			case STAR -> Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
+			case STAR, CROSS -> Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
+			case TORCH -> Shapes.box(7.0 / 16.0, 0, 7.0 / 16.0, 9.0 / 16.0, 10.0 / 16.0, 9.0 / 16.0);
 			case FENCE -> fenceShape(level, position, 1.0);
+			case CUSTOM -> customShape(definition.blockModel(), false);
 		};
 	}
 
 	@Override
 	protected VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos position, CollisionContext context) {
 		DynamicContentDefinition definition = definition(level, position);
+		return collisionShape(definition, level, position);
+	}
+
+	static VoxelShape collisionShape(DynamicContentDefinition definition, BlockGetter level, BlockPos position) {
 		if (definition != null && definition.item() != null && definition.item().placement() != null) return Shapes.empty();
 		if (definition == null || definition.block() == null) return Shapes.block();
 		return switch (definition.block().shape()) {
 			case FULL_CUBE -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
-			case NO_COLLISION, STAR -> Shapes.empty();
+			case NO_COLLISION, STAR, CROSS, TORCH -> Shapes.empty();
 			case FENCE -> fenceShape(level, position, 1.5);
+			case CUSTOM -> customShape(definition.blockModel(), true);
 		};
+	}
+
+	private static VoxelShape customShape(DynamicBlockModel model, boolean collisionOnly) {
+		if (model == null) return collisionOnly ? Shapes.empty() : Shapes.block();
+		VoxelShape result = Shapes.empty();
+		for (DynamicBlockModelElement element : model.elements()) {
+			if (collisionOnly && !element.collision()) continue;
+			result = Shapes.or(result, Shapes.box(
+					element.fromX() / 16.0, element.fromY() / 16.0, element.fromZ() / 16.0,
+					element.toX() / 16.0, element.toY() / 16.0, element.toZ() / 16.0));
+		}
+		return result;
 	}
 
 	public static boolean connectsFence(BlockGetter level, BlockPos position, Direction direction) {

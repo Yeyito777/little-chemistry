@@ -5,7 +5,10 @@ public enum DynamicBlockShape {
 	SLAB("slab"),
 	NO_COLLISION("no_collision"),
 	STAR("star"),
-	FENCE("fence");
+	FENCE("fence"),
+	CROSS("cross"),
+	TORCH("torch"),
+	CUSTOM("custom");
 
 	private final String serializedName;
 

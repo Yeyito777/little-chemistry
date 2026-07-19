@@ -13,14 +13,22 @@ public final class RuntimeTextureParticle extends SingleQuadParticle {
 
 	private RuntimeTextureParticle(ClientLevel level, double x, double y, double z,
 			double xa, double ya, double za, String textureHash, boolean terrain) {
-		super(level, x, y, z, xa, ya, za,
+		super(level, x, y, z,
+				terrain ? xa : 0.0,
+				terrain ? ya : 0.0,
+				terrain ? za : 0.0,
 				Minecraft.getInstance().getAtlasManager().getAtlasOrThrow(AtlasIds.ITEMS).missingSprite());
-		this.xd *= 0.1F;
-		this.yd *= 0.1F;
-		this.zd *= 0.1F;
-		this.xd += xa;
-		this.yd += ya;
-		this.zd += za;
+		if (!terrain) {
+			// Match BreakingItemParticle: start with its small random velocity, then add the supplied motion once.
+			this.xd *= 0.1F;
+			this.yd *= 0.1F;
+			this.zd *= 0.1F;
+			this.xd += xa;
+			this.yd += ya;
+			this.zd += za;
+		}
+		// TerrainParticle keeps the velocity calculated by Particle unchanged. Applying the item-particle
+		// adjustment here used to add the outward break vector a second time, producing an oversized explosion.
 		this.gravity = 1.0F;
 		this.quadSize /= 2.0F;
 		if (terrain) {

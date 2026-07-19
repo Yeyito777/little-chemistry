@@ -25,7 +25,12 @@ final class DynamicBehaviorCompilerTest {
 			import net.minecraft.world.level.redstone.Orientation;
 			import net.minecraft.world.phys.BlockHitResult;
 
-			public final class GeneratedBehaviorImpl implements DynamicBehavior {
+			public final class GeneratedBehaviorImpl implements DynamicBehavior,
+			        UseAirBehavior, UseOnBlockBehavior, InteractLivingEntityBehavior, InventoryTickBehavior,
+			        PostHurtEnemyBehavior, MineBlockBehavior, FinishUsingBehavior, CraftedBehavior,
+			        UsePlacedBlockBehavior, AttackPlacedBlockBehavior, PlacedBlockBehavior, BrokenBlockBehavior,
+			        StepOnBlockBehavior, FallOnBlockBehavior, EntityInsideBlockBehavior, RandomTickBlockBehavior,
+			        ScheduledTickBlockBehavior, NeighborChangedBlockBehavior, ProjectileHitBlockBehavior {
 			    public GeneratedBehaviorImpl() {}
 			    @Override public InteractionResult useAir(DynamicItemUseContext c) { return InteractionResult.SUCCESS; }
 			    @Override public InteractionResult useOnBlock(DynamicBlockUseContext c) { return InteractionResult.PASS; }
@@ -53,7 +58,7 @@ final class DynamicBehaviorCompilerTest {
 	void compilesAndLoadsEveryPublishedHook() {
 		DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(EXTENSIVE_SOURCE);
 		DynamicBehavior behavior = compiled.instantiate();
-		assertEquals(InteractionResult.SUCCESS, behavior.useAir(null));
+		assertEquals(InteractionResult.SUCCESS, ((UseAirBehavior) behavior).useAir(null));
 		assertEquals("GeneratedBehaviorImpl", behavior.getClass().getName());
 	}
 
@@ -75,28 +80,46 @@ final class DynamicBehaviorCompilerTest {
 	}
 
 	@Test
-	void rejectsAClassThatReliesOnInterfaceDefaults() {
-		String incomplete = """
+	void compilesMarkerOnlyClassForPassiveContent() {
+		String passive = """
 				public final class GeneratedBehaviorImpl implements com.yeyito.littlechemistry.behavior.DynamicBehavior {
 				    public GeneratedBehaviorImpl() {}
 				}
 				""";
 
-		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-				() -> DynamicBehaviorCompiler.compile(incomplete));
+		DynamicBehavior behavior = DynamicBehaviorCompiler.compile(passive).instantiate();
 
-		assertTrue(error.getMessage().contains("abstract"), error.getMessage());
+		assertTrue(DynamicBehaviorSource.capabilities(passive).isEmpty());
+		assertTrue(behavior instanceof DynamicBehavior);
 	}
 
 	@Test
-	void legacySourceMigrationAddsExplicitMethodsAndPreservesExistingCode() {
+	void rejectsCallbackMethodsWithoutTheirCapabilityInterface() {
+		String ambiguous = """
+				public final class GeneratedBehaviorImpl implements com.yeyito.littlechemistry.behavior.DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    public net.minecraft.world.InteractionResult useAir(
+				            com.yeyito.littlechemistry.behavior.DynamicItemUseContext context) {
+				        return net.minecraft.world.InteractionResult.SUCCESS;
+				    }
+				}
+				""";
+
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> DynamicBehaviorCompiler.compile(ambiguous));
+
+		assertTrue(error.getMessage().contains("UseAirBehavior"), error.getMessage());
+	}
+
+	@Test
+	void legacySourceMigrationAddsCapabilitiesAndPreservesExistingCode() {
 		String legacy = """
 				import com.yeyito.littlechemistry.behavior.*;
 				import net.minecraft.world.InteractionResult;
 
 				public final class GeneratedBehaviorImpl implements DynamicBehavior {
 				    public GeneratedBehaviorImpl() {}
-				    // Mentioning useOnBlock(...) in a comment must not hide the missing method.
+				    // Mentioning useOnBlock(...) in a comment must not create a capability.
 				    private final Object decoy = new Object() { public void useOnBlock(Object ignored) {} };
 				    @Override public InteractionResult useAir(DynamicItemUseContext context) {
 				        return InteractionResult.SUCCESS;
@@ -107,7 +130,39 @@ final class DynamicBehaviorCompilerTest {
 		String migrated = DynamicBehaviorSource.completeLegacySource(legacy);
 		DynamicBehavior behavior = DynamicBehaviorCompiler.compile(migrated).instantiate();
 
-		assertEquals(InteractionResult.SUCCESS, behavior.useAir(null));
-		assertEquals(InteractionResult.PASS, behavior.useOnBlock(null));
+		assertEquals(InteractionResult.SUCCESS, ((UseAirBehavior) behavior).useAir(null));
+		assertEquals(java.util.Set.of(DynamicBehaviorCapability.USE_AIR),
+				DynamicBehaviorSource.capabilities(migrated));
+	}
+
+	@Test
+	void monolithicMigrationRemovesForcedNeutralCallbacks() {
+		String monolithic = """
+				import com.yeyito.littlechemistry.behavior.*;
+				import net.minecraft.world.InteractionResult;
+
+				public final class GeneratedBehaviorImpl implements DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    @Override public InteractionResult useAir(DynamicItemUseContext context) {
+				        return InteractionResult.SUCCESS;
+				    }
+				    @Override public InteractionResult useOnBlock(DynamicBlockUseContext context) {
+				        return InteractionResult.PASS;
+				    }
+				    @Override public void crafted(net.minecraft.server.level.ServerLevel level,
+				            net.minecraft.server.level.ServerPlayer player,
+				            net.minecraft.world.item.ItemStack stack,
+				            com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}
+				}
+				""";
+
+		String migrated = DynamicBehaviorSource.migrateMonolithicSource(monolithic);
+		DynamicBehavior behavior = DynamicBehaviorCompiler.compile(migrated).instantiate();
+
+		assertTrue(behavior instanceof UseAirBehavior);
+		assertTrue(!(behavior instanceof UseOnBlockBehavior));
+		assertTrue(!(behavior instanceof CraftedBehavior));
+		assertTrue(!migrated.contains("useOnBlock("));
+		assertTrue(!migrated.contains("void crafted("));
 	}
 }

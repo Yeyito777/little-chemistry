@@ -3,6 +3,8 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
@@ -13,20 +15,10 @@ import com.yeyito.littlechemistry.content.DynamicItemType;
 import com.yeyito.littlechemistry.content.DynamicParticleEmitter;
 import com.yeyito.littlechemistry.content.DynamicPlacementProperties;
 
-import java.util.List;
-import java.util.regex.Pattern;
-
 /** Produces a compact, complete gameplay view of a generated crafting ingredient for the AI agents. */
 public final class DynamicContentAiDescription {
 	private static final int MAX_BEHAVIOR_SOURCE_CHARS = 12_000;
 	private static final int BEHAVIOR_SOURCE_TAIL_CHARS = 4_000;
-	private static final List<String> BEHAVIOR_CALLBACKS = List.of(
-			"useAir", "useOnBlock", "interactLivingEntity", "inventoryTick", "postHurtEnemy", "mineBlock",
-			"finishUsing", "crafted", "usePlacedBlock", "attackPlacedBlock", "placedBlock", "brokenBlock",
-			"stepOnBlock", "fallOnBlock", "entityInsideBlock", "randomTickBlock", "scheduledTickBlock",
-			"neighborChangedBlock", "projectileHitBlock"
-	);
-
 	private DynamicContentAiDescription() {
 	}
 
@@ -36,11 +28,29 @@ public final class DynamicContentAiDescription {
 		result.addProperty("type", definition.type().serializedName());
 		result.addProperty("name", definition.name());
 		result.addProperty("displayName", definition.displayName());
+		result.addProperty("description", definition.description());
+		result.addProperty("rarity", definition.rarityTier().serializedName());
 		result.add("gameplayProperties", switch (definition.type()) {
 			case BLOCK -> describeBlock(definition.block());
 			case ITEM -> describeItem(definition.item());
 			case ARMOR -> describeArmor(definition.armor());
 		});
+		if (definition.blockModel() != null) {
+			JsonObject model = new JsonObject();
+			model.addProperty("textureCount", definition.blockModel().textures().size());
+			model.addProperty("customElementCount", definition.blockModel().elements().size());
+			model.addProperty("particleTexture", definition.blockModel().particleTexture());
+			JsonArray textures = new JsonArray();
+			for (var texture : definition.blockModel().textures()) {
+				JsonObject encoded = new JsonObject();
+				encoded.addProperty("id", texture.id());
+				encoded.addProperty("width", texture.texture().width());
+				encoded.addProperty("height", texture.texture().height());
+				textures.add(encoded);
+			}
+			model.add("textures", textures);
+			result.add("visualModel", model);
+		}
 		result.add("behavior", describeBehavior(definition.behaviorSource()));
 		return result;
 	}
@@ -75,7 +85,6 @@ public final class DynamicContentAiDescription {
 		result.addProperty("itemType", item.itemType().serializedName());
 		result.addProperty("heldType", item.heldType().serializedName());
 		result.addProperty("maxStack", item.maxStack());
-		result.addProperty("rarity", item.rarity().getSerializedName());
 		result.addProperty("foil", item.foil());
 		result.addProperty("enchantability", item.enchantability());
 		result.addProperty("reach", item.reach());
@@ -132,7 +141,6 @@ public final class DynamicContentAiDescription {
 	private static JsonObject describeArmor(DynamicArmorProperties armor) {
 		JsonObject result = new JsonObject();
 		result.addProperty("slot", armor.slot().serializedName());
-		result.addProperty("rarity", armor.rarity().getSerializedName());
 		result.addProperty("foil", armor.foil());
 		result.addProperty("enchantability", armor.enchantability());
 		result.addProperty("defense", armor.defense());
@@ -145,8 +153,8 @@ public final class DynamicContentAiDescription {
 	private static JsonObject describeBehavior(String source) {
 		JsonObject result = new JsonObject();
 		JsonArray callbacks = new JsonArray();
-		for (String callback : BEHAVIOR_CALLBACKS) {
-			if (Pattern.compile("\\b" + callback + "\\s*\\(").matcher(source).find()) callbacks.add(callback);
+		for (DynamicBehaviorCapability capability : DynamicBehaviorSource.capabilities(source)) {
+			callbacks.add(capability.callbackName());
 		}
 		result.add("implementedCallbacks", callbacks);
 		boolean truncated = source.length() > MAX_BEHAVIOR_SOURCE_CHARS;

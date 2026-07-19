@@ -1,9 +1,13 @@
 package com.yeyito.littlechemistry.content;
 
+import net.minecraft.world.item.Rarity;
+
 public record DynamicContentDefinition(
 		DynamicContentType type,
 		String name,
 		String displayName,
+		String description,
+		DynamicRarity rarityTier,
 		long textureSeed,
 		String textureHash,
 		DynamicTextureSpec texture,
@@ -12,20 +16,43 @@ public record DynamicContentDefinition(
 		DynamicBlockProperties block,
 		DynamicItemProperties item,
 		DynamicArmorProperties armor,
-		String behaviorSource
+		String behaviorSource,
+		DynamicBlockModel blockModel
 ) {
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
-		this(type, name, displayName, textureSeed, textureHash, texture, null, null,
-				block, item, null, behaviorSource);
+		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, null),
+				textureSeed, textureHash, texture, null, null,
+				block, item, null, behaviorSource, null);
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
-		this(type, name, displayName, textureSeed, textureHash, texture, null, null,
-				block, item, armor, behaviorSource);
+		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
+				textureSeed, textureHash, texture, null, null,
+				block, item, armor, behaviorSource, null);
+	}
+
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
+			String textureHash, DynamicTextureSpec texture, String armorDisplayTextureHash,
+			DynamicArmorDisplayTextureSpec armorDisplayTexture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
+		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
+				textureSeed, textureHash, texture, armorDisplayTextureHash,
+				armorDisplayTexture, block, item, armor, behaviorSource, null);
+	}
+
+	/** Compatibility constructor for callers predating generated descriptions. */
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
+			String textureHash, DynamicTextureSpec texture, String armorDisplayTextureHash,
+			DynamicArmorDisplayTextureSpec armorDisplayTexture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource,
+			DynamicBlockModel blockModel) {
+		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
+				textureSeed, textureHash, texture, armorDisplayTextureHash,
+				armorDisplayTexture, block, item, armor, behaviorSource, blockModel);
 	}
 
 	public DynamicContentDefinition {
@@ -36,6 +63,8 @@ public record DynamicContentDefinition(
 				|| displayName.chars().anyMatch(Character::isISOControl)) {
 			throw new IllegalArgumentException("Dynamic content display name is invalid");
 		}
+		description = normalizeDescription(description);
+		if (rarityTier == null) throw new IllegalArgumentException("Dynamic content rarity is required");
 		if (textureHash == null || !textureHash.matches("[a-f0-9]{64}")) {
 			throw new IllegalArgumentException("Dynamic content texture hash is invalid");
 		}
@@ -57,28 +86,58 @@ public record DynamicContentDefinition(
 				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
 					throw new IllegalArgumentException("Block content must have block properties only");
 				}
-				if (texture != null) {
+				if (blockModel != null) {
+					blockModel.validateFor(block.shape());
+					DynamicBlockTexture primary = blockModel.particleTextureAsset();
+					if (!primary.hash().equals(textureHash) || !primary.texture().equals(texture)) {
+						throw new IllegalArgumentException("Block primary texture must match its model particle texture");
+					}
+				} else if (block.shape() == DynamicBlockShape.CUSTOM
+						|| block.shape() == DynamicBlockShape.CROSS || block.shape() == DynamicBlockShape.TORCH) {
+					throw new IllegalArgumentException("This block shape requires a runtime visual model");
+				} else if (texture != null) {
 					if (block.shape() == DynamicBlockShape.STAR) texture.requireBinaryAlpha();
 					else texture.requireOpaque();
 				}
 			}
 			case ITEM -> {
-				if (item == null || block != null || armor != null || armorDisplayTexture != null) {
+				if (item == null || block != null || armor != null || armorDisplayTexture != null || blockModel != null) {
 					throw new IllegalArgumentException("Item content must have item properties only");
 				}
-				if (texture != null) texture.requireBinaryAlpha();
+				if (texture != null) {
+					texture.requireDimensions(DynamicTextureAsset.WIDTH, DynamicTextureAsset.HEIGHT);
+					texture.requireBinaryAlpha();
+				}
 			}
 			case ARMOR -> {
-				if (armor == null || block != null || item != null) {
+				if (armor == null || block != null || item != null || blockModel != null) {
 					throw new IllegalArgumentException("Armor content must have armor properties only");
 				}
-				if (texture != null) texture.requireBinaryAlpha();
+				if (texture != null) {
+					texture.requireDimensions(DynamicTextureAsset.WIDTH, DynamicTextureAsset.HEIGHT);
+					texture.requireBinaryAlpha();
+				}
 			}
+		}
+		if (DynamicRarity.fromProperties(block, item, armor).vanillaRarity() != rarityTier.vanillaRarity()) {
+			throw new IllegalArgumentException("Dynamic rarity does not match the content's vanilla rarity component");
 		}
 	}
 
 	public String idPath() {
 		return name;
+	}
+
+	public Rarity rarity() {
+		return rarityTier.vanillaRarity();
+	}
+
+	public static String normalizeDescription(String raw) {
+		String normalized = raw == null ? "" : raw.strip();
+		if (normalized.length() > 120 || normalized.chars().anyMatch(Character::isISOControl)) {
+			throw new IllegalArgumentException("Description must contain at most 120 printable characters");
+		}
+		return normalized;
 	}
 
 	/**
@@ -90,5 +149,10 @@ public record DynamicContentDefinition(
 			throw new IllegalStateException("Only armor has an equipped display texture");
 		}
 		return armorDisplayTextureHash == null ? textureHash : armorDisplayTextureHash;
+	}
+
+	/** All ordinary textures needed to render this definition, excluding the separate worn-armor sheet. */
+	public java.util.Set<String> renderTextureHashes() {
+		return blockModel == null ? java.util.Set.of(textureHash) : blockModel.textureHashes();
 	}
 }

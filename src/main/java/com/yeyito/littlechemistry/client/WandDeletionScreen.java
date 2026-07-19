@@ -87,7 +87,8 @@ public final class WandDeletionScreen extends Screen {
 			case BLOCK -> "Block: ";
 			case ARMOR -> "Armor (" + definition.armor().slot().serializedName() + "): ";
 		};
-		return Component.literal(check + kind + definition.displayName());
+		return Component.literal(check + kind)
+				.append(Component.literal(definition.displayName()).withStyle(definition.rarityTier().color()));
 	}
 
 	private void changePage(int delta) {

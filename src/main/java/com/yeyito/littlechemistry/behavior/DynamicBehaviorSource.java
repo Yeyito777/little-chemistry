@@ -1,94 +1,185 @@
 package com.yeyito.littlechemistry.behavior;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Source migration support for definitions created before every behavior method became mandatory. */
+/** Source inspection and migration for generated behavior classes. */
 public final class DynamicBehaviorSource {
 	private static final String CLASS_NAME = DynamicBehaviorCompiler.GENERATED_CLASS_NAME;
-	private static final List<MethodSource> METHODS = List.of(
-			new MethodSource("useAir", "public net.minecraft.world.InteractionResult useAir(com.yeyito.littlechemistry.behavior.DynamicItemUseContext context) { return net.minecraft.world.InteractionResult.PASS; }"),
-			new MethodSource("useOnBlock", "public net.minecraft.world.InteractionResult useOnBlock(com.yeyito.littlechemistry.behavior.DynamicBlockUseContext context) { return net.minecraft.world.InteractionResult.PASS; }"),
-			new MethodSource("interactLivingEntity", "public net.minecraft.world.InteractionResult interactLivingEntity(com.yeyito.littlechemistry.behavior.DynamicEntityUseContext context) { return net.minecraft.world.InteractionResult.PASS; }"),
-			new MethodSource("inventoryTick", "public void inventoryTick(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.Entity owner, net.minecraft.world.entity.EquipmentSlot slot, net.minecraft.world.item.ItemStack stack, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("postHurtEnemy", "public void postHurtEnemy(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.LivingEntity attacker, net.minecraft.world.entity.LivingEntity target, net.minecraft.world.item.ItemStack stack, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("mineBlock", "public void mineBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.LivingEntity miner, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.item.ItemStack stack, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("finishUsing", "public net.minecraft.world.item.ItemStack finishUsing(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.LivingEntity consumer, net.minecraft.world.item.ItemStack originalStack, net.minecraft.world.item.ItemStack resultStack, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) { return resultStack; }"),
-			new MethodSource("crafted", "public void crafted(net.minecraft.server.level.ServerLevel level, net.minecraft.server.level.ServerPlayer player, net.minecraft.world.item.ItemStack stack, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("usePlacedBlock", "public net.minecraft.world.InteractionResult usePlacedBlock(com.yeyito.littlechemistry.behavior.DynamicPlacedBlockUseContext context) { return net.minecraft.world.InteractionResult.PASS; }"),
-			new MethodSource("attackPlacedBlock", "public void attackPlacedBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.server.level.ServerPlayer player, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("placedBlock", "public void placedBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.LivingEntity placer, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.item.ItemStack placedFrom, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("brokenBlock", "public void brokenBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.server.level.ServerPlayer player, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.item.ItemStack tool, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("stepOnBlock", "public void stepOnBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.entity.Entity entity, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("fallOnBlock", "public void fallOnBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.entity.Entity entity, double fallDistance, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("entityInsideBlock", "public void entityInsideBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.entity.Entity entity, net.minecraft.world.entity.InsideBlockEffectApplier effects, boolean isEntry, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("randomTickBlock", "public void randomTickBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.util.RandomSource random, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("scheduledTickBlock", "public void scheduledTickBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.util.RandomSource random, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("neighborChangedBlock", "public void neighborChangedBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.level.block.Block neighbor, net.minecraft.world.level.redstone.Orientation orientation, boolean movedByPiston, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}"),
-			new MethodSource("projectileHitBlock", "public void projectileHitBlock(net.minecraft.server.level.ServerLevel level, net.minecraft.core.BlockPos position, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.phys.BlockHitResult hit, net.minecraft.world.entity.projectile.Projectile projectile, com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}")
-	);
+	private static final String MARKER_SOURCE = "public final class " + CLASS_NAME
+			+ " implements com.yeyito.littlechemistry.behavior.DynamicBehavior { public "
+			+ CLASS_NAME + "() {} }";
+	private static final Pattern CLASS_DECLARATION = Pattern.compile(
+			"\\bclass\\s+" + Pattern.quote(CLASS_NAME) + "\\b");
+	private static final Pattern OVERRIDE_SUFFIX = Pattern.compile("@(?:java\\.lang\\.)?Override\\s*$");
+	private static final Pattern PASS_RETURN = Pattern.compile(
+			"return(?:net\\.minecraft\\.world\\.)?InteractionResult\\.PASS;");
+	private static final Pattern IDENTIFIER_RETURN = Pattern.compile("return([A-Za-z_$][A-Za-z0-9_$]*);");
+	private static final ConcurrentHashMap<String, Set<DynamicBehaviorCapability>> CAPABILITY_CACHE =
+			new ConcurrentHashMap<>();
 
 	private DynamicBehaviorSource() {
 	}
 
-	/** Adds explicit neutral implementations only while upgrading legacy persisted source. */
+	/** Creates or upgrades behavior source persisted by versions whose base interface supplied callback defaults. */
 	public static String completeLegacySource(String source) {
-		if (source == null || source.isBlank()) {
-			source = "public final class " + CLASS_NAME
-					+ " implements com.yeyito.littlechemistry.behavior.DynamicBehavior { public "
-					+ CLASS_NAME + "() {} }";
-		}
-		String normalized = source.strip();
-		String masked = maskNonCode(normalized);
-		Matcher declaration = Pattern.compile("\\bclass\\s+" + Pattern.quote(CLASS_NAME) + "\\b").matcher(masked);
-		if (!declaration.find()) throw new IllegalArgumentException("Legacy behavior does not declare " + CLASS_NAME);
-		int openingBrace = masked.indexOf('{', declaration.end());
-		if (openingBrace < 0) throw new IllegalArgumentException("Legacy behavior class has no body");
-		int closingBrace = matchingBrace(masked, openingBrace);
-		if (closingBrace < 0) throw new IllegalArgumentException("Legacy behavior class body is incomplete");
-
-		String classBody = masked.substring(openingBrace + 1, closingBrace);
-		List<MethodSource> missing = new ArrayList<>();
-		for (MethodSource method : METHODS) {
-			if (!declaresMethod(classBody, method.name())) missing.add(method);
-		}
-		if (missing.isEmpty()) return normalized;
-
-		StringBuilder additions = new StringBuilder();
-		for (MethodSource method : missing) {
-			additions.append("\n    @Override ").append(method.source());
-		}
-		additions.append('\n');
-		return normalized.substring(0, closingBrace) + additions + normalized.substring(closingBrace);
+		return migrateMonolithicSource(source == null || source.isBlank() ? MARKER_SOURCE : source);
 	}
 
-	private static boolean declaresMethod(String classBody, String methodName) {
+	/**
+	 * Converts the former all-callback interface into explicit opt-in callback interfaces. Neutral methods inserted by
+	 * the old generator are removed, while methods containing actual behavior are preserved and assigned a capability.
+	 */
+	public static String migrateMonolithicSource(String source) {
+		if (source == null || source.isBlank()) return MARKER_SOURCE;
+		String normalized = source.strip();
+		SourceClass sourceClass = locateClass(normalized);
+		if (!declaredCapabilities(normalized, sourceClass).isEmpty()) return normalized;
+
+		String masked = maskNonCode(normalized);
+		List<MethodRegion> neutralMethods = new ArrayList<>();
+		EnumSet<DynamicBehaviorCapability> implemented = EnumSet.noneOf(DynamicBehaviorCapability.class);
+		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
+			MethodRegion method = findTopLevelMethod(masked, sourceClass, capability.callbackName());
+			if (method == null) continue;
+			if (isNeutral(masked, method, capability)) neutralMethods.add(method);
+			else implemented.add(capability);
+		}
+
+		String migrated = normalized;
+		neutralMethods.sort((left, right) -> Integer.compare(right.start(), left.start()));
+		for (MethodRegion method : neutralMethods) {
+			migrated = migrated.substring(0, method.start()) + migrated.substring(method.end());
+		}
+		if (!implemented.isEmpty()) {
+			SourceClass migratedClass = locateClass(migrated);
+			StringBuilder interfaces = new StringBuilder();
+			for (DynamicBehaviorCapability capability : implemented) {
+				interfaces.append(", ").append(capability.qualifiedInterfaceName());
+			}
+			migrated = migrated.substring(0, migratedClass.openingBrace()) + interfaces
+					+ " " + migrated.substring(migratedClass.openingBrace());
+		}
+		CAPABILITY_CACHE.remove(normalized);
+		return migrated.strip();
+	}
+
+	/** Returns the callback capabilities explicitly selected in the generated class declaration. */
+	public static Set<DynamicBehaviorCapability> capabilities(String source) {
+		if (source == null || source.isBlank()) return Set.of();
+		return CAPABILITY_CACHE.computeIfAbsent(source, DynamicBehaviorSource::inspectCapabilities);
+	}
+
+	public static boolean supports(String source, DynamicBehaviorCapability capability) {
+		return capabilities(source).contains(capability);
+	}
+
+	private static Set<DynamicBehaviorCapability> inspectCapabilities(String source) {
+		EnumSet<DynamicBehaviorCapability> capabilities = declaredCapabilities(source, locateClass(source));
+		return capabilities.isEmpty()
+				? Set.of()
+				: Collections.unmodifiableSet(EnumSet.copyOf(capabilities));
+	}
+
+	private static EnumSet<DynamicBehaviorCapability> declaredCapabilities(String source, SourceClass sourceClass) {
+		String masked = maskNonCode(source);
+		String header = masked.substring(sourceClass.declarationStart(), sourceClass.openingBrace());
+		EnumSet<DynamicBehaviorCapability> capabilities = EnumSet.noneOf(DynamicBehaviorCapability.class);
+		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
+			if (Pattern.compile("\\b" + Pattern.quote(capability.interfaceName()) + "\\b")
+					.matcher(header).find()) {
+				capabilities.add(capability);
+			}
+		}
+		return capabilities;
+	}
+
+	private static SourceClass locateClass(String source) {
+		String masked = maskNonCode(source);
+		Matcher declaration = CLASS_DECLARATION.matcher(masked);
+		if (!declaration.find()) throw new IllegalArgumentException("Behavior does not declare " + CLASS_NAME);
+		int openingBrace = masked.indexOf('{', declaration.end());
+		if (openingBrace < 0) throw new IllegalArgumentException("Behavior class has no body");
+		int closingBrace = matchingDelimiter(masked, openingBrace, '{', '}');
+		if (closingBrace < 0) throw new IllegalArgumentException("Behavior class body is incomplete");
+		return new SourceClass(declaration.start(), openingBrace, closingBrace);
+	}
+
+	private static MethodRegion findTopLevelMethod(String masked, SourceClass sourceClass, String methodName) {
 		Pattern implementation = Pattern.compile("\\bpublic\\b[^;{}=]*\\b"
 				+ Pattern.quote(methodName) + "\\s*\\(", Pattern.DOTALL);
-		Matcher matcher = implementation.matcher(classBody);
+		Matcher matcher = implementation.matcher(masked);
+		matcher.region(sourceClass.openingBrace() + 1, sourceClass.closingBrace());
 		while (matcher.find()) {
-			if (braceDepthAt(classBody, matcher.start()) == 0) return true;
+			if (braceDepthAt(masked, sourceClass.openingBrace() + 1, matcher.start()) != 0) continue;
+			int methodNameStart = masked.indexOf(methodName, matcher.start());
+			int openingParenthesis = masked.indexOf('(', methodNameStart + methodName.length());
+			int closingParenthesis = matchingDelimiter(masked, openingParenthesis, '(', ')');
+			if (closingParenthesis < 0) continue;
+			int openingBrace = skipWhitespace(masked, closingParenthesis + 1);
+			if (openingBrace >= masked.length() || masked.charAt(openingBrace) != '{') continue;
+			int closingBrace = matchingDelimiter(masked, openingBrace, '{', '}');
+			if (closingBrace < 0 || closingBrace > sourceClass.closingBrace()) continue;
+			int start = includeOverrideAnnotation(masked, sourceClass.openingBrace() + 1, matcher.start());
+			return new MethodRegion(start, closingBrace + 1, openingParenthesis, closingParenthesis,
+					openingBrace, closingBrace);
 		}
-		return false;
+		return null;
 	}
 
-	private static int braceDepthAt(String source, int end) {
+	private static boolean isNeutral(String masked, MethodRegion method, DynamicBehaviorCapability capability) {
+		String body = masked.substring(method.openingBrace() + 1, method.closingBrace()).replaceAll("\\s+", "");
+		return switch (capability) {
+			case USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, USE_PLACED_BLOCK ->
+					PASS_RETURN.matcher(body).matches();
+			case FINISH_USING -> returnsResultParameter(masked, method, body);
+			default -> body.isEmpty();
+		};
+	}
+
+	private static boolean returnsResultParameter(String masked, MethodRegion method, String body) {
+		Matcher returned = IDENTIFIER_RETURN.matcher(body);
+		if (!returned.matches()) return false;
+		String parameters = masked.substring(method.openingParenthesis() + 1, method.closingParenthesis());
+		String[] split = parameters.split(",");
+		if (split.length < 4) return false;
+		Matcher name = Pattern.compile("([A-Za-z_$][A-Za-z0-9_$]*)\\s*$").matcher(split[3]);
+		return name.find() && returned.group(1).equals(name.group(1));
+	}
+
+	private static int includeOverrideAnnotation(String masked, int classBodyStart, int methodStart) {
+		Matcher override = OVERRIDE_SUFFIX.matcher(masked.substring(classBodyStart, methodStart));
+		return override.find() ? classBodyStart + override.start() : methodStart;
+	}
+
+	private static int skipWhitespace(String source, int start) {
+		int index = start;
+		while (index < source.length() && Character.isWhitespace(source.charAt(index))) index++;
+		return index;
+	}
+
+	private static int braceDepthAt(String source, int start, int end) {
 		int depth = 0;
-		for (int index = 0; index < end; index++) {
+		for (int index = start; index < end; index++) {
 			if (source.charAt(index) == '{') depth++;
 			else if (source.charAt(index) == '}') depth--;
 		}
 		return depth;
 	}
 
-	private static int matchingBrace(String source, int openingBrace) {
+	private static int matchingDelimiter(String source, int opening, char open, char close) {
+		if (opening < 0 || opening >= source.length() || source.charAt(opening) != open) return -1;
 		int depth = 0;
-		for (int index = openingBrace; index < source.length(); index++) {
+		for (int index = opening; index < source.length(); index++) {
 			char value = source.charAt(index);
-			if (value == '{') depth++;
-			else if (value == '}' && --depth == 0) return index;
+			if (value == open) depth++;
+			else if (value == close && --depth == 0) return index;
 		}
 		return -1;
 	}
@@ -158,6 +249,10 @@ public final class DynamicBehaviorSource {
 		return masked.toString();
 	}
 
-	private record MethodSource(String name, String source) {
+	private record SourceClass(int declarationStart, int openingBrace, int closingBrace) {
+	}
+
+	private record MethodRegion(int start, int end, int openingParenthesis, int closingParenthesis,
+			int openingBrace, int closingBrace) {
 	}
 }

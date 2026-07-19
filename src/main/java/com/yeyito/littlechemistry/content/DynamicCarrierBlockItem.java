@@ -1,6 +1,9 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -13,12 +16,16 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
+
+import java.util.function.Consumer;
 
 public final class DynamicCarrierBlockItem extends BlockItem {
 	public DynamicCarrierBlockItem(Block block, Properties properties) {
@@ -29,7 +36,17 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 	public Component getName(ItemStack stack) {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		return definition == null ? Component.literal("Unresolved Little Chemistry Block")
-				: Component.literal(definition.displayName());
+				: Component.literal(definition.displayName()).withStyle(definition.rarityTier().color());
+	}
+
+	@Override
+	public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display,
+			Consumer<Component> builder, TooltipFlag flag) {
+		super.appendHoverText(stack, context, display, builder, flag);
+		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
+		if (definition != null && !definition.description().isBlank()) {
+			builder.accept(Component.literal(definition.description()).withStyle(ChatFormatting.GRAY));
+		}
 	}
 
 	@Override
@@ -45,9 +62,20 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 	}
 
 	@Override
+	protected boolean canPlace(BlockPlaceContext context, BlockState stateForPlacement) {
+		DynamicContentDefinition definition = DynamicContentObjects.definition(context.getItemInHand());
+		if (definition == null || definition.block() == null) return super.canPlace(context, stateForPlacement);
+		BlockPos position = context.getClickedPos();
+		return stateForPlacement.canSurvive(context.getLevel(), position)
+				&& context.getLevel().isUnobstructed(null,
+						DynamicCarrierBlock.collisionShape(definition, context.getLevel(), position).move(position));
+	}
+
+	@Override
 	public InteractionResult useOn(UseOnContext context) {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(context.getItemInHand());
-		if (definition != null) {
+		if (definition != null && DynamicBehaviorSource.supports(
+				definition.behaviorSource(), DynamicBehaviorCapability.USE_ON_BLOCK)) {
 			if (context.getLevel().isClientSide()) return InteractionResult.SUCCESS;
 			if (context.getLevel() instanceof ServerLevel serverLevel
 					&& context.getPlayer() instanceof ServerPlayer serverPlayer) {
@@ -63,7 +91,8 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 	public InteractionResult use(Level level, Player player, InteractionHand hand) {
 		ItemStack stack = player.getItemInHand(hand);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null) {
+		if (definition != null && DynamicBehaviorSource.supports(
+				definition.behaviorSource(), DynamicBehaviorCapability.USE_AIR)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult behaviorResult = DynamicBehaviorRegistry.useAir(
@@ -78,7 +107,8 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 	public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity target,
 			InteractionHand hand) {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null) {
+		if (definition != null && DynamicBehaviorSource.supports(
+				definition.behaviorSource(), DynamicBehaviorCapability.INTERACT_LIVING_ENTITY)) {
 			if (player.level().isClientSide()) return InteractionResult.SUCCESS;
 			if (player instanceof ServerPlayer serverPlayer && player.level() instanceof ServerLevel serverLevel) {
 				InteractionResult result = DynamicBehaviorRegistry.interactLivingEntity(
@@ -92,6 +122,7 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 	@Override
 	public void inventoryTick(ItemStack stack, ServerLevel level, Entity owner, @Nullable EquipmentSlot slot) {
 		super.inventoryTick(stack, level, owner, slot);
+		DynamicContentObjects.refreshDynamicAttributes(stack);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null) {
 			DynamicBehaviorRegistry.inventoryTick(definition, level, owner, slot, stack);
