@@ -61,8 +61,12 @@ class DynamicContentAiDescriptionTest {
 		assertEquals(6, properties.get("comparatorPower").getAsInt());
 		assertEquals(13, properties.get("lightLevel").getAsInt());
 		assertTrue(properties.get("visuallyEmissive").getAsBoolean());
-			assertEquals("glow", properties.getAsJsonArray("particles").get(0).getAsJsonObject()
-					.get("particle").getAsString());
+		assertEquals("self", properties.getAsJsonObject("drops").getAsJsonArray("entries")
+				.get(0).getAsJsonObject().get("targetKind").getAsString());
+		assertEquals("self", properties.getAsJsonObject("drops").getAsJsonArray("entries")
+				.get(0).getAsJsonObject().get("target").getAsString());
+		assertEquals("glow", properties.getAsJsonArray("particles").get(0).getAsJsonObject()
+				.get("particle").getAsString());
 		assertEquals(0, description.getAsJsonObject("behavior").getAsJsonArray("implementedCallbacks").size());
 	}
 

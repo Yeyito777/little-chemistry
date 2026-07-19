@@ -28,5 +28,14 @@
   "screen.little_chemistry.creation.model.sol": "Sol",
   "screen.little_chemistry.deletion.title": "Wand of Deletion",
   "screen.little_chemistry.deletion.confirm": "Delete Selected",
-  "screen.little_chemistry.deletion.empty": "There is no custom content to delete."
+  "screen.little_chemistry.deletion.empty": "There is no custom content to delete.",
+  "tooltip.little_chemistry.block_drop.primary": "Drops: %s",
+  "tooltip.little_chemistry.block_drop.bonus": "Bonus: %s",
+  "tooltip.little_chemistry.block_drop.chance": "%s%% ",
+  "tooltip.little_chemistry.block_drop.count": "%s × ",
+  "tooltip.little_chemistry.block_drop.count_range": "%s–%s × ",
+  "tooltip.little_chemistry.block_drop.self": "itself",
+  "tooltip.little_chemistry.block_drop.fortune": " (Fortune)",
+  "tooltip.little_chemistry.block_drop.silk_touch": "Silk Touch: drops itself",
+  "tooltip.little_chemistry.block_drop.explosion_decay": "Explosion damage may reduce drops"
 }

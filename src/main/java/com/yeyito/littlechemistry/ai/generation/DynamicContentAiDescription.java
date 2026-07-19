@@ -8,6 +8,7 @@ import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
+import com.yeyito.littlechemistry.content.DynamicDropEntry;
 import com.yeyito.littlechemistry.content.DynamicFoodEffect;
 import com.yeyito.littlechemistry.content.DynamicFoodProperties;
 import com.yeyito.littlechemistry.content.DynamicItemProperties;
@@ -94,6 +95,22 @@ public final class DynamicContentAiDescription {
 		result.addProperty("comparatorPower", block.comparatorPower());
 		result.addProperty("lightLevel", block.lightLevel());
 		result.addProperty("visuallyEmissive", block.visuallyEmissive());
+		JsonObject drops = new JsonObject();
+		JsonArray dropEntries = new JsonArray();
+		for (DynamicDropEntry entry : block.drops().entries()) {
+			JsonObject encoded = new JsonObject();
+			encoded.addProperty("targetKind", entry.targetKind().serializedName());
+			encoded.addProperty("target", entry.target());
+			encoded.addProperty("minCount", entry.minCount());
+			encoded.addProperty("maxCount", entry.maxCount());
+			encoded.addProperty("chance", entry.chance());
+			encoded.addProperty("fortune", entry.fortune().serializedName());
+			dropEntries.add(encoded);
+		}
+		drops.add("entries", dropEntries);
+		drops.addProperty("silkTouchDropsSelf", block.drops().silkTouchDropsSelf());
+		drops.addProperty("explosionDecay", block.drops().explosionDecay());
+		result.add("drops", drops);
 		JsonArray particles = new JsonArray();
 		for (DynamicParticleEmitter emitter : block.particles()) {
 			JsonObject particle = new JsonObject();

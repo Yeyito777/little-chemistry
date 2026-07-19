@@ -10,6 +10,7 @@ import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
+import com.yeyito.littlechemistry.content.DynamicBlockDrops;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
 import com.yeyito.littlechemistry.content.DynamicBlockModelElement;
 import com.yeyito.littlechemistry.content.DynamicBlockModelFace;
@@ -20,8 +21,11 @@ import com.yeyito.littlechemistry.content.DynamicBreakingPower;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicCraftingUse;
+import com.yeyito.littlechemistry.content.DynamicDropEntry;
+import com.yeyito.littlechemistry.content.DynamicDropTargetKind;
 import com.yeyito.littlechemistry.content.DynamicFoodEffect;
 import com.yeyito.littlechemistry.content.DynamicFoodProperties;
+import com.yeyito.littlechemistry.content.DynamicFortuneMode;
 import com.yeyito.littlechemistry.content.DynamicHeldType;
 import com.yeyito.littlechemistry.content.DynamicItemProperties;
 import com.yeyito.littlechemistry.content.DynamicItemType;
@@ -67,6 +71,7 @@ final class ContentGenerationDraft {
 	private Boolean visuallyEmissive;
 	private List<DynamicParticleEmitter> particles;
 	private List<DynamicParticleDefinition> customParticles = List.of();
+	private DynamicBlockDrops blockDrops;
 	private Integer maxStack;
 	private DynamicRarity rarity;
 	private String description;
@@ -137,6 +142,7 @@ final class ContentGenerationDraft {
 				case "set_block_redstone" -> requireBlock(() -> setBlockRedstone(arguments));
 				case "set_block_light" -> requireBlock(() -> setBlockLight(arguments));
 				case "set_block_particles" -> requireBlock(() -> setBlockParticles(arguments));
+				case "set_block_drops" -> requireBlock(() -> setBlockDrops(arguments));
 				case "set_item_properties" -> requireItem(() -> setItemProperties(arguments));
 				case "set_tool_properties" -> requireItem(() -> setToolProperties(arguments));
 				case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
@@ -465,6 +471,38 @@ final class ContentGenerationDraft {
 		return ToolExecution.success(details, null);
 	}
 
+	private ToolExecution setBlockDrops(JsonObject arguments) {
+		requireOnly(arguments, "entries", "silkTouchDropsSelf", "explosionDecay");
+		JsonArray encoded = requiredArray(arguments, "entries");
+		List<DynamicDropEntry> entries = new ArrayList<>();
+		for (JsonElement element : encoded) {
+			if (!(element instanceof JsonObject entry)) {
+				throw new IllegalArgumentException("Every block drop entry must be an object");
+			}
+			requireOnly(entry, "targetKind", "target", "minCount", "maxCount", "chance", "fortune");
+			entries.add(new DynamicDropEntry(
+					DynamicDropTargetKind.parse(requiredString(entry, "targetKind")),
+					requiredString(entry, "target"),
+					requiredInt(entry, "minCount"),
+					requiredInt(entry, "maxCount"),
+					requiredDouble(entry, "chance"),
+					DynamicFortuneMode.parse(requiredString(entry, "fortune"))
+			));
+		}
+		DynamicBlockDrops candidate = new DynamicBlockDrops(
+				entries,
+				requiredBoolean(arguments, "silkTouchDropsSelf"),
+				requiredBoolean(arguments, "explosionDecay"));
+		candidate.validateAvailableTargets(
+				name -> com.yeyito.littlechemistry.content.DynamicContentCatalog.find(name));
+		blockDrops = candidate;
+		JsonObject details = message("Block drop rules were accepted.");
+		details.addProperty("entryCount", entries.size());
+		details.addProperty("silkTouchDropsSelf", blockDrops.silkTouchDropsSelf());
+		details.addProperty("explosionDecay", blockDrops.explosionDecay());
+		return ToolExecution.success(details, null);
+	}
+
 	private ToolExecution setItemProperties(JsonObject arguments) {
 		requireOnly(arguments, "itemType", "heldType", "maxStack", "foil", "enchantability", "reach", "placeable", "craftingUse");
 		DynamicItemType candidateItemType = DynamicItemType.parse(requiredString(arguments, "itemType"));
@@ -653,7 +691,7 @@ final class ContentGenerationDraft {
 		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
 		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
 		details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
-		details.addProperty("customParticleApi", "Use com.yeyito.littlechemistry.particle.DynamicParticles.spawn(ServerLevel, DynamicContentDefinition, String particleId, double x, double y, double z, double velocityX, double velocityY, double velocityZ) for one directionally moving particle. The burst overload adds int count, double spreadX, spreadY, spreadZ, and double speed, matching ServerLevel.sendParticles semantics. Pass a string-literal local ID declared by set_custom_particles.");
+		details.addProperty("customParticleApi", "Use only the budgeted com.yeyito.littlechemistry.particle.DynamicParticles.spawn(ServerLevel, DynamicContentDefinition, String particleId, double x, double y, double z, double velocityX, double velocityY, double velocityZ) API for one directionally moving particle. The burst overload adds int count, double spreadX, spreadY, spreadZ, and double speed, matching ServerLevel.sendParticles semantics. Pass a string-literal local ID declared by set_custom_particles; never construct particle options or use the particle registry directly.");
 		return ToolExecution.success(details, null);
 	}
 
@@ -719,7 +757,7 @@ final class ContentGenerationDraft {
 					texture,
 					new DynamicBlockProperties(material, hardness, preferredTool, requiresCorrectTool,
 							blockShape, directional, rarity.vanillaRarity(), redstonePower, comparatorPower, lightLevel,
-							visuallyEmissive, particles),
+							visuallyEmissive, particles, blockDrops),
 					null,
 					null,
 					null,
@@ -793,6 +831,12 @@ final class ContentGenerationDraft {
 			result.addProperty("blockModelTextureCount", blockModel.textures().size());
 			result.addProperty("blockModelElementCount", blockModel.elements().size());
 		}
+		result.addProperty("blockDropsSet", blockDrops != null);
+		if (blockDrops != null) {
+			result.addProperty("blockDropEntryCount", blockDrops.entries().size());
+			result.addProperty("silkTouchDropsSelf", blockDrops.silkTouchDropsSelf());
+			result.addProperty("dropExplosionDecay", blockDrops.explosionDecay());
+		}
 		return result;
 	}
 
@@ -813,6 +857,7 @@ final class ContentGenerationDraft {
 			if (redstonePower == null || comparatorPower == null) missing.add("redstone");
 			if (lightLevel == null || visuallyEmissive == null) missing.add("light");
 			if (particles == null) missing.add("particles");
+			if (blockDrops == null) missing.add("blockDrops");
 		} else if (type == DynamicContentType.ITEM) {
 			if (itemType == null || heldType == null || maxStack == null || foil == null
 					|| enchantability == null || reach == null || placeable == null || craftingUse == null) {

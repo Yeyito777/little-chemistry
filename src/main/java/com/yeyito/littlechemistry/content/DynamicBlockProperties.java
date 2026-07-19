@@ -15,12 +15,13 @@ public record DynamicBlockProperties(
 			int redstonePower,
 			int comparatorPower,
 			int lightLevel,
-		boolean visuallyEmissive,
-		List<DynamicParticleEmitter> particles
+			boolean visuallyEmissive,
+			List<DynamicParticleEmitter> particles,
+			DynamicBlockDrops drops
 ) {
 	public static final DynamicBlockProperties DEFAULT = new DynamicBlockProperties(
 			DynamicMaterial.STONE, 1.5F, DynamicTool.NONE, false, DynamicBlockShape.FULL_CUBE,
-			false, Rarity.COMMON, 0, 0, 0, false, List.of()
+			false, Rarity.COMMON, 0, 0, 0, false, List.of(), DynamicBlockDrops.DEFAULT
 	);
 
 	/** Compatibility constructor for catalogs and callers predating directional blocks and block rarity. */
@@ -28,21 +29,29 @@ public record DynamicBlockProperties(
 			boolean requiresCorrectTool, DynamicBlockShape shape, int redstonePower, int comparatorPower,
 			int lightLevel, boolean visuallyEmissive, List<DynamicParticleEmitter> particles) {
 		this(material, hardness, preferredTool, requiresCorrectTool, shape, false, Rarity.COMMON,
-				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles);
+				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles, DynamicBlockDrops.DEFAULT);
 	}
 
-	/** Compatibility constructor for callers predating directional blocks. */
+	/** Compatibility constructor for callers predating directional blocks and declarative drops. */
 	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
 			boolean requiresCorrectTool, DynamicBlockShape shape, Rarity rarity, int redstonePower,
 			int comparatorPower, int lightLevel, boolean visuallyEmissive,
 			List<DynamicParticleEmitter> particles) {
 		this(material, hardness, preferredTool, requiresCorrectTool, shape, false, rarity,
-				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles);
+				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles, DynamicBlockDrops.DEFAULT);
+	}
+
+	/** Compatibility constructor for callers predating declarative block drops. */
+	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
+			boolean requiresCorrectTool, DynamicBlockShape shape, boolean directional, Rarity rarity, int redstonePower,
+			int comparatorPower, int lightLevel, boolean visuallyEmissive, List<DynamicParticleEmitter> particles) {
+		this(material, hardness, preferredTool, requiresCorrectTool, shape, directional, rarity,
+				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles, DynamicBlockDrops.DEFAULT);
 	}
 
 	public DynamicBlockProperties {
-		if (material == null || preferredTool == null || shape == null || rarity == null) {
-			throw new IllegalArgumentException("Block material, preferred tool, shape, and rarity are required");
+		if (material == null || preferredTool == null || shape == null || rarity == null || drops == null) {
+			throw new IllegalArgumentException("Block material, preferred tool, shape, rarity, and drops are required");
 		}
 		if (!Float.isFinite(hardness) || hardness < 0.0F || hardness > 50.0F) {
 			throw new IllegalArgumentException("Block hardness must be between 0 and 50");

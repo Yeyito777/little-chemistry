@@ -416,6 +416,9 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		if (definition != null && definition.item() != null && definition.item().placement() != null) {
 			return List.of(DynamicContentObjects.createStack(definition));
 		}
+		if (definition != null && definition.block() != null) {
+			return DynamicBlockDropEvaluator.evaluate(definition, params);
+		}
 		return super.getDrops(state, params);
 	}
 

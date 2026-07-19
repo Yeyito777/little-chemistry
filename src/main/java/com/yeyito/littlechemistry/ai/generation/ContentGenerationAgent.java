@@ -20,7 +20,8 @@ public final class ContentGenerationAgent {
 			source and decompiled classpath Java method bodies when useful, but do not merely copy, reskin, or delegate to existing content
 			when the concept implies special functionality. Complete every applicable property and texture. When distinctive effects
 			improve the concept, author reusable custom particles and emit them from block ambience or GeneratedBehaviorImpl. Author and
-			compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
+			compile GeneratedBehaviorImpl, inspect the finished draft, then submit. For blocks, use the declarative drop tool for ordinary
+			mining drops instead of spawning duplicate drops from Java callbacks.
 			""";
 
 	private final OpenAiClient openAi;
@@ -96,16 +97,16 @@ public final class ContentGenerationAgent {
 							call.arguments().get("supportProfile"),
 							call.arguments().has("supports") ? call.arguments().get("supports") : "missing");
 				}
-					ContentGenerationDraft.ToolExecution execution =
-							GenerationInspectionTools.execute(call.name(), call.arguments());
-					if (execution == null) {
-						execution = switch (call.name()) {
-							case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
-							case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
-							case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
-							default -> draft.execute(call.name(), call.arguments());
-						};
-					}
+				ContentGenerationDraft.ToolExecution execution =
+						GenerationInspectionTools.execute(call.name(), call.arguments());
+				if (execution == null) {
+					execution = switch (call.name()) {
+						case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
+						case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
+						case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
+						default -> draft.execute(call.name(), call.arguments());
+					};
+				}
 				if (execution.submitted() != null) {
 					return execution.submitted();
 				}
@@ -150,6 +151,9 @@ public final class ContentGenerationAgent {
 			tools.add(tool("set_block_redstone", "Set constant weak redstone and comparator output; use zero for neither.", blockRedstoneSchema()));
 			tools.add(tool("set_block_light", "Set true world light and visual emissive rendering.", lightSchema()));
 			tools.add(tool("set_block_particles", "Replace the block's particle emitters; use an empty array for none. particle is one of smoke, flame, portal, enchant, end_rod, electric_spark, glow, or custom:<id> referencing set_custom_particles.", particlesSchema()));
+			tools.add(tool("set_block_drops",
+					"Required: define one primary drop and at most one different bonus drop. Use targetKind=self with target=self for the owning block, registered_item with a namespaced item ID returned by fetch, or dynamic_content with an existing generated contentId from the recipe context or search/inspection tools. A self entry must be exactly one with fortune=none. Enable silkTouchDropsSelf for ore-like blocks. ore_like Fortune multiplies non-self material drops; use none for armor, tools, and other singular targets. explosionDecay applies Minecraft-style per-item decay. Do not duplicate these ordinary drops in Java behavior.",
+					blockDropsSchema()));
 		} else if (type == DynamicContentType.ITEM) {
 			tools.add(tool("set_texture", "Set the complete indexed 16x16 inventory texture.", textureSchema()));
 			tools.add(tool("set_item_properties",
@@ -373,6 +377,24 @@ public final class ContentGenerationAgent {
 
 		JsonObject schema = objectSchema("particles");
 		schema.getAsJsonObject("properties").add("particles", arraySchema(particle, 0, 4));
+		return schema;
+	}
+
+	private static JsonObject blockDropsSchema() {
+		JsonObject entry = objectSchema("targetKind", "target", "minCount", "maxCount", "chance", "fortune");
+		JsonObject entryProperties = entry.getAsJsonObject("properties");
+		entryProperties.add("targetKind", enumSchema("self", "registered_item", "dynamic_content"));
+		entryProperties.add("target", stringSchema("^(self|[a-z0-9_.-]+:[a-z0-9_./-]+)$"));
+		entryProperties.add("minCount", integerSchema(1, 64));
+		entryProperties.add("maxCount", integerSchema(1, 64));
+		entryProperties.add("chance", numberSchema(0.01, 1));
+		entryProperties.add("fortune", enumSchema("none", "ore_like"));
+
+		JsonObject schema = objectSchema("entries", "silkTouchDropsSelf", "explosionDecay");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("entries", arraySchema(entry, 1, 2));
+		properties.add("silkTouchDropsSelf", typeSchema("boolean"));
+		properties.add("explosionDecay", typeSchema("boolean"));
 		return schema;
 	}
 

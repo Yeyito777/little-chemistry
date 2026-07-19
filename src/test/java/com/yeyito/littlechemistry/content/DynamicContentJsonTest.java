@@ -41,7 +41,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(15, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(16, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
@@ -51,9 +51,15 @@ class DynamicContentJsonTest {
 
 	@Test
 	void roundTripPreservesDescriptionAndMythicalRarity() {
+		DynamicBlockDrops drops = new DynamicBlockDrops(List.of(
+				new DynamicDropEntry(DynamicDropTargetKind.REGISTERED_ITEM, "minecraft:amethyst_shard",
+						2, 4, 1.0, DynamicFortuneMode.ORE_LIKE),
+				new DynamicDropEntry(DynamicDropTargetKind.REGISTERED_ITEM, "minecraft:diamond",
+						1, 1, 0.1, DynamicFortuneMode.NONE)
+		), true, true);
 		DynamicBlockProperties block = new DynamicBlockProperties(
 				DynamicMaterial.CRYSTAL, 4.0F, DynamicTool.PICKAXE, true, DynamicBlockShape.FULL_CUBE,
-				true, Rarity.EPIC, 0, 0, 8, true, List.of());
+				true, Rarity.EPIC, 0, 0, 8, true, List.of(), drops);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "moon_crystal", "Moon Crystal",
 				"A crystal that holds a sliver of moonlight.", DynamicRarity.MYTHICAL,
@@ -62,19 +68,70 @@ class DynamicContentJsonTest {
 
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition));
 		DynamicContentDefinition decoded = DynamicContentJson.decode(encoded).definitions().getFirst();
-		JsonObject mainFormat = JsonParser.parseString(new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
-		mainFormat.addProperty("format", 14);
-		mainFormat.getAsJsonArray("definitions").get(0).getAsJsonObject().remove("customParticles");
-		DynamicContentDefinition mainFormatDecoded = DynamicContentJson.decode(
-				mainFormat.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+		JsonObject formatFourteen = JsonParser.parseString(
+				new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
+		formatFourteen.addProperty("format", 14);
+		JsonObject formatFourteenDefinition = formatFourteen.getAsJsonArray("definitions").get(0).getAsJsonObject();
+		formatFourteenDefinition.remove("customParticles");
+		formatFourteenDefinition.getAsJsonObject("block").remove("drops");
+		DynamicContentDefinition formatFourteenDecoded = DynamicContentJson.decode(
+				formatFourteen.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+		JsonObject dropBranchFormatFifteen = JsonParser.parseString(
+				new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
+		dropBranchFormatFifteen.addProperty("format", 15);
+		dropBranchFormatFifteen.getAsJsonArray("definitions").get(0).getAsJsonObject()
+				.remove("customParticles");
+		DynamicContentDefinition dropBranchDecoded = DynamicContentJson.decode(
+				dropBranchFormatFifteen.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
 		assertEquals("A crystal that holds a\nsliver of moonlight.", decoded.description());
 		assertEquals(DynamicRarity.MYTHICAL, decoded.rarityTier());
 		assertEquals(Rarity.EPIC, decoded.rarity());
 		assertEquals(Rarity.EPIC, decoded.block().rarity());
 		assertTrue(decoded.block().directional());
-		assertTrue(mainFormatDecoded.block().directional());
-		assertEquals(List.of(), mainFormatDecoded.customParticles());
+		assertEquals(drops, decoded.block().drops());
+		assertTrue(formatFourteenDecoded.block().directional());
+		assertEquals(List.of(), formatFourteenDecoded.customParticles());
+		assertEquals(DynamicBlockDrops.DEFAULT, formatFourteenDecoded.block().drops());
+		assertEquals(List.of(), dropBranchDecoded.customParticles());
+		assertEquals(drops, dropBranchDecoded.block().drops());
+	}
+
+	@Test
+	void legacyBlockWithoutDropRulesKeepsTheExistingSelfDrop() {
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 2.0F, DynamicTool.PICKAXE, false, DynamicBlockShape.FULL_CUBE,
+				0, 0, 0, false, List.of());
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "legacy_block", "Legacy Block", 0L, TEXTURE_HASH,
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
+		JsonObject legacy = JsonParser.parseString(new String(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)), StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 13);
+		legacy.getAsJsonArray("definitions").get(0).getAsJsonObject().getAsJsonObject("block").remove("drops");
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertEquals(DynamicBlockDrops.DEFAULT, decoded.block().drops());
+	}
+
+	@Test
+	void persistedBlockSurvivesARegisteredDropTargetModBeingRemoved() {
+		DynamicBlockDrops drops = new DynamicBlockDrops(List.of(new DynamicDropEntry(
+				DynamicDropTargetKind.REGISTERED_ITEM, "removed_mod:lost_crystal",
+				1, 1, 1.0, DynamicFortuneMode.NONE)), false, false);
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 2.0F, DynamicTool.PICKAXE, false, DynamicBlockShape.FULL_CUBE,
+				false, Rarity.COMMON, 0, 0, 0, false, List.of(), drops);
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "orphaned_ore", "Orphaned Ore", 0L, TEXTURE_HASH,
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition))).definitions().getFirst();
+
+		assertEquals("removed_mod:lost_crystal", decoded.block().drops().entries().getFirst().target());
 	}
 
 	@Test
@@ -273,8 +330,19 @@ class DynamicContentJsonTest {
 		JsonObject particleBranchFormat = JsonParser.parseString(
 				new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
 		particleBranchFormat.addProperty("format", 14);
+		JsonObject particleBranchBlock = particleBranchFormat.getAsJsonArray("definitions").get(0)
+				.getAsJsonObject().getAsJsonObject("block");
+		particleBranchBlock.remove("directional");
+		particleBranchBlock.remove("drops");
 		DynamicContentDefinition previousFormatDecoded = DynamicContentJson.decode(
 				particleBranchFormat.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+		JsonObject combinedFormatFifteen = JsonParser.parseString(
+				new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
+		combinedFormatFifteen.addProperty("format", 15);
+		combinedFormatFifteen.getAsJsonArray("definitions").get(0).getAsJsonObject()
+				.getAsJsonObject("block").remove("drops");
+		DynamicContentDefinition combinedFormatDecoded = DynamicContentJson.decode(
+				combinedFormatFifteen.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
 		assertEquals(1, decoded.customParticles().size());
 		assertEquals("embers", decoded.customParticles().getFirst().id());
@@ -283,6 +351,10 @@ class DynamicContentJsonTest {
 		assertEquals("custom:embers", decoded.block().particles().getFirst().particle());
 		assertEquals("embers", decoded.block().particles().getFirst().customParticleId());
 		assertEquals("embers", previousFormatDecoded.customParticles().getFirst().id());
+		assertFalse(previousFormatDecoded.block().directional());
+		assertEquals(DynamicBlockDrops.DEFAULT, previousFormatDecoded.block().drops());
+		assertEquals("embers", combinedFormatDecoded.customParticles().getFirst().id());
+		assertEquals(DynamicBlockDrops.DEFAULT, combinedFormatDecoded.block().drops());
 	}
 
 	@Test

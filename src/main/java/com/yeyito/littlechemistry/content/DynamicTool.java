@@ -36,6 +36,12 @@ public enum DynamicTool {
 	}
 
 	public boolean matches(ItemStack stack) {
+		if (this == NONE) return true;
+		DynamicContentDefinition generated = DynamicContentObjects.CONTENT_ID == null
+				? null : DynamicContentObjects.definition(stack);
+		if (generated != null && generated.item() != null && generated.item().tool() != NONE) {
+			return generated.item().tool() == this;
+		}
 		return switch (this) {
 			case NONE -> true;
 			case PICKAXE -> stack.is(ItemTags.PICKAXES);
