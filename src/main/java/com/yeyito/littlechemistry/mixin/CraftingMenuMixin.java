@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.mixin;
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.crafting.AiCraftingMenuAccess;
 import com.yeyito.littlechemistry.crafting.LockedCraftingSlot;
+import com.yeyito.littlechemistry.crafting.PortableCraftingAccess;
 import com.yeyito.littlechemistry.crafting.SharedCraftingContainer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -25,11 +26,13 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(CraftingMenu.class)
 public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements AiCraftingMenuAccess {
 	@Unique private @Nullable SharedCraftingContainer littleChemistry$table;
 	@Unique private @Nullable ServerLevel littleChemistry$level;
+	@Unique private boolean littleChemistry$portable;
 	@Unique private int littleChemistry$clientRecipeState;
 
 	protected CraftingMenuMixin(MenuType<?> menuType, int containerId, int width, int height) {
@@ -40,13 +43,21 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 			at = @At("TAIL"))
 	private void littleChemistry$useSharedTable(int containerId, Inventory inventory, ContainerLevelAccess access,
 			CallbackInfo callback) {
-		access.execute((level, pos) -> {
-			AiCraftingManager manager = AiCraftingManager.active();
-			if (level instanceof ServerLevel serverLevel && manager != null) {
+		AiCraftingManager manager = AiCraftingManager.active();
+		if (access instanceof PortableCraftingAccess portableAccess) {
+			littleChemistry$portable = true;
+			if (portableAccess.level() instanceof ServerLevel serverLevel && manager != null) {
 				littleChemistry$level = serverLevel;
-				littleChemistry$table = manager.table(serverLevel, pos);
+				littleChemistry$table = manager.portableTable();
 			}
-		});
+		} else {
+			access.execute((level, pos) -> {
+				if (level instanceof ServerLevel serverLevel && manager != null) {
+					littleChemistry$level = serverLevel;
+					littleChemistry$table = manager.table(serverLevel, pos);
+				}
+			});
+		}
 
 		if (littleChemistry$table != null) {
 			((AbstractCraftingMenuAccessor)this).littleChemistry$setCraftSlots(littleChemistry$table);
@@ -98,6 +109,7 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 	private void littleChemistry$keepSharedContents(Player player, CallbackInfo callback) {
 		if (littleChemistry$table == null) return;
 		littleChemistry$table.removeViewer((CraftingMenu)(Object)this);
+		if (littleChemistry$portable) return;
 		if (player instanceof ServerPlayer serverPlayer) {
 			ItemStack carried = this.getCarried();
 			if (!carried.isEmpty()) {
@@ -109,6 +121,12 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 			}
 		}
 		callback.cancel();
+	}
+
+	@Inject(method = "stillValid", at = @At("HEAD"), cancellable = true)
+	private void littleChemistry$keepPortableMenuValid(Player player,
+			CallbackInfoReturnable<Boolean> result) {
+		if (littleChemistry$portable) result.setReturnValue(true);
 	}
 
 	@Override

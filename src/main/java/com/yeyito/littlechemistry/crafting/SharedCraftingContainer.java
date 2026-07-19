@@ -7,21 +7,23 @@ import net.minecraft.world.entity.player.StackedItemContents;
 import net.minecraft.world.inventory.CraftingContainer;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.item.ItemStack;
+import org.jspecify.annotations.Nullable;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 
-/** Server-owned inventory shared by every menu viewing one physical table. */
+/** Server-owned grid for either a shared physical table or one portable menu. */
 public final class SharedCraftingContainer implements CraftingContainer {
 	private final AiCraftingManager owner;
-	private final AiCraftingManager.TableKey key;
+	private final AiCraftingManager.@Nullable TableKey key;
 	private final NonNullList<ItemStack> items = NonNullList.withSize(9, ItemStack.EMPTY);
 	private final Set<CraftingMenu> viewers = Collections.newSetFromMap(new IdentityHashMap<>());
 	private RecipeSignature lockSignature;
 
-	SharedCraftingContainer(AiCraftingManager owner, AiCraftingManager.TableKey key, List<ItemStack> initialItems) {
+	private SharedCraftingContainer(AiCraftingManager owner, AiCraftingManager.@Nullable TableKey key,
+			List<ItemStack> initialItems) {
 		this.owner = owner;
 		this.key = key;
 		for (int i = 0; i < Math.min(items.size(), initialItems.size()); i++) {
@@ -29,8 +31,22 @@ public final class SharedCraftingContainer implements CraftingContainer {
 		}
 	}
 
+	static SharedCraftingContainer physical(AiCraftingManager owner, AiCraftingManager.TableKey key,
+			List<ItemStack> initialItems) {
+		return new SharedCraftingContainer(owner, key, initialItems);
+	}
+
+	static SharedCraftingContainer portable(AiCraftingManager owner) {
+		return new SharedCraftingContainer(owner, null, List.of());
+	}
+
 	AiCraftingManager.TableKey key() {
+		if (key == null) throw new IllegalStateException("Portable crafting grids do not have a table key");
 		return key;
+	}
+
+	public boolean isPortable() {
+		return key == null;
 	}
 
 	public boolean isLocked() {

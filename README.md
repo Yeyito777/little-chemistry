@@ -7,10 +7,11 @@ The goal is simple: when a player tries to craft something whose recipe does not
 The current first milestone provides:
 
 - A dedicated **Little Chemistry** creative-mode tab.
-- One item: `little_chemistry:wand_of_creation`.
+- Three utility items: the creation and deletion wands plus `little_chemistry:crafting_table_on_a_stick`.
 - A blue/purple wand based on Minecraft's stick texture.
 - Right-clicking the wand opens an in-game creation screen for naming a new item, block, or armor piece.
 - A red-orange **Wand of Deletion** opens a multi-select menu for removing generated definitions.
+- A portable **Crafting Table on a Stick** opens a full 3×3 crafting grid with Little Chemistry's **Make Recipe** action.
 - Image-generated chemistry artwork for the mod and Prism instance branding.
 - Server-owned dynamic items, blocks, and armor, including synchronized generated textures.
 - A private in-game AI command backed by `gpt-5.6-sol` in fast service mode:
@@ -20,6 +21,10 @@ The current first milestone provides:
   ```
 
 Only the invoking player receives the answer. Requests offer the model no tools and use medium reasoning.
+
+## Crafting Table on a Stick
+
+Place one crafting table diagonally above one stick in any crafting grid to make a **Crafting Table on a Stick**. Use it to open a portable 3×3 crafting table without placing a block. The portable grid supports vanilla recipes, cached Little Chemistry recipes, and the same **Make Recipe** action used to ask AI to invent a result for an otherwise invalid ingredient layout. Ingredients are returned to the player when the portable menu closes, including when a generation request is still running; the shared generation job continues and the completed recipe can be used afterward.
 
 ## AI authentication
 

@@ -1,6 +1,8 @@
 {
   "button.little_chemistry.make_recipe": "Make Recipe",
   "button.little_chemistry.making_recipe": "Making Recipe…",
+  "container.little_chemistry.crafting_table_on_a_stick": "Crafting Table on a Stick",
+  "item.little_chemistry.crafting_table_on_a_stick": "Crafting Table on a Stick",
   "item.little_chemistry.wand_of_creation": "Wand of Creation",
   "item.little_chemistry.wand_of_deletion": "Wand of Deletion",
   "itemGroup.little_chemistry.main": "Little Chemistry",

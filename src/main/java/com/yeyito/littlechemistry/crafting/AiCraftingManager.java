@@ -52,7 +52,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-/** Owns persistent table inventories, cached AI recipes, and active recipe jobs. */
+/** Owns physical and portable crafting grids, cached AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 1;
 	private static final int RECIPES_FORMAT = 2;
@@ -122,7 +122,11 @@ public final class AiCraftingManager {
 
 	public SharedCraftingContainer table(ServerLevel level, BlockPos pos) {
 		TableKey key = TableKey.of(level, pos);
-		return tables.computeIfAbsent(key, ignored -> new SharedCraftingContainer(this, key, List.of()));
+		return tables.computeIfAbsent(key, ignored -> SharedCraftingContainer.physical(this, key, List.of()));
+	}
+
+	public SharedCraftingContainer portableTable() {
+		return SharedCraftingContainer.portable(this);
 	}
 
 	public boolean isLocked(ServerLevel level, BlockPos pos) {
@@ -144,7 +148,7 @@ public final class AiCraftingManager {
 
 	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table) {
 		if (table.isLocked()) {
-			player.sendSystemMessage(error("This crafting table is already waiting for the AI."));
+			player.sendSystemMessage(error("This crafting grid is already waiting for the AI."));
 			return false;
 		}
 		RecipeSignature signature = RecipeSignature.capture(table);
@@ -203,11 +207,17 @@ public final class AiCraftingManager {
 	}
 
 	public void tableContentsChanged(SharedCraftingContainer table) {
-		tablesDirty = true;
+		if (!table.isPortable()) tablesDirty = true;
 		tableViewStateChanged(table);
 	}
 
 	void tableViewerClosed(SharedCraftingContainer table) {
+		if (table.isPortable()) {
+			for (ActiveJob job : jobs.values()) job.tables.remove(table);
+			RecipeSignature lockSignature = table.lockSignature();
+			if (lockSignature != null) table.unlock(lockSignature);
+			return;
+		}
 		if (!table.hasViewers() && !table.isLocked() && table.isEmpty() && tables.remove(table.key(), table)) {
 			tablesDirty = true;
 		}
@@ -328,7 +338,7 @@ public final class AiCraftingManager {
 			for (JsonElement encodedItem : encodedItems) {
 				items.add(ItemStack.OPTIONAL_CODEC.parse(ops, encodedItem).getOrThrow(IOException::new));
 			}
-			tables.put(key, new SharedCraftingContainer(this, key, items));
+			tables.put(key, SharedCraftingContainer.physical(this, key, items));
 		}
 	}
 
