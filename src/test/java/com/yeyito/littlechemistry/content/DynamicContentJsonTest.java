@@ -236,6 +236,62 @@ class DynamicContentJsonTest {
 		assertEquals(14.0F, decoded.blockModel().elements().getFirst().toX());
 	}
 
+	@Test
+	void roundTripPreservesAuthoredParticlesAndCustomEmitterReferences() throws Exception {
+		DynamicTextureSpec firstFrame = rectangularTexture(8, 8, "00000000", "FF8020FF");
+		DynamicTextureSpec secondFrame = rectangularTexture(8, 8, "00000000", "FFF0A080");
+		DynamicParticleDefinition particle = new DynamicParticleDefinition(
+				"embers",
+				List.of(
+						new DynamicParticleFrame(DynamicTextureAsset.sha256(firstFrame.renderPng()), firstFrame),
+						new DynamicParticleFrame(DynamicTextureAsset.sha256(secondFrame.renderPng()), secondFrame)),
+				2, true, 30, 0.2F, 0.05F, "FFFFFFFF", "FF804000",
+				-0.1F, 0.96F, false, true, 0.04F);
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.CRYSTAL, 2.0F, DynamicTool.PICKAXE, false, DynamicBlockShape.FULL_CUBE,
+				0, 0, 7, true,
+				List.of(new DynamicParticleEmitter("custom:embers", 0.1, 2, 0.04, true)));
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "ember_crystal", "Ember Crystal", "A crystal shedding tiny embers.",
+				DynamicRarity.COMMON, 0L, TEXTURE_HASH, null, null, null,
+				block, null, null, DynamicBehaviorSource.completeLegacySource(null), null, List.of(particle));
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 4, List.of(definition))).definitions().getFirst();
+
+		assertEquals(1, decoded.customParticles().size());
+		assertEquals("embers", decoded.customParticles().getFirst().id());
+		assertEquals(2, decoded.customParticles().getFirst().frames().size());
+		assertEquals("FF804000", decoded.customParticles().getFirst().endColor());
+		assertEquals("custom:embers", decoded.block().particles().getFirst().particle());
+		assertEquals("embers", decoded.block().particles().getFirst().customParticleId());
+	}
+
+	@Test
+	void formatThirteenVanillaParticleEmitterRemainsLoadable() {
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 1.0F, DynamicTool.NONE, false, DynamicBlockShape.FULL_CUBE,
+				0, 0, 0, false,
+				List.of(new DynamicParticleEmitter(DynamicParticleType.SMOKE, 0.05, 1, 0.02, false)));
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "smoky_stone", "Smoky Stone", 0L, TEXTURE_HASH,
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
+		JsonObject legacy = JsonParser.parseString(new String(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)), StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 13);
+		JsonObject legacyDefinition = legacy.getAsJsonArray("definitions").get(0).getAsJsonObject();
+		legacyDefinition.remove("customParticles");
+		JsonObject emitter = legacyDefinition.getAsJsonObject("block").getAsJsonArray("particles")
+				.get(0).getAsJsonObject();
+		emitter.addProperty("type", emitter.remove("particle").getAsString());
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertEquals(DynamicParticleType.SMOKE, decoded.block().particles().getFirst().type());
+		assertEquals(List.of(), decoded.customParticles());
+	}
+
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
 		return new DynamicContentDefinition(
 				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null,

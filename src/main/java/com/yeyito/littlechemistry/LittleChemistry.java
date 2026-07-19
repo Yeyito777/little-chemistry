@@ -15,6 +15,7 @@ import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
 import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
 import com.yeyito.littlechemistry.network.OpenDeletionScreenPayload;
+import com.yeyito.littlechemistry.particle.DynamicParticleRegistry;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -69,6 +70,7 @@ public final class LittleChemistry implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		DynamicContentObjects.register();
+		DynamicParticleRegistry.register();
 		LittleChemistryCommands.register();
 		PayloadTypeRegistry.clientboundPlay().registerLarge(
 				DynamicContentPayload.TYPE,

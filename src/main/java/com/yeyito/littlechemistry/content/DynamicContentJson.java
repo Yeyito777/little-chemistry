@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 13;
+	public static final int CURRENT_FORMAT = 14;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -46,6 +46,7 @@ public final class DynamicContentJson {
 				entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
 			}
 			if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
+			entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
 			switch (definition.type()) {
 				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
 				case ITEM -> entry.add("item", encodeItem(definition.item()));
@@ -116,6 +117,8 @@ public final class DynamicContentJson {
 					: DynamicRarity.fromProperties(block, item, armor);
 			DynamicBlockModel blockModel = type == DynamicContentType.BLOCK && format >= 10 && entry.has("blockModel")
 					? decodeBlockModel(entry.getAsJsonObject("blockModel")) : null;
+			List<DynamicParticleDefinition> customParticles = format >= 14 && entry.has("customParticles")
+					? decodeCustomParticles(entry.getAsJsonArray("customParticles")) : List.of();
 			String behaviorSource;
 			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
@@ -135,7 +138,8 @@ public final class DynamicContentJson {
 			}
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
-					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+					customParticles
 			));
 		}
 		validateUniqueNames(definitions);
@@ -159,6 +163,66 @@ public final class DynamicContentJson {
 		List<String> rows = new ArrayList<>();
 		encoded.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
 		return new DynamicTextureSpec(palette, rows);
+	}
+
+	private static JsonArray encodeCustomParticles(List<DynamicParticleDefinition> particles) {
+		JsonArray encoded = new JsonArray();
+		for (DynamicParticleDefinition particle : particles) {
+			JsonObject value = new JsonObject();
+			value.addProperty("id", particle.id());
+			JsonArray frames = new JsonArray();
+			for (DynamicParticleFrame frame : particle.frames()) {
+				JsonObject encodedFrame = new JsonObject();
+				encodedFrame.addProperty("hash", frame.textureHash());
+				encodedFrame.add("texture", encodeTexture(frame.texture()));
+				frames.add(encodedFrame);
+			}
+			value.add("frames", frames);
+			value.addProperty("frameTicks", particle.frameTicks());
+			value.addProperty("loop", particle.loop());
+			value.addProperty("lifetimeTicks", particle.lifetimeTicks());
+			value.addProperty("startSize", particle.startSize());
+			value.addProperty("endSize", particle.endSize());
+			value.addProperty("startColor", particle.startColor());
+			value.addProperty("endColor", particle.endColor());
+			value.addProperty("gravity", particle.gravity());
+			value.addProperty("friction", particle.friction());
+			value.addProperty("collision", particle.collision());
+			value.addProperty("emissive", particle.emissive());
+			value.addProperty("spin", particle.spin());
+			encoded.add(value);
+		}
+		return encoded;
+	}
+
+	private static List<DynamicParticleDefinition> decodeCustomParticles(JsonArray encoded) {
+		List<DynamicParticleDefinition> particles = new ArrayList<>();
+		for (JsonElement element : encoded) {
+			JsonObject value = element.getAsJsonObject();
+			List<DynamicParticleFrame> frames = new ArrayList<>();
+			for (JsonElement frameElement : value.getAsJsonArray("frames")) {
+				JsonObject frame = frameElement.getAsJsonObject();
+				frames.add(new DynamicParticleFrame(
+						frame.get("hash").getAsString(), decodeTexture(frame.getAsJsonObject("texture"))));
+			}
+			particles.add(new DynamicParticleDefinition(
+					value.get("id").getAsString(),
+					frames,
+					value.get("frameTicks").getAsInt(),
+					value.get("loop").getAsBoolean(),
+					value.get("lifetimeTicks").getAsInt(),
+					value.get("startSize").getAsFloat(),
+					value.get("endSize").getAsFloat(),
+					value.get("startColor").getAsString(),
+					value.get("endColor").getAsString(),
+					value.get("gravity").getAsFloat(),
+					value.get("friction").getAsFloat(),
+					value.get("collision").getAsBoolean(),
+					value.get("emissive").getAsBoolean(),
+					value.get("spin").getAsFloat()
+			));
+		}
+		return List.copyOf(particles);
 	}
 
 	private static JsonObject encodeBlockModel(DynamicBlockModel model) {
@@ -290,7 +354,7 @@ public final class DynamicContentJson {
 		JsonArray particles = new JsonArray();
 		for (DynamicParticleEmitter emitter : block.particles()) {
 			JsonObject particle = new JsonObject();
-			particle.addProperty("type", emitter.type().serializedName());
+			particle.addProperty("particle", emitter.particle());
 			particle.addProperty("chancePerTick", emitter.chancePerTick());
 			particle.addProperty("count", emitter.count());
 			particle.addProperty("velocity", emitter.velocity());
@@ -308,7 +372,8 @@ public final class DynamicContentJson {
 			for (JsonElement element : encodedParticles) {
 				JsonObject particle = element.getAsJsonObject();
 				particles.add(new DynamicParticleEmitter(
-						DynamicParticleType.parse(particle.get("type").getAsString()),
+						particle.has("particle") ? particle.get("particle").getAsString()
+								: particle.get("type").getAsString(),
 						particle.get("chancePerTick").getAsDouble(),
 						particle.get("count").getAsInt(),
 						particle.get("velocity").getAsDouble(),

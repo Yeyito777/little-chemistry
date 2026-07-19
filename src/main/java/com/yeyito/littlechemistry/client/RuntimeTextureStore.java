@@ -5,6 +5,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicParticleDefinition;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
@@ -33,10 +34,12 @@ public final class RuntimeTextureStore {
 	private static final Map<String, List<Identifier>> loadedArmorTextures = new HashMap<>();
 	private static final Map<String, boolean[]> opaquePixels = new HashMap<>();
 	private static final Map<String, CompletableFuture<Void>> loadingTextures = new HashMap<>();
+	private static final Map<String, Integer> retiredParticleTextureTicks = new HashMap<>();
 	private static Set<String> expectedHashes = Set.of();
 	private static Set<String> expectedItemHashes = Set.of();
 	private static Set<String> expectedExtrudedItemHashes = Set.of();
 	private static Set<String> expectedArmorHashes = Set.of();
+	private static Set<String> expectedParticleHashes = Set.of();
 	private static UUID activeServer;
 
 	private RuntimeTextureStore() {
@@ -54,8 +57,16 @@ public final class RuntimeTextureStore {
 			List<DynamicContentDefinition> definitions) throws IOException {
 		beginServer(client, serverId);
 		DynamicParticleTextures.clear();
-		expectedItemHashes = definitions.stream().flatMap(definition -> definition.renderTextureHashes().stream())
+		Set<String> previousParticleHashes = expectedParticleHashes;
+		expectedParticleHashes = definitions.stream()
+				.flatMap(definition -> definition.customParticleTextureHashes().stream())
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		Set<String> ordinaryAndParticleHashes = new HashSet<>();
+		for (DynamicContentDefinition definition : definitions) {
+			ordinaryAndParticleHashes.addAll(definition.renderTextureHashes());
+		}
+		ordinaryAndParticleHashes.addAll(expectedParticleHashes);
+		expectedItemHashes = Set.copyOf(ordinaryAndParticleHashes);
 		expectedExtrudedItemHashes = definitions.stream()
 				.filter(definition -> definition.type() != DynamicContentType.BLOCK)
 				.map(DynamicContentDefinition::textureHash)
@@ -67,10 +78,17 @@ public final class RuntimeTextureStore {
 		Set<String> allExpectedHashes = new HashSet<>(expectedItemHashes);
 		allExpectedHashes.addAll(expectedArmorHashes);
 		expectedHashes = Set.copyOf(allExpectedHashes);
+		retiredParticleTextureTicks.keySet().removeAll(expectedItemHashes);
 		var loadedIterator = loadedTextures.entrySet().iterator();
 		while (loadedIterator.hasNext()) {
 			var entry = loadedIterator.next();
 			if (expectedItemHashes.contains(entry.getKey())) continue;
+			if (previousParticleHashes.contains(entry.getKey())
+					|| retiredParticleTextureTicks.containsKey(entry.getKey())) {
+				retiredParticleTextureTicks.putIfAbsent(
+						entry.getKey(), DynamicParticleDefinition.MAX_LIFETIME_TICKS);
+				continue;
+			}
 			client.getTextureManager().release(entry.getValue());
 			opaquePixels.remove(entry.getKey());
 			loadedIterator.remove();
@@ -88,7 +106,7 @@ public final class RuntimeTextureStore {
 		List<String> hashesToCheck = new ArrayList<>();
 		for (String hash : expectedHashes) {
 			boolean itemReady = !expectedItemHashes.contains(hash) || loadedTextures.containsKey(hash)
-					&& (!expectedExtrudedItemHashes.contains(hash) || opaquePixels.containsKey(hash));
+					&& (!expectedExtrudedItemHashes.contains(hash) || opaquePixels.get(hash) != null);
 			boolean armorReady = !expectedArmorHashes.contains(hash) || loadedArmorTextures.containsKey(hash);
 			if ((itemReady && armorReady) || loadingTextures.containsKey(hash)) {
 				continue;
@@ -187,6 +205,26 @@ public final class RuntimeTextureStore {
 		return opaquePixels.get(hash);
 	}
 
+	public static void tick(Minecraft client) {
+		var iterator = retiredParticleTextureTicks.entrySet().iterator();
+		while (iterator.hasNext()) {
+			var entry = iterator.next();
+			if (expectedItemHashes.contains(entry.getKey())) {
+				iterator.remove();
+				continue;
+			}
+			int remaining = entry.getValue() - 1;
+			if (remaining > 0) {
+				entry.setValue(remaining);
+				continue;
+			}
+			Identifier texture = loadedTextures.remove(entry.getKey());
+			if (texture != null) client.getTextureManager().release(texture);
+			opaquePixels.remove(entry.getKey());
+			iterator.remove();
+		}
+	}
+
 	public static void clear(Minecraft client) {
 		if (!client.isSameThread()) {
 			client.execute(() -> clear(client));
@@ -204,10 +242,12 @@ public final class RuntimeTextureStore {
 		loadedArmorTextures.clear();
 		opaquePixels.clear();
 		loadingTextures.clear();
+		retiredParticleTextureTicks.clear();
 		expectedHashes = Set.of();
 		expectedItemHashes = Set.of();
 		expectedExtrudedItemHashes = Set.of();
 		expectedArmorHashes = Set.of();
+		expectedParticleHashes = Set.of();
 		activeServer = null;
 	}
 
@@ -227,7 +267,7 @@ public final class RuntimeTextureStore {
 		boolean extrudedItem = expectedExtrudedItemHashes.contains(hash);
 		boolean armor = expectedArmorHashes.contains(hash);
 		if ((!item || loadedTextures.containsKey(hash)
-				&& (!extrudedItem || opaquePixels.containsKey(hash)))
+				&& (!extrudedItem || opaquePixels.get(hash) != null))
 				&& (!armor || loadedArmorTextures.containsKey(hash))) {
 			return CompletableFuture.completedFuture(null);
 		}
@@ -301,7 +341,8 @@ public final class RuntimeTextureStore {
 							decoded.image()
 					));
 					loadedTextures.put(hash, textureId);
-					opaquePixels.put(hash, decoded.opaquePixels());
+					if (decoded.opaquePixels() != null) opaquePixels.put(hash, decoded.opaquePixels());
+					else opaquePixels.remove(hash);
 				}
 
 				if (decoded.humanoid() != null) {
@@ -520,6 +561,11 @@ public final class RuntimeTextureStore {
 			}
 			if (hash.equals(definition.armorDisplayTextureHash()) && definition.armorDisplayTexture() != null) {
 				return definition.armorDisplayTexture().renderPng();
+			}
+			for (var particle : definition.customParticles()) {
+				for (var frame : particle.frames()) {
+					if (hash.equals(frame.textureHash())) return frame.texture().renderPng();
+				}
 			}
 		}
 		return null;

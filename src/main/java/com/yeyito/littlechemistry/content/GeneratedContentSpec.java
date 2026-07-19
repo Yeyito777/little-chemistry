@@ -1,5 +1,7 @@
 package com.yeyito.littlechemistry.content;
 
+import java.util.List;
+
 public record GeneratedContentSpec(
 		DynamicTextureSpec texture,
 		DynamicBlockProperties block,
@@ -9,19 +11,20 @@ public record GeneratedContentSpec(
 		String behaviorSource,
 		DynamicBlockModel blockModel,
 		DynamicRarity rarityTier,
-		String description
+		String description,
+		List<DynamicParticleDefinition> customParticles
 ) {
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
 		this(texture, block, item, null, null, behaviorSource, null,
-				DynamicRarity.fromProperties(block, item, null), "");
+				DynamicRarity.fromProperties(block, item, null), "", List.of());
 	}
 
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor,
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, null,
-				DynamicRarity.fromProperties(block, item, armor), "");
+				DynamicRarity.fromProperties(block, item, armor), "", List.of());
 	}
 
 	/** Compatibility constructor for callers predating generated descriptions. */
@@ -30,7 +33,16 @@ public record GeneratedContentSpec(
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
 			DynamicBlockModel blockModel) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				DynamicRarity.fromProperties(block, item, armor), "");
+				DynamicRarity.fromProperties(block, item, armor), "", List.of());
+	}
+
+	/** Compatibility constructor for callers predating generated custom particles. */
+	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor,
+			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
+			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description) {
+		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
+				rarityTier, description, List.of());
 	}
 
 	public GeneratedContentSpec {
@@ -42,6 +54,7 @@ public record GeneratedContentSpec(
 			throw new IllegalArgumentException("Generated content must contain exactly one property kind");
 		}
 		if (rarityTier == null) throw new IllegalArgumentException("Generated content requires a rarity");
+		customParticles = DynamicParticleDefinition.validateLibrary(customParticles);
 		if (block != null) {
 			if (blockModel == null) throw new IllegalArgumentException("Generated blocks require a visual model");
 			blockModel.validateFor(block.shape());
@@ -68,5 +81,6 @@ public record GeneratedContentSpec(
 		if (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("Generated behavior source is invalid");
 		}
+		DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
 	}
 }

@@ -15,9 +15,10 @@ public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
 			Create the requested Minecraft item, block, or armor piece with the tools. For crafting requests, derive a cohesive result
-			from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Fetch similar vanilla content
-			for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. Complete every
-			applicable property and texture, author and compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
+				from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Fetch similar vanilla content
+				for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. Complete every
+				applicable property and texture. When distinctive effects improve the concept, author reusable custom particles and emit them
+				from block ambience or GeneratedBehaviorImpl. Author and compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
 			""";
 
 	private final OpenAiClient openAi;
@@ -132,6 +133,9 @@ public final class ContentGenerationAgent {
 						? "Fetch indexed 16x16 vanilla block-texture references. Use one or more as references in set_block_model; generated model textures may independently use other dimensions."
 						: "Fetch set_texture-compatible palettes and 16x16 rows from similar vanilla Minecraft item icons or armor item icons.",
 				minecraftContentFetchSchema()));
+		tools.add(tool("set_custom_particles",
+				"Replace the content's reusable AI-authored particle library with zero to four definitions. Each definition has 1-4 square indexed frames, linear size/color transitions, animation, and bounded physics. Block ambient emitters reference custom:<id>. Server-side Java behavior emits a declared string-literal local ID with com.yeyito.littlechemistry.particle.DynamicParticles.spawn.",
+				customParticlesSchema()));
 		if (type == DynamicContentType.BLOCK) {
 			tools.add(tool("set_block_properties",
 					"Choose gameplay properties and the visual/physical model category. Presets are full_cube, slab, no_collision, star, fence, cross, and torch. Use custom for an AI-authored model made from axis-aligned cuboids.",
@@ -141,7 +145,7 @@ public final class ContentGenerationAgent {
 					blockModelSchema()));
 			tools.add(tool("set_block_redstone", "Set constant weak redstone and comparator output; use zero for neither.", blockRedstoneSchema()));
 			tools.add(tool("set_block_light", "Set true world light and visual emissive rendering.", lightSchema()));
-			tools.add(tool("set_block_particles", "Replace the block's particle emitters; use an empty array for none.", particlesSchema()));
+			tools.add(tool("set_block_particles", "Replace the block's particle emitters; use an empty array for none. particle is one of smoke, flame, portal, enchant, end_rod, electric_spark, glow, or custom:<id> referencing set_custom_particles.", particlesSchema()));
 		} else if (type == DynamicContentType.ITEM) {
 			tools.add(tool("set_texture", "Set the complete indexed 16x16 inventory texture.", textureSchema()));
 			tools.add(tool("set_item_properties",
@@ -330,15 +334,45 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject particlesSchema() {
-		JsonObject emitter = objectSchema("type", "chancePerTick", "count", "velocity", "region");
+		JsonObject emitter = objectSchema("particle", "chancePerTick", "count", "velocity", "region");
 		JsonObject properties = emitter.getAsJsonObject("properties");
-		properties.add("type", enumSchema("smoke", "flame", "portal", "enchant", "end_rod", "electric_spark", "glow"));
+		properties.add("particle", stringSchema("^(smoke|flame|portal|enchant|end_rod|electric_spark|glow|custom:[a-z][a-z0-9_]{0,31})$"));
 		properties.add("chancePerTick", numberSchema(0, 0.25));
 		properties.add("count", integerSchema(1, 4));
 		properties.add("velocity", numberSchema(0, 0.2));
 		properties.add("region", enumSchema("top", "all"));
 		JsonObject schema = objectSchema("emitters");
 		schema.getAsJsonObject("properties").add("emitters", arraySchema(emitter, 0, 2));
+		return schema;
+	}
+
+	private static JsonObject customParticlesSchema() {
+		JsonObject frame = objectSchema("palette", "rows");
+		JsonObject frameProperties = frame.getAsJsonObject("properties");
+		frameProperties.add("palette", arraySchema(stringSchema("^[0-9A-Fa-f]{8}$"), 1, 16));
+		frameProperties.add("rows", arraySchema(stringSchema("^[0-9A-Fa-f]{1,32}$"), 1, 32));
+
+		JsonObject particle = objectSchema("id", "frames", "frameTicks", "loop", "lifetimeTicks",
+				"startSize", "endSize", "startColor", "endColor", "gravity", "friction",
+				"collision", "emissive", "spin");
+		JsonObject properties = particle.getAsJsonObject("properties");
+		properties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		properties.add("frames", arraySchema(frame, 1, 4));
+		properties.add("frameTicks", integerSchema(1, 40));
+		properties.add("loop", typeSchema("boolean"));
+		properties.add("lifetimeTicks", integerSchema(1, 400));
+		properties.add("startSize", numberSchema(0.01, 4));
+		properties.add("endSize", numberSchema(0.01, 4));
+		properties.add("startColor", stringSchema("^[0-9A-Fa-f]{8}$"));
+		properties.add("endColor", stringSchema("^[0-9A-Fa-f]{8}$"));
+		properties.add("gravity", numberSchema(-2, 2));
+		properties.add("friction", numberSchema(0, 1));
+		properties.add("collision", typeSchema("boolean"));
+		properties.add("emissive", typeSchema("boolean"));
+		properties.add("spin", numberSchema(-1, 1));
+
+		JsonObject schema = objectSchema("particles");
+		schema.getAsJsonObject("properties").add("particles", arraySchema(particle, 0, 4));
 		return schema;
 	}
 

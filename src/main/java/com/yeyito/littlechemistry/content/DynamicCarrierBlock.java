@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.content;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
+import com.yeyito.littlechemistry.particle.DynamicParticleOptions;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleOptions;
@@ -349,11 +350,15 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 				double y = position.getY() + (emitter.topSurface() ? 1.02 : random.nextDouble());
 				double z = position.getZ() + random.nextDouble();
 				double velocity = emitter.velocity();
-				ParticleOptions particle = emitter.type().particle();
-				level.addParticle(particle, x, y, z,
-						(random.nextDouble() - 0.5) * velocity,
-						velocity,
-						(random.nextDouble() - 0.5) * velocity);
+				double velocityX = (random.nextDouble() - 0.5) * velocity;
+				double velocityZ = (random.nextDouble() - 0.5) * velocity;
+				if (emitter.custom()) {
+					level.addParticle(DynamicParticleOptions.of(definition, emitter.customParticleId()),
+							x, y, z, velocityX, velocity, velocityZ);
+				} else {
+					ParticleOptions particle = emitter.type().particle();
+					level.addParticle(particle, x, y, z, velocityX, velocity, velocityZ);
+				}
 			}
 		}
 	}

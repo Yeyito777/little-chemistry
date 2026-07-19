@@ -21,6 +21,11 @@ public final class DynamicBehaviorSource {
 	private static final Pattern PASS_RETURN = Pattern.compile(
 			"return(?:net\\.minecraft\\.world\\.)?InteractionResult\\.PASS;");
 	private static final Pattern IDENTIFIER_RETURN = Pattern.compile("return([A-Za-z_$][A-Za-z0-9_$]*);");
+	private static final Pattern DYNAMIC_PARTICLE_SPAWN = Pattern.compile(
+			"\\bDynamicParticles\\s*\\.\\s*spawn\\s*\\(");
+	private static final Pattern STATIC_DYNAMIC_PARTICLE_IMPORT = Pattern.compile(
+			"\\bimport\\s+static\\s+com\\.yeyito\\.littlechemistry\\.particle\\.DynamicParticles\\.spawn\\s*;");
+	private static final Pattern PARTICLE_ID_LITERAL = Pattern.compile("\"([a-z][a-z0-9_]{0,31})\"");
 	private static final ConcurrentHashMap<String, Set<DynamicBehaviorCapability>> CAPABILITY_CACHE =
 			new ConcurrentHashMap<>();
 
@@ -78,6 +83,41 @@ public final class DynamicBehaviorSource {
 
 	public static boolean supports(String source, DynamicBehaviorCapability capability) {
 		return capabilities(source).contains(capability);
+	}
+
+	/**
+	 * Returns and validates local particle IDs used by generated calls to {@code DynamicParticles.spawn}.
+	 * Requiring a literal ID makes draft validation deterministic when particle definitions are replaced.
+	 */
+	public static List<String> referencedCustomParticleIds(String source) {
+		if (source == null || source.isBlank()) return List.of();
+		String masked = maskNonCode(source);
+		if (STATIC_DYNAMIC_PARTICLE_IMPORT.matcher(masked).find()) {
+			throw new IllegalArgumentException(
+					"Call custom particles through DynamicParticles.spawn instead of a static import");
+		}
+		List<String> ids = new ArrayList<>();
+		Matcher calls = DYNAMIC_PARTICLE_SPAWN.matcher(masked);
+		while (calls.find()) {
+			int openingParenthesis = masked.indexOf('(', calls.start());
+			int closingParenthesis = matchingDelimiter(masked, openingParenthesis, '(', ')');
+			if (closingParenthesis < 0) {
+				throw new IllegalArgumentException("DynamicParticles.spawn call is incomplete");
+			}
+			List<ArgumentRegion> arguments = argumentRegions(masked, openingParenthesis, closingParenthesis);
+			if (arguments.size() < 3) {
+				throw new IllegalArgumentException("DynamicParticles.spawn requires a particle ID argument");
+			}
+			ArgumentRegion particleId = arguments.get(2);
+			Matcher literal = PARTICLE_ID_LITERAL.matcher(
+					source.substring(particleId.start(), particleId.end()).strip());
+			if (!literal.matches()) {
+				throw new IllegalArgumentException(
+						"DynamicParticles.spawn particle ID must be a literal local ID declared by set_custom_particles");
+			}
+			ids.add(literal.group(1));
+		}
+		return List.copyOf(ids);
 	}
 
 	private static Set<DynamicBehaviorCapability> inspectCapabilities(String source) {
@@ -184,6 +224,24 @@ public final class DynamicBehaviorSource {
 		return -1;
 	}
 
+	private static List<ArgumentRegion> argumentRegions(String masked, int openingParenthesis,
+			int closingParenthesis) {
+		List<ArgumentRegion> arguments = new ArrayList<>();
+		int start = openingParenthesis + 1;
+		int depth = 0;
+		for (int index = start; index < closingParenthesis; index++) {
+			char value = masked.charAt(index);
+			if (value == '(' || value == '[' || value == '{') depth++;
+			else if (value == ')' || value == ']' || value == '}') depth--;
+			else if (value == ',' && depth == 0) {
+				arguments.add(new ArgumentRegion(start, index));
+				start = index + 1;
+			}
+		}
+		arguments.add(new ArgumentRegion(start, closingParenthesis));
+		return arguments;
+	}
+
 	private static String maskNonCode(String source) {
 		StringBuilder masked = new StringBuilder(source);
 		boolean lineComment = false;
@@ -254,5 +312,8 @@ public final class DynamicBehaviorSource {
 
 	private record MethodRegion(int start, int end, int openingParenthesis, int closingParenthesis,
 			int openingBrace, int closingBrace) {
+	}
+
+	private record ArgumentRegion(int start, int end) {
 	}
 }

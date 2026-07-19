@@ -2,6 +2,10 @@ package com.yeyito.littlechemistry.content;
 
 import net.minecraft.world.item.Rarity;
 
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 public record DynamicContentDefinition(
 		DynamicContentType type,
 		String name,
@@ -17,14 +21,15 @@ public record DynamicContentDefinition(
 		DynamicItemProperties item,
 		DynamicArmorProperties armor,
 		String behaviorSource,
-		DynamicBlockModel blockModel
+		DynamicBlockModel blockModel,
+		List<DynamicParticleDefinition> customParticles
 ) {
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, null),
 				textureSeed, textureHash, texture, null, null,
-				block, item, null, behaviorSource, null);
+				block, item, null, behaviorSource, null, List.of());
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
@@ -32,7 +37,7 @@ public record DynamicContentDefinition(
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
 				textureSeed, textureHash, texture, null, null,
-				block, item, armor, behaviorSource, null);
+				block, item, armor, behaviorSource, null, List.of());
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
@@ -41,7 +46,7 @@ public record DynamicContentDefinition(
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
 				textureSeed, textureHash, texture, armorDisplayTextureHash,
-				armorDisplayTexture, block, item, armor, behaviorSource, null);
+				armorDisplayTexture, block, item, armor, behaviorSource, null, List.of());
 	}
 
 	/** Compatibility constructor for callers predating generated descriptions. */
@@ -52,7 +57,17 @@ public record DynamicContentDefinition(
 			DynamicBlockModel blockModel) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
 				textureSeed, textureHash, texture, armorDisplayTextureHash,
-				armorDisplayTexture, block, item, armor, behaviorSource, blockModel);
+				armorDisplayTexture, block, item, armor, behaviorSource, blockModel, List.of());
+	}
+
+	/** Compatibility constructor for callers predating generated custom particles. */
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, String description,
+			DynamicRarity rarityTier, long textureSeed, String textureHash, DynamicTextureSpec texture,
+			String armorDisplayTextureHash, DynamicArmorDisplayTextureSpec armorDisplayTexture,
+			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
+			String behaviorSource, DynamicBlockModel blockModel) {
+		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel, List.of());
 	}
 
 	public DynamicContentDefinition {
@@ -81,6 +96,7 @@ public record DynamicContentDefinition(
 		if (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("Dynamic behavior source is invalid");
 		}
+		customParticles = DynamicParticleDefinition.validateLibrary(customParticles);
 		switch (type) {
 			case BLOCK -> {
 				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
@@ -122,6 +138,7 @@ public record DynamicContentDefinition(
 		if (DynamicRarity.fromProperties(block, item, armor).vanillaRarity() != rarityTier.vanillaRarity()) {
 			throw new IllegalArgumentException("Dynamic rarity does not match the content's vanilla rarity component");
 		}
+		DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
 	}
 
 	public String idPath() {
@@ -155,4 +172,18 @@ public record DynamicContentDefinition(
 	public java.util.Set<String> renderTextureHashes() {
 		return blockModel == null ? java.util.Set.of(textureHash) : blockModel.textureHashes();
 	}
+
+	public Set<String> customParticleTextureHashes() {
+		Set<String> hashes = new HashSet<>();
+		for (DynamicParticleDefinition particle : customParticles) hashes.addAll(particle.textureHashes());
+		return Set.copyOf(hashes);
+	}
+
+	public DynamicParticleDefinition customParticle(String id) {
+		for (DynamicParticleDefinition particle : customParticles) {
+			if (particle.id().equals(id)) return particle;
+		}
+		return null;
+	}
+
 }

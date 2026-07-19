@@ -137,6 +137,17 @@ public final class DynamicContentManager {
 			DynamicBlockTexture primary = generated.blockModel().particleTextureAsset();
 			textureHash = primary.hash();
 		}
+		for (DynamicParticleDefinition particle : generated.customParticles()) {
+			for (DynamicParticleFrame frame : particle.frames()) {
+				byte[] bytes = frame.texture().renderPng();
+				String actualHash = DynamicTextureAsset.sha256(bytes);
+				if (!actualHash.equals(frame.textureHash())) {
+					throw new IOException("Generated custom particle texture hash mismatch for "
+							+ particle.id());
+				}
+				textureAssets.put(actualHash, bytes);
+			}
+		}
 		byte[] armorDisplayTextureBytes = generated.armorDisplayTexture() == null
 				? null : generated.armorDisplayTexture().renderPng();
 		String armorDisplayTextureHash = armorDisplayTextureBytes == null
@@ -159,7 +170,8 @@ public final class DynamicContentManager {
 				generated.item(),
 				generated.armor(),
 				behaviorSource,
-				generated.blockModel()
+				generated.blockModel(),
+				generated.customParticles()
 		);
 		return commit(definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
 	}
@@ -270,6 +282,7 @@ public final class DynamicContentManager {
 		Set<String> retained = new HashSet<>();
 		for (DynamicContentDefinition definition : definitions) {
 			retained.addAll(definition.renderTextureHashes());
+			retained.addAll(definition.customParticleTextureHashes());
 			if (definition.armorDisplayTextureHash() != null) retained.add(definition.armorDisplayTextureHash());
 		}
 		var iterator = assets.entrySet().iterator();
@@ -355,6 +368,12 @@ public final class DynamicContentManager {
 		if (definition.armorDisplayTexture() != null) {
 			ensureAsset(definition.armorDisplayTextureHash(), definition.armorDisplayTexture().renderPng(),
 					definition.name() + " armor display texture");
+		}
+		for (DynamicParticleDefinition particle : definition.customParticles()) {
+			for (DynamicParticleFrame frame : particle.frames()) {
+				ensureAsset(frame.textureHash(), frame.texture().renderPng(),
+						definition.name() + " custom particle " + particle.id());
+			}
 		}
 	}
 

@@ -252,6 +252,52 @@ class ContentGenerationDraftTest {
 	}
 
 	@Test
+	void completeBlockCanAuthorAnimatedParticleAndUseItForAmbience() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "ember crystal");
+		draft.execute("set_metadata", metadataArguments("rare", "A crystal that releases its own animated embers."));
+		draft.execute("set_block_properties", blockPropertiesArguments("full_cube"));
+		draft.execute("set_block_model", opaqueBlockModelArguments(16, 16));
+		JsonObject redstone = new JsonObject();
+		redstone.addProperty("redstonePower", 0);
+		redstone.addProperty("comparatorPower", 0);
+		draft.execute("set_block_redstone", redstone);
+		JsonObject light = new JsonObject();
+		light.addProperty("level", 7);
+		light.addProperty("visuallyEmissive", true);
+		draft.execute("set_block_light", light);
+
+		ContentGenerationDraft.ToolExecution custom = draft.execute(
+				"set_custom_particles", customParticleArguments());
+		JsonObject particles = new JsonObject();
+		com.google.gson.JsonArray emitters = new com.google.gson.JsonArray();
+		JsonObject emitter = new JsonObject();
+		emitter.addProperty("particle", "custom:embers");
+		emitter.addProperty("chancePerTick", 0.1);
+		emitter.addProperty("count", 2);
+		emitter.addProperty("velocity", 0.04);
+		emitter.addProperty("region", "top");
+		emitters.add(emitter);
+		particles.add("emitters", emitters);
+		ContentGenerationDraft.ToolExecution ambience = draft.execute("set_block_particles", particles);
+		draft.execute("set_behavior_source", particleBehaviorSourceArguments("embers"));
+		draft.execute("compile_behavior", new JsonObject());
+
+		ContentGenerationDraft.ToolExecution submitted = draft.execute("submit", new JsonObject());
+		draft.execute("set_behavior_source", particleBehaviorSourceArguments("missing"));
+		draft.execute("compile_behavior", new JsonObject());
+		ContentGenerationDraft.ToolExecution rejected = draft.execute("submit", new JsonObject());
+
+		assertTrue(custom.output().get("ok").getAsBoolean(), custom.output().toString());
+		assertTrue(ambience.output().get("ok").getAsBoolean(), ambience.output().toString());
+		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
+		assertEquals("embers", submitted.submitted().customParticles().getFirst().id());
+		assertEquals(2, submitted.submitted().customParticles().getFirst().frames().size());
+		assertEquals("custom:embers", submitted.submitted().block().particles().getFirst().particle());
+		assertFalse(rejected.output().get("ok").getAsBoolean(), rejected.output().toString());
+		assertTrue(rejected.output().get("message").getAsString().contains("undefined custom particle"));
+	}
+
+	@Test
 	void changingToAnIncompatibleShapeClearsTheOldModelForReplacement() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "changing block");
 		draft.execute("set_block_properties", blockPropertiesArguments("custom"));
@@ -591,9 +637,60 @@ class ContentGenerationDraftTest {
 		return arguments;
 	}
 
+	private static JsonObject customParticleArguments() {
+		JsonObject arguments = new JsonObject();
+		com.google.gson.JsonArray particles = new com.google.gson.JsonArray();
+		JsonObject particle = new JsonObject();
+		particle.addProperty("id", "embers");
+		com.google.gson.JsonArray frames = new com.google.gson.JsonArray();
+		for (int frameIndex = 0; frameIndex < 2; frameIndex++) {
+			JsonObject frame = indexedTexture("unused", 8, 8);
+			frame.remove("id");
+			frame.remove("width");
+			frame.remove("height");
+			frame.getAsJsonArray("palette").set(0, new com.google.gson.JsonPrimitive("00000000"));
+			frames.add(frame);
+		}
+		particle.add("frames", frames);
+		particle.addProperty("frameTicks", 2);
+		particle.addProperty("loop", true);
+		particle.addProperty("lifetimeTicks", 30);
+		particle.addProperty("startSize", 0.2);
+		particle.addProperty("endSize", 0.05);
+		particle.addProperty("startColor", "FFFFFFFF");
+		particle.addProperty("endColor", "FF804000");
+		particle.addProperty("gravity", -0.1);
+		particle.addProperty("friction", 0.96);
+		particle.addProperty("collision", false);
+		particle.addProperty("emissive", true);
+		particle.addProperty("spin", 0.04);
+		particles.add(particle);
+		arguments.add("particles", particles);
+		return arguments;
+	}
+
 	private static JsonObject behaviorSourceArguments() {
 		JsonObject arguments = new JsonObject();
 		arguments.addProperty("source", DynamicBehaviorSource.completeLegacySource(null));
+		return arguments;
+	}
+
+	private static JsonObject particleBehaviorSourceArguments(String particleId) {
+		JsonObject arguments = new JsonObject();
+		arguments.addProperty("source", """
+				import com.yeyito.littlechemistry.behavior.*;
+				import com.yeyito.littlechemistry.particle.DynamicParticles;
+				import net.minecraft.world.InteractionResult;
+				public final class GeneratedBehaviorImpl implements DynamicBehavior, UseAirBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    public InteractionResult useAir(DynamicItemUseContext context) {
+				        DynamicParticles.spawn(context.level(), context.definition(), "%s",
+				                context.player().getX(), context.player().getY() + 1.0, context.player().getZ(),
+				                0.0, 0.02, 0.0);
+				        return InteractionResult.SUCCESS;
+				    }
+				}
+				""".formatted(particleId));
 		return arguments;
 	}
 }

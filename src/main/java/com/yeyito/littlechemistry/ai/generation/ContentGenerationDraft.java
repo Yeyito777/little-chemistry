@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
@@ -26,7 +27,8 @@ import com.yeyito.littlechemistry.content.DynamicItemProperties;
 import com.yeyito.littlechemistry.content.DynamicItemType;
 import com.yeyito.littlechemistry.content.DynamicMaterial;
 import com.yeyito.littlechemistry.content.DynamicParticleEmitter;
-import com.yeyito.littlechemistry.content.DynamicParticleType;
+import com.yeyito.littlechemistry.content.DynamicParticleDefinition;
+import com.yeyito.littlechemistry.content.DynamicParticleFrame;
 import com.yeyito.littlechemistry.content.DynamicPlacedShape;
 import com.yeyito.littlechemistry.content.DynamicPlacementProperties;
 import com.yeyito.littlechemistry.content.DynamicRarity;
@@ -63,6 +65,7 @@ final class ContentGenerationDraft {
 	private Integer lightLevel;
 	private Boolean visuallyEmissive;
 	private List<DynamicParticleEmitter> particles;
+	private List<DynamicParticleDefinition> customParticles = List.of();
 	private Integer maxStack;
 	private DynamicRarity rarity;
 	private String description;
@@ -127,6 +130,7 @@ final class ContentGenerationDraft {
 				case "set_metadata" -> setMetadata(arguments);
 				case "set_texture" -> setTexture(arguments);
 				case "set_block_model" -> requireBlock(() -> setBlockModel(arguments));
+				case "set_custom_particles" -> setCustomParticles(arguments);
 				case "set_armor_display_texture" -> requireArmor(() -> setArmorDisplayTexture(arguments));
 				case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
 				case "set_block_redstone" -> requireBlock(() -> setBlockRedstone(arguments));
@@ -383,13 +387,13 @@ final class ContentGenerationDraft {
 			if (!(element instanceof JsonObject emitter)) {
 				throw new IllegalArgumentException("Every emitter must be an object");
 			}
-			requireOnly(emitter, "type", "chancePerTick", "count", "velocity", "region");
+			requireOnly(emitter, "particle", "chancePerTick", "count", "velocity", "region");
 			String region = requiredString(emitter, "region");
 			if (!region.equals("top") && !region.equals("all")) {
 				throw new IllegalArgumentException("Particle region must be 'top' or 'all'");
 			}
 			decoded.add(new DynamicParticleEmitter(
-					DynamicParticleType.parse(requiredString(emitter, "type")),
+					requiredString(emitter, "particle"),
 					requiredDouble(emitter, "chancePerTick"),
 					requiredInt(emitter, "count"),
 					requiredDouble(emitter, "velocity"),
@@ -398,6 +402,64 @@ final class ContentGenerationDraft {
 		}
 		particles = List.copyOf(decoded);
 		return ToolExecution.success(message("Block particle properties were accepted."), null);
+	}
+
+	private ToolExecution setCustomParticles(JsonObject arguments) throws Exception {
+		requireOnly(arguments, "particles");
+		JsonArray encodedParticles = requiredArray(arguments, "particles");
+		if (encodedParticles.size() > DynamicParticleDefinition.MAX_DEFINITIONS) {
+			throw new IllegalArgumentException("At most " + DynamicParticleDefinition.MAX_DEFINITIONS
+					+ " custom particles are allowed");
+		}
+		List<DynamicParticleDefinition> decoded = new ArrayList<>();
+		for (JsonElement element : encodedParticles) {
+			if (!(element instanceof JsonObject particle)) {
+				throw new IllegalArgumentException("Every custom particle must be an object");
+			}
+			requireOnly(particle, "id", "frames", "frameTicks", "loop", "lifetimeTicks",
+					"startSize", "endSize", "startColor", "endColor", "gravity", "friction",
+					"collision", "emissive", "spin");
+			List<DynamicParticleFrame> frames = new ArrayList<>();
+			for (JsonElement frameElement : requiredArray(particle, "frames")) {
+				if (!(frameElement instanceof JsonObject frame)) {
+					throw new IllegalArgumentException("Every custom particle frame must be an object");
+				}
+				requireOnly(frame, "palette", "rows");
+				DynamicTextureSpec texture = new DynamicTextureSpec(
+						strings(requiredArray(frame, "palette")), strings(requiredArray(frame, "rows")));
+				frames.add(new DynamicParticleFrame(
+						DynamicTextureAsset.sha256(texture.renderPng()), texture));
+			}
+			decoded.add(new DynamicParticleDefinition(
+					requiredString(particle, "id"),
+					frames,
+					requiredInt(particle, "frameTicks"),
+					requiredBoolean(particle, "loop"),
+					requiredInt(particle, "lifetimeTicks"),
+					(float) requiredDouble(particle, "startSize"),
+					(float) requiredDouble(particle, "endSize"),
+					requiredString(particle, "startColor"),
+					requiredString(particle, "endColor"),
+					(float) requiredDouble(particle, "gravity"),
+					(float) requiredDouble(particle, "friction"),
+					requiredBoolean(particle, "collision"),
+					requiredBoolean(particle, "emissive"),
+					(float) requiredDouble(particle, "spin")
+			));
+		}
+		Set<String> idsSeen = new HashSet<>();
+		for (DynamicParticleDefinition particle : decoded) {
+			if (!idsSeen.add(particle.id())) {
+				throw new IllegalArgumentException("Duplicate custom particle ID: " + particle.id());
+			}
+		}
+		customParticles = List.copyOf(decoded);
+		JsonObject details = message("Custom particle definitions were accepted.");
+		details.addProperty("particleCount", customParticles.size());
+		JsonArray ids = new JsonArray();
+		customParticles.forEach(particle -> ids.add(particle.id()));
+		details.add("particleIds", ids);
+		return ToolExecution.success(details, null);
 	}
 
 	private ToolExecution setItemProperties(JsonObject arguments) {
@@ -588,6 +650,7 @@ final class ContentGenerationDraft {
 		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
 		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
 		details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
+		details.addProperty("customParticleApi", "Use com.yeyito.littlechemistry.particle.DynamicParticles.spawn(ServerLevel, DynamicContentDefinition, String particleId, double x, double y, double z, double velocityX, double velocityY, double velocityZ) for one directionally moving particle. The burst overload adds int count, double spreadX, spreadY, spreadZ, and double speed, matching ServerLevel.sendParticles semantics. Pass a string-literal local ID declared by set_custom_particles.");
 		return ToolExecution.success(details, null);
 	}
 
@@ -646,6 +709,7 @@ final class ContentGenerationDraft {
 			details.addProperty("message", "Set every required section, then call submit again.");
 			return new ToolExecution(details, null);
 		}
+		validateBehaviorParticleReferences();
 		GeneratedContentSpec generated;
 		if (type == DynamicContentType.BLOCK) {
 			generated = new GeneratedContentSpec(
@@ -659,7 +723,8 @@ final class ContentGenerationDraft {
 					behaviorSource,
 					blockModel,
 					rarity,
-					description
+					description,
+					customParticles
 			);
 		} else if (type == DynamicContentType.ITEM) {
 			DynamicItemProperties item = itemType == DynamicItemType.TOOL
@@ -671,17 +736,28 @@ final class ContentGenerationDraft {
 							itemType == DynamicItemType.FOOD ? foodProperties : null,
 							itemType == DynamicItemType.ITEM && Boolean.TRUE.equals(placeable) ? placementProperties : null,
 							craftingUse);
-			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource, null, rarity, description);
+			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource, null,
+					rarity, description, customParticles);
 		} else {
 			generated = new GeneratedContentSpec(texture, null, null,
 					new DynamicArmorProperties(armorSlot, rarity.vanillaRarity(), armorFoil, armorEnchantability,
 							armorDefense, armorToughness, armorKnockbackResistance, armorDurability),
 					armorDisplayTexture,
-					behaviorSource, null, rarity, description);
+					behaviorSource, null, rarity, description, customParticles);
 		}
 		JsonObject details = message("The draft passed validation and was submitted.");
 		details.addProperty("submitted", true);
 		return ToolExecution.success(details, generated);
+	}
+
+	private void validateBehaviorParticleReferences() {
+		Set<String> available = customParticles.stream().map(DynamicParticleDefinition::id)
+				.collect(java.util.stream.Collectors.toSet());
+		for (String referenced : DynamicBehaviorSource.referencedCustomParticleIds(behaviorSource)) {
+			if (!available.contains(referenced)) {
+				throw new IllegalArgumentException("Behavior references undefined custom particle: " + referenced);
+			}
+		}
 	}
 
 	private JsonObject inspect() {
@@ -705,6 +781,10 @@ final class ContentGenerationDraft {
 		result.addProperty("armorDisplayTextureSet", armorDisplayTexture != null);
 		if (armorDisplaySlot != null) result.addProperty("armorDisplayTextureSlot", armorDisplaySlot.serializedName());
 		result.addProperty("blockModelSet", blockModel != null);
+		result.addProperty("customParticleCount", customParticles.size());
+		JsonArray customParticleIds = new JsonArray();
+		customParticles.forEach(particle -> customParticleIds.add(particle.id()));
+		result.add("customParticleIds", customParticleIds);
 		if (blockModel != null) {
 			result.addProperty("blockModelTextureCount", blockModel.textures().size());
 			result.addProperty("blockModelElementCount", blockModel.elements().size());

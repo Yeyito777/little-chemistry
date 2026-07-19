@@ -51,6 +51,28 @@ public final class DynamicContentAiDescription {
 			model.add("textures", textures);
 			result.add("visualModel", model);
 		}
+		JsonArray customParticles = new JsonArray();
+		for (var particle : definition.customParticles()) {
+			JsonObject encoded = new JsonObject();
+			encoded.addProperty("id", particle.id());
+			encoded.addProperty("frameCount", particle.frames().size());
+			encoded.addProperty("frameWidth", particle.frames().getFirst().texture().width());
+			encoded.addProperty("frameHeight", particle.frames().getFirst().texture().height());
+			encoded.addProperty("frameTicks", particle.frameTicks());
+			encoded.addProperty("loop", particle.loop());
+			encoded.addProperty("lifetimeTicks", particle.lifetimeTicks());
+			encoded.addProperty("startSize", particle.startSize());
+			encoded.addProperty("endSize", particle.endSize());
+			encoded.addProperty("startColor", particle.startColor());
+			encoded.addProperty("endColor", particle.endColor());
+			encoded.addProperty("gravity", particle.gravity());
+			encoded.addProperty("friction", particle.friction());
+			encoded.addProperty("collision", particle.collision());
+			encoded.addProperty("emissive", particle.emissive());
+			encoded.addProperty("spin", particle.spin());
+			customParticles.add(encoded);
+		}
+		result.add("customParticles", customParticles);
 		result.add("behavior", describeBehavior(definition.behaviorSource()));
 		return result;
 	}
@@ -69,7 +91,7 @@ public final class DynamicContentAiDescription {
 		JsonArray particles = new JsonArray();
 		for (DynamicParticleEmitter emitter : block.particles()) {
 			JsonObject particle = new JsonObject();
-			particle.addProperty("type", emitter.type().serializedName());
+			particle.addProperty("particle", emitter.particle());
 			particle.addProperty("chancePerTick", emitter.chancePerTick());
 			particle.addProperty("count", emitter.count());
 			particle.addProperty("velocity", emitter.velocity());

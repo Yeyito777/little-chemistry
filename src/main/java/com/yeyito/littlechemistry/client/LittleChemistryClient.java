@@ -10,9 +10,12 @@ import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
 import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
 import com.yeyito.littlechemistry.network.OpenDeletionScreenPayload;
+import com.yeyito.littlechemistry.particle.DynamicParticleRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.particle.v1.ParticleProviderRegistry;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -32,6 +35,10 @@ public final class LittleChemistryClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		ParticleProviderRegistry.getInstance().register(DynamicParticleRegistry.TYPE,
+				(options, level, x, y, z, velocityX, velocityY, velocityZ, random) ->
+						new RuntimeCustomParticle(level, options, x, y, z, velocityX, velocityY, velocityZ));
+		ClientTickEvents.END_CLIENT_TICK.register(RuntimeTextureStore::tick);
 		SpecialModelRenderers.ID_MAPPER.put(
 				LittleChemistry.id("dynamic"),
 				DynamicSpecialItemRenderer.Unbaked.MAP_CODEC

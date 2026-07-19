@@ -94,6 +94,31 @@ final class DynamicBehaviorCompilerTest {
 	}
 
 	@Test
+	void generatedBehaviorCanCompileAgainstTheCustomParticleApi() {
+		String source = """
+				import com.yeyito.littlechemistry.behavior.*;
+				import com.yeyito.littlechemistry.particle.DynamicParticles;
+				import net.minecraft.world.InteractionResult;
+				public final class GeneratedBehaviorImpl implements DynamicBehavior, UseAirBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    public InteractionResult useAir(DynamicItemUseContext context) {
+				        DynamicParticles.spawn(context.level(), context.definition(), "spark",
+				                context.player().getX(), context.player().getY() + 1.0, context.player().getZ(),
+				                8, 0.2, 0.2, 0.2, 0.05);
+				        return InteractionResult.SUCCESS;
+				    }
+				}
+				""";
+
+		DynamicBehavior behavior = DynamicBehaviorCompiler.compile(source).instantiate();
+
+		assertTrue(behavior instanceof UseAirBehavior);
+		assertEquals(java.util.List.of("spark"), DynamicBehaviorSource.referencedCustomParticleIds(source));
+		assertThrows(IllegalArgumentException.class, () -> DynamicBehaviorSource.referencedCustomParticleIds(
+				source.replace("\"spark\"", "context.definition().name()")));
+	}
+
+	@Test
 	void rejectsCallbackMethodsWithoutTheirCapabilityInterface() {
 		String ambiguous = """
 				public final class GeneratedBehaviorImpl implements com.yeyito.littlechemistry.behavior.DynamicBehavior {
