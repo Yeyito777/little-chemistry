@@ -36,10 +36,36 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("enchantability", 0);
 		arguments.addProperty("reach", 0.0);
 		arguments.addProperty("placeable", false);
+		arguments.addProperty("craftingUse", "keep");
 
 		ContentGenerationDraft.ToolExecution result = draft.execute("set_item_properties", arguments);
 
 		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
+	}
+
+	@Test
+	void craftingUseSupportsReusableItemsAndDamageableTools() {
+		ContentGenerationDraft reusableDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "casting mold");
+		JsonObject reusable = ordinaryItemArguments();
+		reusable.addProperty("craftingUse", "keep");
+		ContentGenerationDraft.ToolExecution reusableResult = reusableDraft.execute("set_item_properties", reusable);
+
+		ContentGenerationDraft invalidDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "fragile catalyst");
+		JsonObject invalid = ordinaryItemArguments();
+		invalid.addProperty("craftingUse", "damage");
+		ContentGenerationDraft.ToolExecution invalidResult = invalidDraft.execute("set_item_properties", invalid);
+
+		ContentGenerationDraft cuttersDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "wire cutters");
+		JsonObject cutters = ordinaryItemArguments();
+		cutters.addProperty("itemType", "tool");
+		cutters.addProperty("heldType", "tool");
+		cutters.addProperty("maxStack", 1);
+		cutters.addProperty("craftingUse", "damage");
+		ContentGenerationDraft.ToolExecution cuttersResult = cuttersDraft.execute("set_item_properties", cutters);
+
+		assertTrue(reusableResult.output().get("ok").getAsBoolean(), reusableResult.output().toString());
+		assertFalse(invalidResult.output().get("ok").getAsBoolean(), invalidResult.output().toString());
+		assertTrue(cuttersResult.output().get("ok").getAsBoolean(), cuttersResult.output().toString());
 	}
 
 	@Test
@@ -419,6 +445,7 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("enchantability", 0);
 		arguments.addProperty("reach", 0.0);
 		arguments.addProperty("placeable", false);
+		arguments.addProperty("craftingUse", "consume");
 		return arguments;
 	}
 

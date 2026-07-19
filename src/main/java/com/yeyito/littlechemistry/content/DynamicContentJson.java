@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 12;
+	public static final int CURRENT_FORMAT = 13;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -345,6 +345,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("breakingPower", item.breakingPower().serializedName());
 		encoded.addProperty("breakingSpeed", item.breakingSpeed());
 		encoded.addProperty("reach", item.reach());
+		encoded.addProperty("craftingUse", item.craftingUse().serializedName());
 		if (item.itemType() == DynamicItemType.TOOL) {
 			encoded.addProperty("attackDamage", item.attackDamage());
 			encoded.addProperty("attackSpeed", item.attackSpeed());
@@ -400,6 +401,9 @@ public final class DynamicContentJson {
 		DynamicHeldType heldType = encoded.has("heldType")
 				? DynamicHeldType.parse(encoded.get("heldType").getAsString())
 				: DynamicHeldType.legacyDefaultFor(itemType);
+		DynamicCraftingUse craftingUse = encoded.has("craftingUse")
+				? DynamicCraftingUse.parse(encoded.get("craftingUse").getAsString())
+				: DynamicCraftingUse.CONSUME;
 		JsonObject encodedFood = encoded.get("food") instanceof JsonObject value ? value
 				: encoded.get("consumable") instanceof JsonObject legacy ? legacy : null;
 		if (itemType == DynamicItemType.ITEM && encodedFood != null) itemType = DynamicItemType.FOOD;
@@ -435,7 +439,8 @@ public final class DynamicContentJson {
 						value.has("visuallyEmissive") && value.get("visuallyEmissive").getAsBoolean());
 			}
 			return new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
-					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0, food, placement);
+					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
+					food, placement, craftingUse);
 		}
 		return new DynamicItemProperties(
 				DynamicItemType.TOOL, heldType, 1, rarity, foil, enchantability, reach,
@@ -448,7 +453,8 @@ public final class DynamicContentJson {
 				encoded.has("damagePerBlock") ? encoded.get("damagePerBlock").getAsInt() : 1,
 				encoded.has("damagePerAttack") ? encoded.get("damagePerAttack").getAsInt() : 2,
 				null,
-				null
+				null,
+				craftingUse
 		);
 	}
 

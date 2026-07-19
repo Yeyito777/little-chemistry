@@ -6,6 +6,7 @@ import com.yeyito.littlechemistry.ai.generation.DynamicContentAiDescription;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.inventory.CraftingContainer;
 import net.minecraft.world.item.ItemStack;
@@ -138,6 +139,9 @@ public final class RecipeSignature {
 	}
 
 	private static ItemStack normalize(ItemStack stack) {
-		return stack.isEmpty() ? ItemStack.EMPTY : stack.copyWithCount(1);
+		if (stack.isEmpty()) return ItemStack.EMPTY;
+		ItemStack normalized = stack.copyWithCount(1);
+		if (normalized.has(DataComponents.DAMAGE)) normalized.setDamageValue(0);
+		return normalized;
 	}
 }

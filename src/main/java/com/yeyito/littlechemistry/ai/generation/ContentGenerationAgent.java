@@ -145,7 +145,7 @@ public final class ContentGenerationAgent {
 		} else if (type == DynamicContentType.ITEM) {
 			tools.add(tool("set_texture", "Set the complete indexed 16x16 inventory texture.", textureSchema()));
 			tools.add(tool("set_item_properties",
-					"Choose gameplay itemType independently from the visual heldType pose. Examples: regular for materials, food, and small objects; tool for swords, pickaxes, axes, staffs, and wands; rod for fishing rods or reversed long rods; bow for bows; crossbow for crossbows; mace for hammers, clubs, and other heavy-headed weapons; spear for spears and lances. A pose does not add its example's mechanics or animations. Also set stack, foil, enchantability, reach, and placeable properties. maxStack must accommodate requestedOutputCount when supplied.",
+					"Choose gameplay itemType independently from the visual heldType pose. Examples: regular for materials, food, and small objects; tool for swords, pickaxes, axes, staffs, and wands; rod for fishing rods or reversed long rods; bow for bows; crossbow for crossbows; mace for hammers, clubs, and other heavy-headed weapons; spear for spears and lances. A pose does not add its example's mechanics or animations. Also set stack, foil, enchantability, reach, placeable properties, and craftingUse. Use consume normally, keep for unchanged reusable catalysts or molds, and damage for reusable tools such as cutters or hammers that lose one durability per craft. maxStack must accommodate requestedOutputCount when supplied.",
 					itemPropertiesSchema()));
 			tools.add(tool("set_tool_properties",
 					"Required only for itemType=tool. Set tool category, breaking power/speed, native total attack damage and attack speed shown in the tooltip, durability, and durability costs.",
@@ -343,7 +343,7 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject itemPropertiesSchema() {
-		JsonObject schema = objectSchema("itemType", "heldType", "maxStack", "foil", "enchantability", "reach", "placeable");
+		JsonObject schema = objectSchema("itemType", "heldType", "maxStack", "foil", "enchantability", "reach", "placeable", "craftingUse");
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("itemType", enumSchema("item", "food", "tool"));
 		properties.add("heldType", enumSchema("regular", "tool", "rod", "bow", "crossbow", "mace", "spear"));
@@ -352,6 +352,7 @@ public final class ContentGenerationAgent {
 		properties.add("enchantability", integerSchema(0, 255));
 		properties.add("reach", numberSchema(0, 16));
 		properties.add("placeable", typeSchema("boolean"));
+		properties.add("craftingUse", enumSchema("consume", "keep", "damage"));
 		return schema;
 	}
 

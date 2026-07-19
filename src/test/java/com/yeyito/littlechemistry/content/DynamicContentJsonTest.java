@@ -33,7 +33,7 @@ class DynamicContentJsonTest {
 		DynamicItemProperties item = new DynamicItemProperties(
 				DynamicItemType.ITEM, DynamicHeldType.TOOL, 16, Rarity.UNCOMMON, false, 0, 0.0,
 				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
-				0, 0, 0, null, null);
+				0, 0, 0, null, null, DynamicCraftingUse.KEEP);
 		DynamicContentDefinition definition = definition("staff", item);
 
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
@@ -42,6 +42,7 @@ class DynamicContentJsonTest {
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
+		assertEquals(DynamicCraftingUse.KEEP, decoded.definitions().getFirst().item().craftingUse());
 		DynamicBehaviorCompiler.compile(decoded.definitions().getFirst().behaviorSource());
 	}
 
@@ -75,13 +76,16 @@ class DynamicContentJsonTest {
 		byte[] current = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition("blade", tool)));
 		JsonObject legacy = JsonParser.parseString(new String(current, StandardCharsets.UTF_8)).getAsJsonObject();
 		legacy.addProperty("format", 4);
-		legacy.getAsJsonArray("definitions").get(0).getAsJsonObject()
-				.getAsJsonObject("item").remove("heldType");
+		JsonObject legacyItem = legacy.getAsJsonArray("definitions").get(0).getAsJsonObject()
+				.getAsJsonObject("item");
+		legacyItem.remove("heldType");
+		legacyItem.remove("craftingUse");
 
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				legacy.toString().getBytes(StandardCharsets.UTF_8));
 
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
+		assertEquals(DynamicCraftingUse.CONSUME, decoded.definitions().getFirst().item().craftingUse());
 	}
 
 	@Test

@@ -184,5 +184,15 @@ public final class DynamicCarrierItem extends Item {
 		if (definition != null && !definition.description().isBlank()) {
 			builder.accept(Component.literal(definition.description()).withStyle(ChatFormatting.GRAY));
 		}
+		if (definition != null && definition.item() != null) {
+			switch (definition.item().craftingUse()) {
+				case KEEP -> builder.accept(Component.literal("Not consumed when used in crafting")
+						.withStyle(ChatFormatting.DARK_GRAY));
+				case DAMAGE -> builder.accept(Component.literal("Costs 1 durability when used in crafting")
+						.withStyle(ChatFormatting.DARK_GRAY));
+				case CONSUME -> {
+				}
+			}
+		}
 	}
 }

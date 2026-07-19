@@ -3,6 +3,8 @@ package com.yeyito.littlechemistry.crafting;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.content.DynamicCraftingUse;
+import net.minecraft.core.NonNullList;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
@@ -50,6 +52,32 @@ final class AiCraftingRecipe implements CraftingRecipe {
 	@Override
 	public ItemStack assemble(CraftingInput input) {
 		return outputStack();
+	}
+
+	@Override
+	public NonNullList<ItemStack> getRemainingItems(CraftingInput input) {
+		NonNullList<ItemStack> remainders = CraftingRecipe.defaultCraftingReminder(input);
+		for (int slot = 0; slot < input.size(); slot++) {
+			ItemStack ingredient = input.getItem(slot);
+			DynamicContentDefinition definition = DynamicContentObjects.definition(ingredient);
+			if (definition != null && definition.item() != null) {
+				remainders.set(slot, craftingRemainder(ingredient, definition.item().craftingUse()));
+			}
+		}
+		return remainders;
+	}
+
+	static ItemStack craftingRemainder(ItemStack ingredient, DynamicCraftingUse craftingUse) {
+		return switch (craftingUse) {
+			case CONSUME -> ItemStack.EMPTY;
+			case KEEP -> ingredient.copyWithCount(1);
+			case DAMAGE -> {
+				ItemStack remainder = ingredient.copyWithCount(1);
+				if (!remainder.isDamageableItem() || remainder.nextDamageWillBreak()) yield ItemStack.EMPTY;
+				remainder.setDamageValue(remainder.getDamageValue() + 1);
+				yield remainder;
+			}
+		};
 	}
 
 	private ItemStack outputStack() {

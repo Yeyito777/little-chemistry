@@ -85,6 +85,7 @@ public final class DynamicContentAiDescription {
 		result.addProperty("itemType", item.itemType().serializedName());
 		result.addProperty("heldType", item.heldType().serializedName());
 		result.addProperty("maxStack", item.maxStack());
+		result.addProperty("craftingUse", item.craftingUse().serializedName());
 		result.addProperty("foil", item.foil());
 		result.addProperty("enchantability", item.enchantability());
 		result.addProperty("reach", item.reach());
