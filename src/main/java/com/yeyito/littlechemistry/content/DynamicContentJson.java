@@ -29,33 +29,34 @@ public final class DynamicContentJson {
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
-		for (DynamicContentDefinition definition : definitions) {
-			JsonObject entry = new JsonObject();
-			entry.addProperty("type", definition.type().serializedName());
-			entry.addProperty("name", definition.name());
-			entry.addProperty("displayName", definition.displayName());
-			entry.addProperty("description", definition.description());
-			entry.addProperty("rarity", definition.rarityTier().serializedName());
-			entry.addProperty("textureSeed", definition.textureSeed());
-			entry.addProperty("textureHash", definition.textureHash());
-			if (definition.texture() != null) {
-				entry.add("texture", encodeTexture(definition.texture()));
-			}
-			if (definition.armorDisplayTexture() != null) {
-				entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
-				entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
-			}
-			if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
-			switch (definition.type()) {
-				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
-				case ITEM -> entry.add("item", encodeItem(definition.item()));
-				case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
-			}
-			entry.addProperty("behaviorSource", definition.behaviorSource());
-			entries.add(entry);
-		}
+		definitions.stream().map(DynamicContentJson::encodeDefinition).forEach(entries::add);
 		root.add("definitions", entries);
 		return GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+	}
+
+	/** Returns the complete canonical persisted representation of one generated definition. */
+	public static JsonObject encodeDefinition(DynamicContentDefinition definition) {
+		JsonObject entry = new JsonObject();
+		entry.addProperty("type", definition.type().serializedName());
+		entry.addProperty("name", definition.name());
+		entry.addProperty("displayName", definition.displayName());
+		entry.addProperty("description", definition.description());
+		entry.addProperty("rarity", definition.rarityTier().serializedName());
+		entry.addProperty("textureSeed", definition.textureSeed());
+		entry.addProperty("textureHash", definition.textureHash());
+		if (definition.texture() != null) entry.add("texture", encodeTexture(definition.texture()));
+		if (definition.armorDisplayTexture() != null) {
+			entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
+			entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
+		}
+		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
+		switch (definition.type()) {
+			case BLOCK -> entry.add("block", encodeBlock(definition.block()));
+			case ITEM -> entry.add("item", encodeItem(definition.item()));
+			case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
+		}
+		entry.addProperty("behaviorSource", definition.behaviorSource());
+		return entry;
 	}
 
 	public static Decoded decode(byte[] bytes) {

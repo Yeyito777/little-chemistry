@@ -103,7 +103,26 @@ class DynamicContentAiDescriptionTest {
 		assertEquals(8, properties.getAsJsonObject("food").get("hunger").getAsInt());
 		assertEquals("useAir", behavior.getAsJsonArray("implementedCallbacks").get(0).getAsString());
 		assertEquals(1, behavior.getAsJsonArray("implementedCallbacks").size());
-		assertTrue(behavior.get("javaSourceExcerpt").getAsString().contains("GeneratedBehaviorImpl"));
-		assertFalse(behavior.get("javaSourceTruncated").getAsBoolean());
+		assertEquals(source.strip(), behavior.get("javaSource").getAsString());
+		assertFalse(behavior.has("javaSourceTruncated"));
+	}
+
+	@Test
+	void neverTruncatesGeneratedBehaviorSource() {
+		String source = """
+				public final class GeneratedBehaviorImpl implements
+				        com.yeyito.littlechemistry.behavior.DynamicBehavior {
+				    /* %s */
+				    public GeneratedBehaviorImpl() {}
+				}
+				""".formatted("behavior-detail-".repeat(1_500)).strip();
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ITEM, "long_source", "Long Source", 0L, TEXTURE_HASH,
+				null, null, DynamicItemProperties.DEFAULT, source);
+
+		JsonObject behavior = DynamicContentAiDescription.describe(definition).getAsJsonObject("behavior");
+
+		assertTrue(source.length() > 12_000);
+		assertEquals(source, behavior.get("javaSource").getAsString());
 	}
 }

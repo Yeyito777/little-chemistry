@@ -60,7 +60,7 @@ final class JavaCodeInspector {
 			output.add("matches", encoded);
 			output.addProperty("message", matches.isEmpty()
 					? "No matching loaded class was found. Try a shorter class or concept name."
-					: "Use inspect_java_class with an exact className to inspect source-like signatures.");
+					: "Use inspect_java_class for signatures or inspect_java_source for complete decompiled method bodies.");
 			return ContentGenerationDraft.ToolExecution.success(output, null);
 		} catch (Exception error) {
 			return ContentGenerationDraft.ToolExecution.error("JAVA_CLASS_SEARCH_FAILED", safeMessage(error));
@@ -121,13 +121,40 @@ final class JavaCodeInspector {
 			JsonArray nested = new JsonArray();
 			for (Class<?> child : type.getDeclaredClasses()) nested.add(child.getName());
 			output.add("nestedClasses", nested);
-			output.addProperty("note", "These are source-like runtime signatures, not method bodies. Inspect parameter and return classes recursively as needed.");
+			output.addProperty("note", "These are source-like runtime signatures. Use inspect_java_source on this class for complete decompiled method bodies, and inspect parameter or return classes recursively as needed.");
 			return ContentGenerationDraft.ToolExecution.success(output, null);
 		} catch (ClassNotFoundException error) {
 			return ContentGenerationDraft.ToolExecution.error("JAVA_CLASS_NOT_FOUND",
 					"Class was not found. Use search_java_classes first: " + safeMessage(error));
 		} catch (Exception | LinkageError error) {
 			return ContentGenerationDraft.ToolExecution.error("JAVA_CLASS_INSPECTION_FAILED", safeMessage(error));
+		}
+	}
+
+	static ContentGenerationDraft.ToolExecution inspectSource(JsonObject arguments) {
+		try {
+			requireOnly(arguments, "className");
+			String className = requiredString(arguments, "className").strip();
+			Class<?> type = Class.forName(className, false, DynamicBehavior.class.getClassLoader());
+			JavaSourceDecompiler.DecompiledSource source = JavaSourceDecompiler.decompile(type);
+
+			JsonObject output = new JsonObject();
+			output.addProperty("requestedClassName", type.getName());
+			output.addProperty("decompiledClassName", source.className());
+			output.addProperty("sourceKind", "vineflower_decompiled_classpath_bytecode");
+			output.addProperty("classFileCount", source.classFileCount());
+			output.addProperty("javaSource", source.javaSource());
+			output.addProperty("truncated", false);
+			JsonArray diagnostics = new JsonArray();
+			source.diagnostics().forEach(diagnostics::add);
+			output.add("decompilerDiagnostics", diagnostics);
+			output.addProperty("note", "This is untruncated source-like Java reconstructed from installed classpath bytecode, including method bodies and available companion class files. It may differ cosmetically from the original author's source and does not include transformations applied later by access wideners or Mixins.");
+			return ContentGenerationDraft.ToolExecution.success(output, null);
+		} catch (ClassNotFoundException error) {
+			return ContentGenerationDraft.ToolExecution.error("JAVA_CLASS_NOT_FOUND",
+					"Class was not found. Use search_java_classes first: " + safeMessage(error));
+		} catch (Exception | LinkageError error) {
+			return ContentGenerationDraft.ToolExecution.error("JAVA_SOURCE_INSPECTION_FAILED", safeMessage(error));
 		}
 	}
 

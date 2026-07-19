@@ -15,9 +15,11 @@ public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
 			Create the requested Minecraft item, block, or armor piece with the tools. For crafting requests, derive a cohesive result
-			from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Fetch similar vanilla content
-			for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. Complete every
-			applicable property and texture, author and compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
+			from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Search and inspect relevant
+			previously generated content and fetch similar vanilla content for reference. Inspect complete generated behavior source and
+			loaded Java method bodies when useful, but do not merely copy, reskin, or delegate to existing content when the concept implies
+			special functionality. Complete every applicable property and texture, author and compile GeneratedBehaviorImpl, inspect the
+			finished draft, then submit.
 			""";
 
 	private final OpenAiClient openAi;
@@ -93,14 +95,16 @@ public final class ContentGenerationAgent {
 							call.arguments().get("supportProfile"),
 							call.arguments().has("supports") ? call.arguments().get("supports") : "missing");
 				}
-				ContentGenerationDraft.ToolExecution execution = switch (call.name()) {
-					case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
-					case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
-					case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
-					case "search_java_classes" -> JavaCodeInspector.search(call.arguments());
-					case "inspect_java_class" -> JavaCodeInspector.inspect(call.arguments());
-					default -> draft.execute(call.name(), call.arguments());
-				};
+					ContentGenerationDraft.ToolExecution execution =
+							GenerationInspectionTools.execute(call.name(), call.arguments());
+					if (execution == null) {
+						execution = switch (call.name()) {
+							case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
+							case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
+							case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
+							default -> draft.execute(call.name(), call.arguments());
+						};
+					}
 				if (execution.submitted() != null) {
 					return execution.submitted();
 				}
@@ -174,12 +178,7 @@ public final class ContentGenerationAgent {
 		}
 		tools.add(tool("inspect_behavior_api",
 				"Inspect the required server-side Java marker and optional callback capability interfaces. Implement only the capabilities this content actually needs.", emptySchema()));
-		tools.add(tool("search_java_classes",
-				"Search the running Minecraft, Fabric, and Little Chemistry class graph by concept or class-name fragment while authoring behavior.",
-				javaClassSearchSchema()));
-		tools.add(tool("inspect_java_class",
-				"Inspect a runtime Java class's hierarchy, constructors, fields, nested classes, and source-like method signatures without initializing it.",
-				javaClassInspectSchema()));
+		GenerationInspectionTools.addTo(tools);
 		tools.add(tool("set_behavior_source",
 				"Required: set a complete server-side Java compilation unit with no package declaration. Declare public final class GeneratedBehaviorImpl with a public no-argument constructor. It must implement DynamicBehavior plus only the callback capability interfaces it actually uses; a passive class implements only DynamicBehavior. Capability methods have no defaults.",
 				behaviorSourceSchema()));
@@ -427,31 +426,6 @@ public final class ContentGenerationAgent {
 		source.addProperty("minLength", 1);
 		source.addProperty("maxLength", 60_000);
 		schema.getAsJsonObject("properties").add("source", source);
-		return schema;
-	}
-
-	private static JsonObject javaClassSearchSchema() {
-		JsonObject schema = objectSchema("query");
-		JsonObject properties = schema.getAsJsonObject("properties");
-		JsonObject query = typeSchema("string");
-		query.addProperty("minLength", 1);
-		query.addProperty("maxLength", 120);
-		properties.add("query", query);
-		properties.add("scope", enumSchema("any", "minecraft", "little_chemistry", "fabric"));
-		return schema;
-	}
-
-	private static JsonObject javaClassInspectSchema() {
-		JsonObject schema = objectSchema("className");
-		JsonObject properties = schema.getAsJsonObject("properties");
-		JsonObject className = typeSchema("string");
-		className.addProperty("minLength", 1);
-		className.addProperty("maxLength", 240);
-		properties.add("className", className);
-		JsonObject memberQuery = typeSchema("string");
-		memberQuery.addProperty("maxLength", 120);
-		properties.add("memberQuery", memberQuery);
-		properties.add("includeInherited", typeSchema("boolean"));
 		return schema;
 	}
 

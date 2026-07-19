@@ -2,6 +2,7 @@ package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
@@ -17,8 +18,10 @@ public final class RecipeGenerationAgent {
 			a short printable display name, and an output count from 1 to 64 that fits one resulting stack. Armor and other
 			non-stackable results must use count 1. A grid cell's dynamicContentId references its authoritative entry in
 			dynamicIngredients; use that entry's gameplayProperties and behavior when reasoning about generated Little Chemistry
-			ingredients rather than treating the shared carrier itemId as their identity. Do not choose existing vanilla content merely
-			to duplicate a normal recipe. Call choose_output.
+			ingredients rather than treating the shared carrier itemId as their identity. Search and inspect other previously generated
+			content when useful so the output can build on the world's history without accidentally duplicating it. Runtime Java source
+			inspection is also available when implementation details matter. Do not choose existing vanilla content merely to duplicate
+			a normal recipe. Call choose_output when the choice is complete.
 			""";
 
 	private final OpenAiClient openAi;
@@ -83,13 +86,32 @@ public final class RecipeGenerationAgent {
 		tool.addProperty("strict", false);
 		JsonArray tools = new JsonArray();
 		tools.add(tool);
+		GenerationInspectionTools.addTo(tools);
 
-		OpenAiClient.ToolRound round = openAi.runToolRound(CHOICE_PROMPT, tools, history);
-		OpenAiClient.ToolCall call = round.calls().stream()
-				.filter(candidate -> candidate.name().equals("choose_output"))
-				.findFirst()
-				.orElseThrow(() -> new IOException(openAi.model() + " did not choose a recipe output"));
-		return parseChoice(call.arguments(), openAi.model());
+		while (true) {
+			if (Thread.currentThread().isInterrupted()) {
+				throw new InterruptedException("Recipe output selection was interrupted");
+			}
+			OpenAiClient.ToolRound round = openAi.runToolRound(CHOICE_PROMPT, tools, history);
+			if (round.calls().isEmpty()) {
+				throw new IOException(openAi.model() + " did not call a recipe-generation tool");
+			}
+			round.outputItems().forEach(item -> history.add(item.deepCopy()));
+			for (OpenAiClient.ToolCall call : round.calls()) {
+				LittleChemistry.LOGGER.info("{} recipe-generation tool: {}", openAi.model(), call.name());
+				if (call.name().equals("choose_output")) return parseChoice(call.arguments(), openAi.model());
+				ContentGenerationDraft.ToolExecution execution =
+						GenerationInspectionTools.execute(call.name(), call.arguments());
+				if (execution == null) {
+					throw new IOException(openAi.model() + " called an unknown recipe-generation tool: " + call.name());
+				}
+				JsonObject output = new JsonObject();
+				output.addProperty("type", "function_call_output");
+				output.addProperty("call_id", call.callId());
+				output.addProperty("output", execution.output().toString());
+				history.add(output);
+			}
+		}
 	}
 
 	static Choice parseChoice(JsonObject arguments, String model) throws IOException {
