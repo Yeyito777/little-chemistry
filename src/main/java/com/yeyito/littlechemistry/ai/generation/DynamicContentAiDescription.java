@@ -62,6 +62,7 @@ public final class DynamicContentAiDescription {
 		result.addProperty("preferredTool", block.preferredTool().serializedName());
 		result.addProperty("requiresCorrectTool", block.requiresCorrectTool());
 		result.addProperty("shape", block.shape().serializedName());
+		result.addProperty("directional", block.directional());
 		result.addProperty("redstonePower", block.redstonePower());
 		result.addProperty("comparatorPower", block.comparatorPower());
 		result.addProperty("lightLevel", block.lightLevel());

@@ -10,6 +10,7 @@ public record DynamicBlockProperties(
 			DynamicTool preferredTool,
 			boolean requiresCorrectTool,
 			DynamicBlockShape shape,
+			boolean directional,
 			Rarity rarity,
 			int redstonePower,
 			int comparatorPower,
@@ -19,14 +20,23 @@ public record DynamicBlockProperties(
 ) {
 	public static final DynamicBlockProperties DEFAULT = new DynamicBlockProperties(
 			DynamicMaterial.STONE, 1.5F, DynamicTool.NONE, false, DynamicBlockShape.FULL_CUBE,
-			Rarity.COMMON, 0, 0, 0, false, List.of()
+			false, Rarity.COMMON, 0, 0, 0, false, List.of()
 	);
 
-	/** Compatibility constructor for catalogs and callers predating block rarity. */
+	/** Compatibility constructor for catalogs and callers predating directional blocks and block rarity. */
 	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
 			boolean requiresCorrectTool, DynamicBlockShape shape, int redstonePower, int comparatorPower,
 			int lightLevel, boolean visuallyEmissive, List<DynamicParticleEmitter> particles) {
-		this(material, hardness, preferredTool, requiresCorrectTool, shape, Rarity.COMMON,
+		this(material, hardness, preferredTool, requiresCorrectTool, shape, false, Rarity.COMMON,
+				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles);
+	}
+
+	/** Compatibility constructor for callers predating directional blocks. */
+	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
+			boolean requiresCorrectTool, DynamicBlockShape shape, Rarity rarity, int redstonePower,
+			int comparatorPower, int lightLevel, boolean visuallyEmissive,
+			List<DynamicParticleEmitter> particles) {
+		this(material, hardness, preferredTool, requiresCorrectTool, shape, false, rarity,
 				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles);
 	}
 

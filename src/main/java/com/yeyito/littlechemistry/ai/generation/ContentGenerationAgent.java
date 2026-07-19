@@ -134,10 +134,10 @@ public final class ContentGenerationAgent {
 				minecraftContentFetchSchema()));
 		if (type == DynamicContentType.BLOCK) {
 			tools.add(tool("set_block_properties",
-					"Choose gameplay properties and the visual/physical model category. Presets are full_cube, slab, no_collision, star, fence, cross, and torch. Use custom for an AI-authored model made from axis-aligned cuboids.",
+					"Choose gameplay properties and the visual/physical model category. Presets are full_cube, slab, no_collision, star, fence, cross, and torch. Use custom for an AI-authored model made from axis-aligned cuboids. Set directional=true only when the block has a meaningful front: the authored north face becomes its front, and its model and collision rotate horizontally to face the placer.",
 					blockPropertiesSchema()));
 			tools.add(tool("set_block_model",
-					"Required after set_block_properties. Define 1-12 named indexed textures at any 1-64 pixel dimensions, choose the breaking-particle texture, and map each block face to a texture. Reuse a texture ID for a single-texture block or choose different top/bottom/sides. Omit UV to let preset/custom cuboid dimensions crop the texture like a vanilla model; supply UV in 0-16 model coordinates to override it. For shape=custom, define 1-24 axis-aligned cuboids with 0-16 bounds, collision control, and optional per-element face overrides; other shapes require an empty elements array.",
+					"Required after set_block_properties. Define 1-12 named indexed textures at any 1-64 pixel dimensions, choose the breaking-particle texture, and map each block face to a texture. Reuse a texture ID for a single-texture block or choose different top/bottom/sides. For a directional block, author its front on the north face. Omit UV to let preset/custom cuboid dimensions crop the texture like a vanilla model; supply UV in 0-16 model coordinates to override it. For shape=custom, define 1-24 axis-aligned cuboids with 0-16 bounds, collision control, and optional per-element face overrides; other shapes require an empty elements array.",
 					blockModelSchema()));
 			tools.add(tool("set_block_redstone", "Set constant weak redstone and comparator output; use zero for neither.", blockRedstoneSchema()));
 			tools.add(tool("set_block_light", "Set true world light and visual emissive rendering.", lightSchema()));
@@ -253,13 +253,14 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject blockPropertiesSchema() {
-		JsonObject schema = objectSchema("material", "hardness", "preferredTool", "requiresCorrectTool", "shape");
+		JsonObject schema = objectSchema("material", "hardness", "preferredTool", "requiresCorrectTool", "shape", "directional");
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("material", enumSchema("stone", "metal", "wood", "glass", "crystal", "earth", "organic", "cloth"));
 		properties.add("hardness", numberSchema(0, 50));
 		properties.add("preferredTool", enumSchema("none", "pickaxe", "axe", "shovel", "hoe"));
 		properties.add("requiresCorrectTool", typeSchema("boolean"));
 		properties.add("shape", enumSchema("full_cube", "slab", "no_collision", "star", "fence", "cross", "torch", "custom"));
+		properties.add("directional", typeSchema("boolean"));
 		return schema;
 	}
 

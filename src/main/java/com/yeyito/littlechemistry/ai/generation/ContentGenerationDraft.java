@@ -58,6 +58,7 @@ final class ContentGenerationDraft {
 	private DynamicTool preferredTool;
 	private Boolean requiresCorrectTool;
 	private DynamicBlockShape blockShape;
+	private Boolean directional;
 	private Integer redstonePower;
 	private Integer comparatorPower;
 	private Integer lightLevel;
@@ -320,12 +321,13 @@ final class ContentGenerationDraft {
 	}
 
 	private ToolExecution setBlockProperties(JsonObject arguments) {
-		requireOnly(arguments, "material", "hardness", "preferredTool", "requiresCorrectTool", "shape");
+		requireOnly(arguments, "material", "hardness", "preferredTool", "requiresCorrectTool", "shape", "directional");
 		DynamicMaterial candidateMaterial = DynamicMaterial.parse(requiredString(arguments, "material"));
 		float candidateHardness = requiredFloat(arguments, "hardness");
 		DynamicTool candidatePreferredTool = DynamicTool.parse(requiredString(arguments, "preferredTool"));
 		boolean candidateRequiresCorrectTool = requiredBoolean(arguments, "requiresCorrectTool");
 		DynamicBlockShape candidateShape = DynamicBlockShape.parse(requiredString(arguments, "shape"));
+		boolean candidateDirectional = requiredBoolean(arguments, "directional");
 		if (!Float.isFinite(candidateHardness) || candidateHardness < 0.0F || candidateHardness > 50.0F) {
 			throw new IllegalArgumentException("hardness must be between 0 and 50");
 		}
@@ -345,6 +347,7 @@ final class ContentGenerationDraft {
 		preferredTool = candidatePreferredTool;
 		requiresCorrectTool = candidateRequiresCorrectTool;
 		blockShape = candidateShape;
+		directional = candidateDirectional;
 		JsonObject details = message(clearedModel
 				? "Block physical properties were accepted. The incompatible previous model was cleared; call set_block_model again."
 				: "Block physical properties were accepted.");
@@ -651,7 +654,7 @@ final class ContentGenerationDraft {
 			generated = new GeneratedContentSpec(
 					texture,
 					new DynamicBlockProperties(material, hardness, preferredTool, requiresCorrectTool,
-							blockShape, rarity.vanillaRarity(), redstonePower, comparatorPower, lightLevel,
+							blockShape, directional, rarity.vanillaRarity(), redstonePower, comparatorPower, lightLevel,
 							visuallyEmissive, particles),
 					null,
 					null,
@@ -705,6 +708,7 @@ final class ContentGenerationDraft {
 		result.addProperty("armorDisplayTextureSet", armorDisplayTexture != null);
 		if (armorDisplaySlot != null) result.addProperty("armorDisplayTextureSlot", armorDisplaySlot.serializedName());
 		result.addProperty("blockModelSet", blockModel != null);
+		if (directional != null) result.addProperty("directional", directional);
 		if (blockModel != null) {
 			result.addProperty("blockModelTextureCount", blockModel.textures().size());
 			result.addProperty("blockModelElementCount", blockModel.elements().size());
@@ -722,7 +726,8 @@ final class ContentGenerationDraft {
 		if (behaviorSource == null) missing.add("behaviorSource");
 		else if (!behaviorCompiled) missing.add("behaviorCompilation");
 		if (type == DynamicContentType.BLOCK) {
-			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null || blockShape == null) {
+			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null
+					|| blockShape == null || directional == null) {
 				missing.add("blockProperties");
 			}
 			if (redstonePower == null || comparatorPower == null) missing.add("redstone");
