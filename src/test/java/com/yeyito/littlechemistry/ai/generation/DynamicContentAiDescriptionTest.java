@@ -96,7 +96,7 @@ class DynamicContentAiDescriptionTest {
 		assertEquals(16, properties.get("maxStack").getAsInt());
 		assertEquals("consume", properties.get("craftingUse").getAsString());
 		assertEquals("mythical", description.get("rarity").getAsString());
-		assertEquals("A berry that flickers between nearby moments.", description.get("description").getAsString());
+		assertEquals("A berry that flickers between\nnearby moments.", description.get("description").getAsString());
 		assertTrue(properties.get("foil").getAsBoolean());
 		assertEquals(12, properties.get("enchantability").getAsInt());
 		assertEquals(2.5, properties.get("reach").getAsDouble());

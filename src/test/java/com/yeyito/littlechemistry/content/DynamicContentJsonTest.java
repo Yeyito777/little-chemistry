@@ -61,7 +61,7 @@ class DynamicContentJsonTest {
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
 				.definitions().getFirst();
 
-		assertEquals("A crystal that holds a sliver of moonlight.", decoded.description());
+		assertEquals("A crystal that holds a\nsliver of moonlight.", decoded.description());
 		assertEquals(DynamicRarity.MYTHICAL, decoded.rarityTier());
 		assertEquals(Rarity.EPIC, decoded.rarity());
 		assertEquals(Rarity.EPIC, decoded.block().rarity());

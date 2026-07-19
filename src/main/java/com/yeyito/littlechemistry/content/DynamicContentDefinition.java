@@ -19,6 +19,8 @@ public record DynamicContentDefinition(
 		String behaviorSource,
 		DynamicBlockModel blockModel
 ) {
+	private static final int DESCRIPTION_WORDS_PER_LINE = 5;
+
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
@@ -134,10 +136,28 @@ public record DynamicContentDefinition(
 
 	public static String normalizeDescription(String raw) {
 		String normalized = raw == null ? "" : raw.strip();
-		if (normalized.length() > 120 || normalized.chars().anyMatch(Character::isISOControl)) {
-			throw new IllegalArgumentException("Description must contain at most 120 printable characters");
+		if (normalized.chars().anyMatch(character -> Character.isISOControl(character)
+				&& character != '\n' && character != '\r')) {
+			throw new IllegalArgumentException("Description may contain only printable characters and line breaks");
 		}
-		return normalized;
+		String wrapped = wrapDescription(normalized);
+		if (wrapped.length() > 120) {
+			throw new IllegalArgumentException("Description must contain at most 120 characters");
+		}
+		return wrapped;
+	}
+
+	private static String wrapDescription(String description) {
+		if (description.isEmpty()) return description;
+		String[] words = description.split("\\s+");
+		StringBuilder wrapped = new StringBuilder(description.length());
+		for (int index = 0; index < words.length; index++) {
+			if (index > 0) {
+				wrapped.append(index % DESCRIPTION_WORDS_PER_LINE == 0 ? '\n' : ' ');
+			}
+			wrapped.append(words[index]);
+		}
+		return wrapped.toString();
 	}
 
 	/**

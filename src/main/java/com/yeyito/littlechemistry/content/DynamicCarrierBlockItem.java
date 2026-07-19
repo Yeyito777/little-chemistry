@@ -45,7 +45,8 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		super.appendHoverText(stack, context, display, builder, flag);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			builder.accept(Component.literal(definition.description()).withStyle(ChatFormatting.GRAY));
+			definition.description().lines().forEach(line ->
+					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
 		}
 	}
 

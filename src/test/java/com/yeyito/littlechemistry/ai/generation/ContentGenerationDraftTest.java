@@ -332,7 +332,7 @@ class ContentGenerationDraftTest {
 		assertTrue(inspected.output().get("complete").getAsBoolean(), inspected.output().toString());
 		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
 		assertTrue(submitted.submitted().behaviorSource().contains("GeneratedBehaviorImpl"));
-		assertEquals("A dense cobalt bar with an icy sheen.", submitted.submitted().description());
+		assertEquals("A dense cobalt bar with\nan icy sheen.", submitted.submitted().description());
 		assertEquals(net.minecraft.world.item.Rarity.RARE, submitted.submitted().item().rarity());
 	}
 
@@ -350,6 +350,18 @@ class ContentGenerationDraftTest {
 		assertTrue(inspected.output().get("metadataSet").getAsBoolean(), inspected.output().toString());
 		assertEquals("mythical", inspected.output().get("rarity").getAsString());
 		assertFalse(rejected.output().get("ok").getAsBoolean(), rejected.output().toString());
+	}
+
+	@Test
+	void metadataWrapsTooltipDescriptionAfterEveryFiveWords() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
+
+		ContentGenerationDraft.ToolExecution result = draft.execute(
+				"set_metadata", metadataArguments("rare", "One two three four five six seven eight nine ten eleven."));
+
+		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
+		assertEquals("One two three four five\nsix seven eight nine ten\neleven.",
+				result.output().get("description").getAsString());
 	}
 
 	@Test
