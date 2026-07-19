@@ -121,6 +121,11 @@ public final class DynamicContentManager {
 						|| generated.armor().slot() != requireArmorSlot(requestedArmorSlot)))) {
 			throw new IllegalArgumentException("Generated properties do not match the requested content type");
 		}
+		if (generated.block() != null) {
+			Map<String, DynamicContentDefinition> definitionsByName = definitions.stream().collect(
+					java.util.stream.Collectors.toUnmodifiableMap(DynamicContentDefinition::name, definition -> definition));
+			generated.block().drops().validateNewTargets(name, definitionsByName::get);
+		}
 		Map<String, byte[]> textureAssets = new HashMap<>();
 		byte[] textureBytes = generated.texture().renderPng();
 		String textureHash = DynamicTextureAsset.sha256(textureBytes);
@@ -215,6 +220,16 @@ public final class DynamicContentManager {
 		int deleted = definitions.size() - updatedDefinitions.size();
 		if (deleted == 0) {
 			throw new IllegalArgumentException("None of the selected content still exists");
+		}
+		List<String> dropDependents = updatedDefinitions.stream()
+				.filter(definition -> definition.block() != null
+						&& definition.block().drops().referencedDynamicNames().stream().anyMatch(names::contains))
+				.map(DynamicContentDefinition::displayName)
+				.sorted()
+				.toList();
+		if (!dropDependents.isEmpty()) {
+			throw new IllegalArgumentException("Also delete blocks whose drops depend on this content: "
+					+ String.join(", ", dropDependents));
 		}
 
 		long updatedRevision = revision + 1;

@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 14;
+	public static final int CURRENT_FORMAT = 15;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -140,6 +140,7 @@ public final class DynamicContentJson {
 			));
 		}
 		validateUniqueNames(definitions);
+		DynamicBlockDrops.validateCatalog(definitions);
 		return new Decoded(format, serverId, revision, List.copyOf(definitions));
 	}
 
@@ -289,6 +290,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("comparatorPower", block.comparatorPower());
 		encoded.addProperty("lightLevel", block.lightLevel());
 		encoded.addProperty("visuallyEmissive", block.visuallyEmissive());
+		encoded.add("drops", encodeBlockDrops(block.drops()));
 		JsonArray particles = new JsonArray();
 		for (DynamicParticleEmitter emitter : block.particles()) {
 			JsonObject particle = new JsonObject();
@@ -301,6 +303,47 @@ public final class DynamicContentJson {
 		}
 		encoded.add("particles", particles);
 		return encoded;
+	}
+
+	private static JsonObject encodeBlockDrops(DynamicBlockDrops drops) {
+		JsonObject encoded = new JsonObject();
+		JsonArray entries = new JsonArray();
+		for (DynamicDropEntry entry : drops.entries()) {
+			JsonObject value = new JsonObject();
+			value.addProperty("targetKind", entry.targetKind().serializedName());
+			value.addProperty("target", entry.target());
+			value.addProperty("minCount", entry.minCount());
+			value.addProperty("maxCount", entry.maxCount());
+			value.addProperty("chance", entry.chance());
+			value.addProperty("fortune", entry.fortune().serializedName());
+			entries.add(value);
+		}
+		encoded.add("entries", entries);
+		encoded.addProperty("silkTouchDropsSelf", drops.silkTouchDropsSelf());
+		encoded.addProperty("explosionDecay", drops.explosionDecay());
+		return encoded;
+	}
+
+	private static DynamicBlockDrops decodeBlockDrops(JsonObject encoded) {
+		JsonArray encodedEntries = encoded.getAsJsonArray("entries");
+		if (encodedEntries == null) throw new IllegalArgumentException("Dynamic block drops are missing entries");
+		List<DynamicDropEntry> entries = new ArrayList<>();
+		for (JsonElement element : encodedEntries) {
+			JsonObject value = element.getAsJsonObject();
+			entries.add(new DynamicDropEntry(
+					DynamicDropTargetKind.parse(value.get("targetKind").getAsString()),
+					value.get("target").getAsString(),
+					value.get("minCount").getAsInt(),
+					value.get("maxCount").getAsInt(),
+					value.get("chance").getAsDouble(),
+					DynamicFortuneMode.parse(value.get("fortune").getAsString())
+			));
+		}
+		return new DynamicBlockDrops(
+				entries,
+				encoded.has("silkTouchDropsSelf") && encoded.get("silkTouchDropsSelf").getAsBoolean(),
+				encoded.has("explosionDecay") && encoded.get("explosionDecay").getAsBoolean()
+		);
 	}
 
 	private static DynamicBlockProperties decodeBlock(JsonObject encoded) {
@@ -332,7 +375,8 @@ public final class DynamicContentJson {
 				encoded.has("comparatorPower") ? encoded.get("comparatorPower").getAsInt() : 0,
 				encoded.get("lightLevel").getAsInt(),
 				encoded.get("visuallyEmissive").getAsBoolean(),
-				particles
+				particles,
+				encoded.get("drops") instanceof JsonObject drops ? decodeBlockDrops(drops) : DynamicBlockDrops.DEFAULT
 		);
 	}
 

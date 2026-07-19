@@ -50,9 +50,15 @@ class DynamicContentJsonTest {
 
 	@Test
 	void roundTripPreservesDescriptionAndMythicalRarity() {
+		DynamicBlockDrops drops = new DynamicBlockDrops(List.of(
+				new DynamicDropEntry(DynamicDropTargetKind.REGISTERED_ITEM, "minecraft:amethyst_shard",
+						2, 4, 1.0, DynamicFortuneMode.ORE_LIKE),
+				new DynamicDropEntry(DynamicDropTargetKind.REGISTERED_ITEM, "minecraft:diamond",
+						1, 1, 0.1, DynamicFortuneMode.NONE)
+		), true, true);
 		DynamicBlockProperties block = new DynamicBlockProperties(
 				DynamicMaterial.CRYSTAL, 4.0F, DynamicTool.PICKAXE, true, DynamicBlockShape.FULL_CUBE,
-				true, Rarity.EPIC, 0, 0, 8, true, List.of());
+				true, Rarity.EPIC, 0, 0, 8, true, List.of(), drops);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "moon_crystal", "Moon Crystal",
 				"A crystal that holds a sliver of moonlight.", DynamicRarity.MYTHICAL,
@@ -68,6 +74,44 @@ class DynamicContentJsonTest {
 		assertEquals(Rarity.EPIC, decoded.rarity());
 		assertEquals(Rarity.EPIC, decoded.block().rarity());
 		assertTrue(decoded.block().directional());
+		assertEquals(drops, decoded.block().drops());
+	}
+
+	@Test
+	void legacyBlockWithoutDropRulesKeepsTheExistingSelfDrop() {
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 2.0F, DynamicTool.PICKAXE, false, DynamicBlockShape.FULL_CUBE,
+				0, 0, 0, false, List.of());
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "legacy_block", "Legacy Block", 0L, TEXTURE_HASH,
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
+		JsonObject legacy = JsonParser.parseString(new String(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)), StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 13);
+		legacy.getAsJsonArray("definitions").get(0).getAsJsonObject().getAsJsonObject("block").remove("drops");
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertEquals(DynamicBlockDrops.DEFAULT, decoded.block().drops());
+	}
+
+	@Test
+	void persistedBlockSurvivesARegisteredDropTargetModBeingRemoved() {
+		DynamicBlockDrops drops = new DynamicBlockDrops(List.of(new DynamicDropEntry(
+				DynamicDropTargetKind.REGISTERED_ITEM, "removed_mod:lost_crystal",
+				1, 1, 1.0, DynamicFortuneMode.NONE)), false, false);
+		DynamicBlockProperties block = new DynamicBlockProperties(
+				DynamicMaterial.STONE, 2.0F, DynamicTool.PICKAXE, false, DynamicBlockShape.FULL_CUBE,
+				false, Rarity.COMMON, 0, 0, 0, false, List.of(), drops);
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.BLOCK, "orphaned_ore", "Orphaned Ore", 0L, TEXTURE_HASH,
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition))).definitions().getFirst();
+
+		assertEquals("removed_mod:lost_crystal", decoded.block().drops().entries().getFirst().target());
 	}
 
 	@Test

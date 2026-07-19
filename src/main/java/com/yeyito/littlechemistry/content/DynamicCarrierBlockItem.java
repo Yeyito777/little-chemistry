@@ -5,6 +5,7 @@ import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -25,6 +26,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Locale;
 import java.util.function.Consumer;
 
 public final class DynamicCarrierBlockItem extends BlockItem {
@@ -48,6 +50,82 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 			definition.description().lines().forEach(line ->
 					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
 		}
+		if (definition != null && definition.block() != null) {
+			for (int index = 0; index < definition.block().drops().entries().size(); index++) {
+				DynamicDropEntry entry = definition.block().drops().entries().get(index);
+				builder.accept(Component.translatable(index == 0
+						? "tooltip.little_chemistry.block_drop.primary"
+						: "tooltip.little_chemistry.block_drop.bonus", describeDrop(entry))
+						.withStyle(ChatFormatting.DARK_GRAY));
+			}
+			if (definition.block().drops().silkTouchDropsSelf()) {
+				builder.accept(Component.translatable("tooltip.little_chemistry.block_drop.silk_touch")
+						.withStyle(ChatFormatting.DARK_GRAY));
+			}
+			if (definition.block().drops().explosionDecay()) {
+				builder.accept(Component.translatable("tooltip.little_chemistry.block_drop.explosion_decay")
+						.withStyle(ChatFormatting.DARK_GRAY));
+			}
+		}
+	}
+
+	private static Component describeDrop(DynamicDropEntry entry) {
+		var description = Component.empty();
+		if (entry.chance() < 1.0) {
+			description.append(Component.translatable("tooltip.little_chemistry.block_drop.chance",
+					formatPercentage(entry.chance())));
+		}
+		if (entry.minCount() == entry.maxCount()) {
+			if (entry.minCount() != 1) {
+				description.append(Component.translatable("tooltip.little_chemistry.block_drop.count",
+						entry.minCount()));
+			}
+		} else {
+			description.append(Component.translatable("tooltip.little_chemistry.block_drop.count_range",
+					entry.minCount(), entry.maxCount()));
+		}
+		description.append(dropTargetName(entry));
+		if (entry.fortune() != DynamicFortuneMode.NONE && supportsFortune(entry)) {
+			description.append(Component.translatable("tooltip.little_chemistry.block_drop.fortune"));
+		}
+		return description;
+	}
+
+	private static Component dropTargetName(DynamicDropEntry entry) {
+		if (entry.isSelf()) return Component.translatable("tooltip.little_chemistry.block_drop.self");
+		var id = entry.targetId();
+		if (entry.targetKind() == DynamicDropTargetKind.DYNAMIC_CONTENT) {
+			DynamicContentDefinition generated = DynamicContentCatalog.find(id);
+			return generated == null ? Component.literal(entry.target()) : Component.literal(generated.displayName());
+		}
+		return BuiltInRegistries.ITEM.getOptional(id)
+				.filter(item -> !DynamicContentObjects.isCarrierItem(item))
+				.<Component>map(item -> new ItemStack(item).getHoverName())
+				.orElseGet(() -> Component.literal(entry.target()));
+	}
+
+	private static boolean supportsFortune(DynamicDropEntry entry) {
+		if (entry.isSelf()) return false;
+		var id = entry.targetId();
+		if (entry.targetKind() == DynamicDropTargetKind.DYNAMIC_CONTENT) {
+			DynamicContentDefinition generated = DynamicContentCatalog.find(id);
+			return generated != null && switch (generated.type()) {
+				case BLOCK -> true;
+				case ITEM -> generated.item().maxStack() > 1;
+				case ARMOR -> false;
+			};
+		}
+		return BuiltInRegistries.ITEM.getOptional(id)
+				.filter(item -> !DynamicContentObjects.isCarrierItem(item))
+				.map(item -> new ItemStack(item).getMaxStackSize() > 1)
+				.orElse(false);
+	}
+
+	private static String formatPercentage(double chance) {
+		double percentage = chance * 100.0;
+		return percentage == Math.rint(percentage)
+				? Long.toString(Math.round(percentage))
+				: String.format(Locale.ROOT, "%.1f", percentage);
 	}
 
 	@Override

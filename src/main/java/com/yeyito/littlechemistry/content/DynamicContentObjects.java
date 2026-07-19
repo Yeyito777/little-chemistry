@@ -268,4 +268,9 @@ public final class DynamicContentObjects {
 		Identifier contentId = stack.get(CONTENT_ID);
 		return DynamicContentCatalog.find(contentId);
 	}
+
+	/** Infrastructure carriers are never valid standalone item identities. */
+	public static boolean isCarrierItem(Item item) {
+		return item instanceof DynamicCarrierItem || item instanceof DynamicCarrierBlockItem;
+	}
 }

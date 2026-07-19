@@ -255,6 +255,7 @@ class ContentGenerationDraftTest {
 		JsonObject particles = new JsonObject();
 		particles.add("emitters", new com.google.gson.JsonArray());
 		draft.execute("set_block_particles", particles);
+		draft.execute("set_block_drops", selfDropArguments());
 		draft.execute("set_behavior_source", behaviorSourceArguments());
 		draft.execute("compile_behavior", new JsonObject());
 
@@ -265,6 +266,43 @@ class ContentGenerationDraftTest {
 		assertTrue(submitted.submitted().block().directional());
 		assertEquals(net.minecraft.world.item.Rarity.UNCOMMON, submitted.submitted().block().rarity());
 		assertEquals(1, submitted.submitted().blockModel().textures().size());
+	}
+
+	@Test
+	void blockDropsAreRequiredAndAcceptBoundedNativeRules() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "luminous ore");
+
+		ContentGenerationDraft.ToolExecution before = draft.execute("inspect_draft", new JsonObject());
+		JsonObject drops = selfDropArguments();
+		JsonObject primary = drops.getAsJsonArray("entries").get(0).getAsJsonObject();
+		primary.addProperty("targetKind", "registered_item");
+		primary.addProperty("target", "minecraft:amethyst_shard");
+		primary.addProperty("minCount", 2);
+		primary.addProperty("maxCount", 4);
+		primary.addProperty("fortune", "ore_like");
+		drops.addProperty("silkTouchDropsSelf", true);
+		drops.addProperty("explosionDecay", true);
+
+		ContentGenerationDraft.ToolExecution accepted = draft.execute("set_block_drops", drops);
+		ContentGenerationDraft.ToolExecution after = draft.execute("inspect_draft", new JsonObject());
+
+		assertTrue(before.output().getAsJsonArray("missing").toString().contains("blockDrops"));
+		assertTrue(accepted.output().get("ok").getAsBoolean(), accepted.output().toString());
+		assertEquals(1, after.output().get("blockDropEntryCount").getAsInt());
+		assertTrue(after.output().get("silkTouchDropsSelf").getAsBoolean());
+	}
+
+	@Test
+	void blockDropsRejectMultiplyingTheOwningBlock() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "duplicating block");
+		JsonObject drops = selfDropArguments();
+		JsonObject primary = drops.getAsJsonArray("entries").get(0).getAsJsonObject();
+		primary.addProperty("maxCount", 2);
+
+		ContentGenerationDraft.ToolExecution rejected = draft.execute("set_block_drops", drops);
+
+		assertFalse(rejected.output().get("ok").getAsBoolean(), rejected.output().toString());
+		assertTrue(rejected.output().get("message").getAsString().contains("exactly one"));
 	}
 
 	@Test
@@ -513,6 +551,23 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("requiresCorrectTool", false);
 		arguments.addProperty("shape", shape);
 		arguments.addProperty("directional", false);
+		return arguments;
+	}
+
+	private static JsonObject selfDropArguments() {
+		JsonObject entry = new JsonObject();
+		entry.addProperty("targetKind", "self");
+		entry.addProperty("target", "self");
+		entry.addProperty("minCount", 1);
+		entry.addProperty("maxCount", 1);
+		entry.addProperty("chance", 1.0);
+		entry.addProperty("fortune", "none");
+		com.google.gson.JsonArray entries = new com.google.gson.JsonArray();
+		entries.add(entry);
+		JsonObject arguments = new JsonObject();
+		arguments.add("entries", entries);
+		arguments.addProperty("silkTouchDropsSelf", false);
+		arguments.addProperty("explosionDecay", false);
 		return arguments;
 	}
 
