@@ -45,14 +45,14 @@ public record DynamicContentDefinition(
 		if (armorDisplayTextureHash != null && !armorDisplayTextureHash.matches("[a-f0-9]{64}")) {
 			throw new IllegalArgumentException("Dynamic armor display texture hash is invalid");
 		}
-		if (behaviorSource != null) {
-			behaviorSource = behaviorSource.strip();
-			if (behaviorSource.isEmpty()) behaviorSource = null;
-			if (behaviorSource != null && (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0)) {
-				throw new IllegalArgumentException("Dynamic behavior source is invalid");
-			}
+		if (behaviorSource == null || behaviorSource.isBlank()) {
+			throw new IllegalArgumentException("Dynamic content requires Java behavior source");
 		}
-			switch (type) {
+		behaviorSource = behaviorSource.strip();
+		if (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0) {
+			throw new IllegalArgumentException("Dynamic behavior source is invalid");
+		}
+		switch (type) {
 			case BLOCK -> {
 				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
 					throw new IllegalArgumentException("Block content must have block properties only");
@@ -79,10 +79,6 @@ public record DynamicContentDefinition(
 
 	public String idPath() {
 		return name;
-	}
-
-	public boolean hasBehavior() {
-		return behaviorSource != null;
 	}
 
 	/**

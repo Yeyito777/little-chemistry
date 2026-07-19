@@ -76,8 +76,6 @@ final class ContentGenerationDraft {
 	private Double armorKnockbackResistance;
 	private Integer armorDurability;
 	private DynamicArmorSlot armorSlot;
-	private Boolean customBehaviorPlanned;
-	private String behaviorPlanReason;
 	private String behaviorSource;
 	private boolean behaviorCompiled;
 
@@ -111,12 +109,10 @@ final class ContentGenerationDraft {
 					case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
 					case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
 					case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
-					case "set_behavior_plan" -> setBehaviorPlan(arguments);
 					case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
 					case "set_behavior_source" -> setBehaviorSource(arguments);
 					case "compile_behavior" -> compileBehavior(arguments);
 					case "inspect_behavior_source" -> inspectBehaviorSource(arguments);
-					case "clear_behavior" -> clearBehavior(arguments);
 					case "inspect_draft" -> ToolExecution.success(inspect(), null);
 				case "submit" -> submit(arguments);
 				default -> ToolExecution.error("UNKNOWN_TOOL", "Unknown generation tool: " + tool);
@@ -379,8 +375,8 @@ final class ContentGenerationDraft {
 		requireOnly(arguments, "shape", "supportProfile", "supports", "lightLevel", "visuallyEmissive");
 		DynamicPlacedShape shape = DynamicPlacedShape.parse(requiredString(arguments, "shape"));
 		String supportProfile = requiredString(arguments, "supportProfile");
-		if (!supportProfile.equals("overworld_vegetation") && !supportProfile.equals("custom")) {
-			throw new IllegalArgumentException("supportProfile must be overworld_vegetation or custom");
+		if (!supportProfile.equals("overworld_vegetation") && !supportProfile.equals("explicit")) {
+			throw new IllegalArgumentException("supportProfile must be overworld_vegetation or explicit");
 		}
 		if (supportProfile.equals("overworld_vegetation") && shape != DynamicPlacedShape.CROSS) {
 			throw new IllegalArgumentException("overworld_vegetation support requires cross geometry");
@@ -444,56 +440,15 @@ final class ContentGenerationDraft {
 	private ToolExecution inspectBehaviorApi(JsonObject arguments) {
 		requireOnly(arguments);
 		JsonObject details = new JsonObject();
-		details.addProperty("optional", true);
-		details.addProperty("whenToUse", "Only use generated Java when native block, item, food, tool, placement, armor, light, redstone, and particle properties cannot express a clearly implied ability.");
-		details.addProperty("implementationScope", "Override only callbacks that perform the custom ability. Inherit every other default; do not add empty or PASS-only overrides.");
+		details.addProperty("required", true);
 		details.addProperty("requiredClass", "public final class GeneratedBehaviorImpl implements DynamicBehavior");
+		details.addProperty("constructor", "public GeneratedBehaviorImpl()");
+		details.addProperty("implementationScope", "Every DynamicBehavior method is abstract and must be implemented explicitly by GeneratedBehaviorImpl.");
 		details.addProperty("callbacks", "The API includes held-item use in air/on blocks/on entities, inventory ticks, attacks, mining, consumption, crafting, placed-block use/attack/placement/breaking, entity contact/falls, random and scheduled ticks, neighbor updates, and projectile hits.");
 		details.addProperty("inspection", "Call inspect_java_class for com.yeyito.littlechemistry.behavior.DynamicBehavior and its context records to get the exact current signatures.");
 		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
 		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
-		details.addProperty("semantics", "Callbacks run only on the authoritative server. Return PASS for normal placement, eating, equipping, or block-item fallback; return SUCCESS or CONSUME after handling, and FAIL to reject the use.");
-		details.addProperty("example", """
-				import com.yeyito.littlechemistry.behavior.*;
-				import net.minecraft.core.particles.ParticleTypes;
-				import net.minecraft.world.InteractionResult;
-
-				public final class GeneratedBehaviorImpl implements DynamicBehavior {
-				    public GeneratedBehaviorImpl() {}
-
-				    @Override
-				    public InteractionResult useAir(DynamicItemUseContext context) {
-				        context.level().sendParticles(ParticleTypes.END_ROD,
-				                context.player().getX(), context.player().getY() + 1.0, context.player().getZ(),
-				                8, 0.4, 0.4, 0.4, 0.02);
-				        context.player().getCooldowns().addCooldown(context.stack(), 20);
-				        return InteractionResult.SUCCESS;
-				    }
-				}
-				""");
-		return ToolExecution.success(details, null);
-	}
-
-	private ToolExecution setBehaviorPlan(JsonObject arguments) {
-		requireOnly(arguments, "mode", "reason");
-		String mode = requiredString(arguments, "mode");
-		if (!mode.equals("native") && !mode.equals("custom")) {
-			throw new IllegalArgumentException("mode must be native or custom");
-		}
-		String reason = requiredString(arguments, "reason").strip();
-		if (reason.isEmpty() || reason.length() > 500 || reason.indexOf('\0') >= 0) {
-			throw new IllegalArgumentException("reason must contain 1-500 valid text characters");
-		}
-		customBehaviorPlanned = mode.equals("custom");
-		behaviorPlanReason = reason;
-		if (!customBehaviorPlanned) {
-			behaviorSource = null;
-			behaviorCompiled = false;
-		}
-		JsonObject details = message(customBehaviorPlanned
-				? "Custom behavior was planned. Set and compile only the source needed for the core ability."
-				: "Native behavior was selected; no Java class is needed.");
-		details.addProperty("mode", mode);
+		details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
 		return ToolExecution.success(details, null);
 	}
 
@@ -511,10 +466,6 @@ final class ContentGenerationDraft {
 
 	private ToolExecution setBehaviorSource(JsonObject arguments) {
 		requireOnly(arguments, "source");
-		if (!Boolean.TRUE.equals(customBehaviorPlanned)) {
-			return ToolExecution.error("CUSTOM_BEHAVIOR_NOT_PLANNED",
-					"Call set_behavior_plan with mode=custom and a design reason before setting Java source");
-		}
 		String source = requiredString(arguments, "source").strip();
 		if (source.isEmpty() || source.length() > 60_000 || source.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("source must contain 1-60,000 valid text characters");
@@ -541,15 +492,6 @@ final class ContentGenerationDraft {
 			behaviorCompiled = false;
 			return ToolExecution.error("JAVA_COMPILATION_FAILED", safeMessage(error));
 		}
-	}
-
-	private ToolExecution clearBehavior(JsonObject arguments) {
-		requireOnly(arguments);
-		customBehaviorPlanned = false;
-		behaviorPlanReason = "Custom Java was discarded because native properties are sufficient.";
-		behaviorSource = null;
-		behaviorCompiled = false;
-		return ToolExecution.success(message("Custom Java behavior was cleared; native properties will be used."), null);
 	}
 
 	private ToolExecution submit(JsonObject arguments) {
@@ -608,10 +550,7 @@ final class ContentGenerationDraft {
 		missing().forEach(missing::add);
 		result.add("missing", missing);
 		result.addProperty("complete", missing.isEmpty());
-		result.addProperty("behaviorRequired", Boolean.TRUE.equals(customBehaviorPlanned));
-		result.addProperty("behaviorMode", customBehaviorPlanned == null
-				? "undecided" : customBehaviorPlanned ? "custom" : "native");
-		if (behaviorPlanReason != null) result.addProperty("behaviorPlanReason", behaviorPlanReason);
+		result.addProperty("behaviorRequired", true);
 		result.addProperty("behaviorSourceSet", behaviorSource != null);
 		result.addProperty("behaviorCompiled", behaviorCompiled);
 		result.addProperty("behaviorStatus", behaviorSource == null ? "none" : behaviorCompiled ? "compiled" : "needs_compilation");
@@ -624,12 +563,8 @@ final class ContentGenerationDraft {
 		List<String> missing = new ArrayList<>();
 		if (texture == null) missing.add("texture");
 		if (type == DynamicContentType.ARMOR && armorDisplayTexture == null) missing.add("armorDisplayTexture");
-		if (customBehaviorPlanned == null) {
-			missing.add("behaviorPlan");
-		} else if (customBehaviorPlanned) {
-			if (behaviorSource == null) missing.add("behaviorSource");
-			else if (!behaviorCompiled) missing.add("behaviorCompilation");
-		}
+		if (behaviorSource == null) missing.add("behaviorSource");
+		else if (!behaviorCompiled) missing.add("behaviorCompilation");
 		if (type == DynamicContentType.BLOCK) {
 			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null || blockShape == null) {
 				missing.add("blockProperties");

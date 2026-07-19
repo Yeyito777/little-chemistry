@@ -18,86 +18,58 @@ import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jspecify.annotations.Nullable;
 
-/**
- * Server-side behavior implemented by a separately loaded generated class.
- * Returning PASS preserves the carrier item's normal placement, eating, or
- * block-item behavior.
- */
+/** Server-side behavior implemented in full by a separately loaded generated class. */
 public interface DynamicBehavior {
-	default InteractionResult useAir(DynamicItemUseContext context) {
-		return InteractionResult.PASS;
-	}
+	InteractionResult useAir(DynamicItemUseContext context);
 
-	default InteractionResult useOnBlock(DynamicBlockUseContext context) {
-		return InteractionResult.PASS;
-	}
+	InteractionResult useOnBlock(DynamicBlockUseContext context);
 
-	default InteractionResult interactLivingEntity(DynamicEntityUseContext context) {
-		return InteractionResult.PASS;
-	}
+	InteractionResult interactLivingEntity(DynamicEntityUseContext context);
 
-	default void inventoryTick(ServerLevel level, Entity owner, @Nullable EquipmentSlot slot,
-			ItemStack stack, DynamicContentDefinition definition) {
-	}
+	void inventoryTick(ServerLevel level, Entity owner, @Nullable EquipmentSlot slot,
+			ItemStack stack, DynamicContentDefinition definition);
 
-	default void postHurtEnemy(ServerLevel level, LivingEntity attacker, LivingEntity target,
-			ItemStack stack, DynamicContentDefinition definition) {
-	}
+	void postHurtEnemy(ServerLevel level, LivingEntity attacker, LivingEntity target,
+			ItemStack stack, DynamicContentDefinition definition);
 
-	default void mineBlock(ServerLevel level, LivingEntity miner, BlockPos position, BlockState state,
-			ItemStack stack, DynamicContentDefinition definition) {
-	}
+	void mineBlock(ServerLevel level, LivingEntity miner, BlockPos position, BlockState state,
+			ItemStack stack, DynamicContentDefinition definition);
 
-	default ItemStack finishUsing(ServerLevel level, LivingEntity consumer, ItemStack originalStack,
-			ItemStack resultStack, DynamicContentDefinition definition) {
-		return resultStack;
-	}
+	ItemStack finishUsing(ServerLevel level, LivingEntity consumer, ItemStack originalStack,
+			ItemStack resultStack, DynamicContentDefinition definition);
 
-	default void crafted(ServerLevel level, ServerPlayer player, ItemStack stack,
-			DynamicContentDefinition definition) {
-	}
+	void crafted(ServerLevel level, ServerPlayer player, ItemStack stack,
+			DynamicContentDefinition definition);
 
-	default InteractionResult usePlacedBlock(DynamicPlacedBlockUseContext context) {
-		return InteractionResult.PASS;
-	}
+	InteractionResult usePlacedBlock(DynamicPlacedBlockUseContext context);
 
-	default void attackPlacedBlock(ServerLevel level, ServerPlayer player, BlockPos position,
-			BlockState state, DynamicContentDefinition definition) {
-	}
+	void attackPlacedBlock(ServerLevel level, ServerPlayer player, BlockPos position,
+			BlockState state, DynamicContentDefinition definition);
 
-	default void placedBlock(ServerLevel level, @Nullable LivingEntity placer, BlockPos position,
-			BlockState state, ItemStack placedFrom, DynamicContentDefinition definition) {
-	}
+	void placedBlock(ServerLevel level, @Nullable LivingEntity placer, BlockPos position,
+			BlockState state, ItemStack placedFrom, DynamicContentDefinition definition);
 
-	default void brokenBlock(ServerLevel level, ServerPlayer player, BlockPos position, BlockState state,
-			ItemStack tool, DynamicContentDefinition definition) {
-	}
+	void brokenBlock(ServerLevel level, ServerPlayer player, BlockPos position, BlockState state,
+			ItemStack tool, DynamicContentDefinition definition);
 
-	default void stepOnBlock(ServerLevel level, BlockPos position, BlockState state, Entity entity,
-			DynamicContentDefinition definition) {
-	}
+	void stepOnBlock(ServerLevel level, BlockPos position, BlockState state, Entity entity,
+			DynamicContentDefinition definition);
 
-	default void fallOnBlock(ServerLevel level, BlockPos position, BlockState state, Entity entity,
-			double fallDistance, DynamicContentDefinition definition) {
-	}
+	void fallOnBlock(ServerLevel level, BlockPos position, BlockState state, Entity entity,
+			double fallDistance, DynamicContentDefinition definition);
 
-	default void entityInsideBlock(ServerLevel level, BlockPos position, BlockState state, Entity entity,
-			InsideBlockEffectApplier effects, boolean isEntry, DynamicContentDefinition definition) {
-	}
+	void entityInsideBlock(ServerLevel level, BlockPos position, BlockState state, Entity entity,
+			InsideBlockEffectApplier effects, boolean isEntry, DynamicContentDefinition definition);
 
-	default void randomTickBlock(ServerLevel level, BlockPos position, BlockState state, RandomSource random,
-			DynamicContentDefinition definition) {
-	}
+	void randomTickBlock(ServerLevel level, BlockPos position, BlockState state, RandomSource random,
+			DynamicContentDefinition definition);
 
-	default void scheduledTickBlock(ServerLevel level, BlockPos position, BlockState state, RandomSource random,
-			DynamicContentDefinition definition) {
-	}
+	void scheduledTickBlock(ServerLevel level, BlockPos position, BlockState state, RandomSource random,
+			DynamicContentDefinition definition);
 
-	default void neighborChangedBlock(ServerLevel level, BlockPos position, BlockState state, Block neighbor,
-			@Nullable Orientation orientation, boolean movedByPiston, DynamicContentDefinition definition) {
-	}
+	void neighborChangedBlock(ServerLevel level, BlockPos position, BlockState state, Block neighbor,
+			@Nullable Orientation orientation, boolean movedByPiston, DynamicContentDefinition definition);
 
-	default void projectileHitBlock(ServerLevel level, BlockPos position, BlockState state,
-			BlockHitResult hit, Projectile projectile, DynamicContentDefinition definition) {
-	}
+	void projectileHitBlock(ServerLevel level, BlockPos position, BlockState state,
+			BlockHitResult hit, Projectile projectile, DynamicContentDefinition definition);
 }

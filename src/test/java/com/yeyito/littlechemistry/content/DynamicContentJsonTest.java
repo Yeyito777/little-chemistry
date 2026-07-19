@@ -2,6 +2,8 @@ package com.yeyito.littlechemistry.content;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.Rarity;
 import org.junit.jupiter.api.Test;
 
@@ -26,9 +28,10 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(7, decoded.format());
+		assertEquals(8, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
+		DynamicBehaviorCompiler.compile(decoded.definitions().getFirst().behaviorSource());
 	}
 
 	@Test
@@ -57,7 +60,8 @@ class DynamicContentJsonTest {
 		String displayTextureHash = "1".repeat(64);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.ARMOR, "star_leggings", "Star Leggings", 0L, TEXTURE_HASH,
-				null, displayTextureHash, displayTexture, null, null, armor, null);
+				null, displayTextureHash, displayTexture, null, null, armor,
+				DynamicBehaviorSource.completeLegacySource(null));
 
 		DynamicContentDefinition decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)))
@@ -76,7 +80,7 @@ class DynamicContentJsonTest {
 		DynamicArmorProperties armor = DynamicArmorProperties.defaults(DynamicArmorSlot.HEAD);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.ARMOR, "legacy_helmet", "Legacy Helmet", 0L, TEXTURE_HASH,
-				null, null, null, armor, null);
+				null, null, null, armor, DynamicBehaviorSource.completeLegacySource(null));
 		byte[] current = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition));
 		JsonObject legacy = JsonParser.parseString(new String(current, StandardCharsets.UTF_8)).getAsJsonObject();
 		legacy.addProperty("format", 6);
@@ -89,6 +93,21 @@ class DynamicContentJsonTest {
 	}
 
 	@Test
+	void legacyDefinitionWithoutBehaviorGetsAnExplicitCompilableClass() {
+		byte[] current = DynamicContentJson.encode(
+				UUID.randomUUID(), 1, List.of(definition("legacy_dust", DynamicItemProperties.DEFAULT)));
+		JsonObject legacy = JsonParser.parseString(new String(current, StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 7);
+		legacy.getAsJsonArray("definitions").get(0).getAsJsonObject().remove("behaviorSource");
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+
+		assertEquals(DynamicBehaviorSource.completeLegacySource(null), decoded.behaviorSource());
+		DynamicBehaviorCompiler.compile(decoded.behaviorSource());
+	}
+
+	@Test
 	void newBlockMeshesHaveStableSerializedNames() {
 		assertEquals("star", DynamicBlockShape.STAR.serializedName());
 		assertEquals(DynamicBlockShape.STAR, DynamicBlockShape.parse("star"));
@@ -98,7 +117,8 @@ class DynamicContentJsonTest {
 
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
 		return new DynamicContentDefinition(
-				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null, null);
+				DynamicContentType.ITEM, name, name, 0L, TEXTURE_HASH, null, null, item, null,
+				DynamicBehaviorSource.completeLegacySource(null));
 	}
 
 	private static DynamicArmorDisplayTextureSpec displayTexture() {

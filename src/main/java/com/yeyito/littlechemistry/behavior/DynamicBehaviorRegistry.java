@@ -37,7 +37,6 @@ public final class DynamicBehaviorRegistry {
 	public static synchronized void replace(Collection<DynamicContentDefinition> definitions) {
 		Map<String, Loaded> replacement = new HashMap<>();
 		for (DynamicContentDefinition definition : definitions) {
-			if (!definition.hasBehavior()) continue;
 			try {
 				replacement.put(definition.name(), load(definition.behaviorSource()));
 			} catch (RuntimeException error) {

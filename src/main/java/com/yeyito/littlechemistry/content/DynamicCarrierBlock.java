@@ -76,7 +76,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected InteractionResult useItemOn(ItemStack heldStack, BlockState state, Level level, BlockPos position,
 			Player player, InteractionHand hand, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
@@ -91,7 +91,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos position,
 			Player player, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
@@ -218,7 +218,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			player.awardStat(Stats.BLOCK_MINED.get(this));
 			player.causeFoodExhaustion(0.005F);
 		}
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel
+		if (definition != null && level instanceof ServerLevel serverLevel
 				&& player instanceof ServerPlayer serverPlayer) {
 			DynamicBehaviorRegistry.brokenBlock(definition, serverLevel, serverPlayer, position, state, destroyedWith);
 		}
@@ -228,7 +228,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	public void setPlacedBy(Level level, BlockPos position, BlockState state, LivingEntity placer, ItemStack stack) {
 		super.setPlacedBy(level, position, state, placer, stack);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.placedBlock(definition, serverLevel, placer, position, state, stack);
 		}
 	}
@@ -237,7 +237,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected void attack(BlockState state, Level level, BlockPos position, Player player) {
 		super.attack(state, level, position, player);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel
+		if (definition != null && level instanceof ServerLevel serverLevel
 				&& player instanceof ServerPlayer serverPlayer) {
 			DynamicBehaviorRegistry.attackPlacedBlock(definition, serverLevel, serverPlayer, position, state);
 		}
@@ -247,7 +247,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	public void stepOn(Level level, BlockPos position, BlockState state, Entity entity) {
 		super.stepOn(level, position, state, entity);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.stepOnBlock(definition, serverLevel, position, state, entity);
 		}
 	}
@@ -256,7 +256,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	public void fallOn(Level level, BlockState state, BlockPos position, Entity entity, double fallDistance) {
 		super.fallOn(level, state, position, entity, fallDistance);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.fallOnBlock(definition, serverLevel, position, state, entity, fallDistance);
 		}
 	}
@@ -266,7 +266,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			InsideBlockEffectApplier effects, boolean isEntry) {
 		super.entityInside(state, level, position, entity, effects, isEntry);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.entityInsideBlock(
 					definition, serverLevel, position, state, entity, effects, isEntry);
 		}
@@ -276,7 +276,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected void randomTick(BlockState state, ServerLevel level, BlockPos position, RandomSource random) {
 		super.randomTick(state, level, position, random);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			DynamicBehaviorRegistry.randomTickBlock(definition, level, position, state, random);
 		}
 	}
@@ -285,7 +285,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected void tick(BlockState state, ServerLevel level, BlockPos position, RandomSource random) {
 		super.tick(state, level, position, random);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			DynamicBehaviorRegistry.scheduledTickBlock(definition, level, position, state, random);
 		}
 	}
@@ -295,7 +295,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			Orientation orientation, boolean movedByPiston) {
 		super.neighborChanged(state, level, position, neighbor, orientation, movedByPiston);
 		DynamicContentDefinition definition = definition(level, position);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.neighborChangedBlock(
 					definition, serverLevel, position, state, neighbor, orientation, movedByPiston);
 		}
@@ -305,7 +305,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected void onProjectileHit(Level level, BlockState state, BlockHitResult hit, Projectile projectile) {
 		super.onProjectileHit(level, state, hit, projectile);
 		DynamicContentDefinition definition = definition(level, hit.getBlockPos());
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.projectileHitBlock(
 					definition, serverLevel, hit.getBlockPos(), state, hit, projectile);
 		}

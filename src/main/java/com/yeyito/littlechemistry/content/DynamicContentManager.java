@@ -71,7 +71,7 @@ public final class DynamicContentManager {
 			DynamicContentManager manager;
 			if (Files.isRegularFile(dataFile)) {
 				DynamicContentJson.Decoded decoded = DynamicContentJson.decode(Files.readAllBytes(dataFile));
-				if (decoded.format() < 4) {
+				if (decoded.format() < 8) {
 					backupLegacyCatalog(dataFile, decoded.format());
 				}
 				manager = new DynamicContentManager(server, dataFile, decoded.serverId(), decoded.revision(), decoded.definitions());
@@ -106,35 +106,6 @@ public final class DynamicContentManager {
 		return server == candidate;
 	}
 
-	public DynamicContentDefinition create(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
-			String requestedName) throws IOException {
-		validateArmorSlot(type, requestedArmorSlot);
-		if (type == DynamicContentType.ARMOR) {
-			throw new IllegalArgumentException("New armor requires a generated inventory icon and separate display texture");
-		}
-		String displayName = normalizeDisplayName(requestedName);
-		String name = normalizeIdentifier(displayName);
-		if (definitions.stream().anyMatch(definition -> definition.name().equals(name))) {
-			throw new IllegalArgumentException("Dynamic content named '" + name + "' already exists.");
-		}
-
-		long textureSeed = RANDOM.nextLong();
-		byte[] textureBytes = DynamicTextureAsset.generate(textureSeed);
-		String textureHash = DynamicTextureAsset.sha256(textureBytes);
-		DynamicContentDefinition definition = new DynamicContentDefinition(
-				type, name, displayName, textureSeed, textureHash, null,
-				type == DynamicContentType.BLOCK ? DynamicBlockProperties.DEFAULT : null,
-				type == DynamicContentType.ITEM ? DynamicItemProperties.DEFAULT : null,
-				type == DynamicContentType.ARMOR ? DynamicArmorProperties.defaults(requireArmorSlot(requestedArmorSlot)) : null,
-				null
-		);
-		return commit(definition, textureBytes, null, null, null);
-	}
-
-	public DynamicContentDefinition create(DynamicContentType type, String requestedName) throws IOException {
-		return create(type, null, requestedName);
-	}
-
 	public DynamicContentDefinition createGenerated(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
 			String requestedName, GeneratedContentSpec generated)
 			throws IOException {
@@ -156,14 +127,9 @@ public final class DynamicContentManager {
 				? null : generated.armorDisplayTexture().renderPng();
 		String armorDisplayTextureHash = armorDisplayTextureBytes == null
 				? null : DynamicTextureAsset.sha256(armorDisplayTextureBytes);
-		DynamicBehaviorCompiler.Compiled compiledBehavior = null;
-		DynamicBehavior behavior = null;
-		String behaviorSource = null;
-		if (generated.hasBehavior()) {
-			compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
-			behavior = compiledBehavior.instantiate();
-			behaviorSource = compiledBehavior.source();
-		}
+		DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
+		DynamicBehavior behavior = compiledBehavior.instantiate();
+		String behaviorSource = compiledBehavior.source();
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				type,
 				name,
@@ -203,9 +169,7 @@ public final class DynamicContentManager {
 		revision = updatedRevision;
 		cachedPayload = updatedPayload;
 		DynamicContentCatalog.replace(definitions);
-		if (compiledBehavior != null) {
-			DynamicBehaviorRegistry.install(definition.name(), compiledBehavior, behavior);
-		}
+		DynamicBehaviorRegistry.install(definition.name(), compiledBehavior, behavior);
 		broadcast();
 		return definition;
 	}

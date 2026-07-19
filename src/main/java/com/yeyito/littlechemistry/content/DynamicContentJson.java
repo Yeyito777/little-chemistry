@@ -6,6 +6,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Rarity;
 
@@ -23,7 +24,7 @@ public final class DynamicContentJson {
 
 	public static byte[] encode(UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
 		JsonObject root = new JsonObject();
-		root.addProperty("format", 7);
+		root.addProperty("format", 8);
 		root.addProperty("serverId", serverId.toString());
 		root.addProperty("revision", revision);
 		JsonArray entries = new JsonArray();
@@ -46,9 +47,7 @@ public final class DynamicContentJson {
 				case ITEM -> entry.add("item", encodeItem(definition.item()));
 				case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
 			}
-			if (definition.hasBehavior()) {
-				entry.addProperty("behaviorSource", definition.behaviorSource());
-			}
+			entry.addProperty("behaviorSource", definition.behaviorSource());
 			entries.add(entry);
 		}
 		root.add("definitions", entries);
@@ -58,7 +57,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = root.get("format").getAsInt();
-		if (format < 1 || format > 7) {
+		if (format < 1 || format > 8) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -106,8 +105,17 @@ public final class DynamicContentJson {
 			DynamicArmorProperties armor = type == DynamicContentType.ARMOR
 					? format >= 6 && entry.has("armor") ? decodeArmor(entry.getAsJsonObject("armor")) : null
 					: null;
-			String behaviorSource = format >= 4 && entry.has("behaviorSource")
-					? entry.get("behaviorSource").getAsString() : null;
+			String behaviorSource;
+			if (format >= 8) {
+				if (!entry.has("behaviorSource")) {
+					throw new IllegalArgumentException("Dynamic content is missing required Java behavior source");
+				}
+				behaviorSource = entry.get("behaviorSource").getAsString();
+			} else {
+				String legacySource = format >= 4 && entry.has("behaviorSource")
+						? entry.get("behaviorSource").getAsString() : null;
+				behaviorSource = DynamicBehaviorSource.completeLegacySource(legacySource);
+			}
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, textureSeed, textureHash, texture,
 					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource

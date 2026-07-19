@@ -29,16 +29,12 @@ public record GeneratedContentSpec(
 		if ((armor == null) != (armorDisplayTexture == null)) {
 			throw new IllegalArgumentException("Generated armor requires a separate 64x32 display texture");
 		}
-		if (behaviorSource != null) {
-			behaviorSource = behaviorSource.strip();
-			if (behaviorSource.isEmpty()) behaviorSource = null;
-			if (behaviorSource != null && (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0)) {
-				throw new IllegalArgumentException("Generated behavior source is invalid");
-			}
+		if (behaviorSource == null || behaviorSource.isBlank()) {
+			throw new IllegalArgumentException("Generated content requires Java behavior source");
 		}
-	}
-
-	public boolean hasBehavior() {
-		return behaviorSource != null;
+		behaviorSource = behaviorSource.strip();
+		if (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0) {
+			throw new IllegalArgumentException("Generated behavior source is invalid");
+		}
 	}
 }

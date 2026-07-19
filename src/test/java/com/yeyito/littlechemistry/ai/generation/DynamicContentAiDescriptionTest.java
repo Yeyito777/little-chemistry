@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonObject;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicBreakingPower;
@@ -43,7 +44,7 @@ class DynamicContentAiDescriptionTest {
 				List.of(new DynamicParticleEmitter(DynamicParticleType.GLOW, 0.1, 2, 0.05, true)));
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "charged_crystal", "Charged Crystal", 0L, TEXTURE_HASH,
-				null, block, null, null, null);
+				null, block, null, null, DynamicBehaviorSource.completeLegacySource(null));
 
 		JsonObject description = DynamicContentAiDescription.describe(definition);
 		JsonObject properties = description.getAsJsonObject("gameplayProperties");
@@ -60,23 +61,17 @@ class DynamicContentAiDescriptionTest {
 		assertTrue(properties.get("visuallyEmissive").getAsBoolean());
 		assertEquals("glow", properties.getAsJsonArray("particles").get(0).getAsJsonObject()
 				.get("type").getAsString());
-		assertEquals("native", description.getAsJsonObject("behavior").get("mode").getAsString());
+		assertEquals(19, description.getAsJsonObject("behavior").getAsJsonArray("implementedCallbacks").size());
 	}
 
 	@Test
-	void exposesItemFoodAndCustomBehavior() {
+	void exposesItemFoodAndCodeBehavior() {
 		DynamicFoodProperties food = new DynamicFoodProperties(8, 6.5F, 1.2F, true, List.of());
 		DynamicItemProperties item = new DynamicItemProperties(
 				DynamicItemType.FOOD, DynamicHeldType.REGULAR, 16, Rarity.RARE, true, 12, 2.5,
 				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
 				0, 0, 0, food, null);
-		String source = """
-				public final class GeneratedBehaviorImpl implements DynamicBehavior {
-				    @Override public InteractionResult useAir(DynamicItemUseContext context) {
-				        return InteractionResult.SUCCESS;
-				    }
-				}
-				""";
+		String source = DynamicBehaviorSource.completeLegacySource(null);
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.ITEM, "phase_berry", "Phase Berry", 0L, TEXTURE_HASH,
 				null, null, item, null, source);
@@ -92,9 +87,9 @@ class DynamicContentAiDescriptionTest {
 		assertEquals(12, properties.get("enchantability").getAsInt());
 		assertEquals(2.5, properties.get("reach").getAsDouble());
 		assertEquals(8, properties.getAsJsonObject("food").get("hunger").getAsInt());
-		assertEquals("custom", behavior.get("mode").getAsString());
 		assertEquals("useAir", behavior.getAsJsonArray("implementedCallbacks").get(0).getAsString());
-		assertTrue(behavior.get("javaSourceExcerpt").getAsString().contains("InteractionResult.SUCCESS"));
+		assertEquals(19, behavior.getAsJsonArray("implementedCallbacks").size());
+		assertTrue(behavior.get("javaSourceExcerpt").getAsString().contains("GeneratedBehaviorImpl"));
 		assertFalse(behavior.get("javaSourceTruncated").getAsBoolean());
 	}
 }

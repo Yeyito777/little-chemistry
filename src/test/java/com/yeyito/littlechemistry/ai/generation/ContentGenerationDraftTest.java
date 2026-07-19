@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonObject;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicContentType;
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -138,42 +138,39 @@ class ContentGenerationDraftTest {
 	}
 
 	@Test
-	void completedNativeItemSubmitsWithoutBehaviorClass() {
+	void completedItemRequiresAndSubmitsWithCompiledBehaviorClass() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
 		draft.execute("set_texture", itemTextureArguments());
 		draft.execute("set_item_properties", ordinaryItemArguments());
-		draft.execute("set_behavior_plan", behaviorPlanArguments("native"));
+		draft.execute("set_behavior_source", behaviorSourceArguments());
+		draft.execute("compile_behavior", new JsonObject());
 
 		ContentGenerationDraft.ToolExecution inspected = draft.execute("inspect_draft", new JsonObject());
 		ContentGenerationDraft.ToolExecution submitted = draft.execute("submit", new JsonObject());
 
-		assertFalse(inspected.output().get("behaviorRequired").getAsBoolean(), inspected.output().toString());
-		assertEquals("native", inspected.output().get("behaviorMode").getAsString());
+		assertTrue(inspected.output().get("behaviorRequired").getAsBoolean(), inspected.output().toString());
 		assertTrue(inspected.output().get("complete").getAsBoolean(), inspected.output().toString());
 		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
-		assertNull(submitted.submitted().behaviorSource());
+		assertTrue(submitted.submitted().behaviorSource().contains("GeneratedBehaviorImpl"));
 	}
 
 	@Test
-	void optionalBehaviorMustCompileWhenSourceWasSetAndCanBeCleared() {
+	void behaviorSourceMustImplementTheCompleteInterfaceBeforeItCompiles() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
-		draft.execute("set_behavior_plan", behaviorPlanArguments("custom"));
 		JsonObject source = new JsonObject();
-		source.addProperty("source", "public final class GeneratedBehaviorImpl {}");
+		source.addProperty("source", "public final class GeneratedBehaviorImpl implements com.yeyito.littlechemistry.behavior.DynamicBehavior { public GeneratedBehaviorImpl() {} }");
 		draft.execute("set_behavior_source", source);
 
 		ContentGenerationDraft.ToolExecution withSource = draft.execute("inspect_draft", new JsonObject());
-		draft.execute("clear_behavior", new JsonObject());
-		ContentGenerationDraft.ToolExecution cleared = draft.execute("inspect_draft", new JsonObject());
+		ContentGenerationDraft.ToolExecution compiled = draft.execute("compile_behavior", new JsonObject());
 
 		assertTrue(withSource.output().getAsJsonArray("missing").toString().contains("behaviorCompilation"));
-		assertFalse(cleared.output().getAsJsonArray("missing").toString().contains("behavior"));
-		assertEquals("none", cleared.output().get("behaviorStatus").getAsString());
-		assertEquals("native", cleared.output().get("behaviorMode").getAsString());
+		assertFalse(compiled.output().get("ok").getAsBoolean(), compiled.output().toString());
+		assertEquals("JAVA_COMPILATION_FAILED", compiled.output().get("code").getAsString());
 	}
 
 	@Test
-	void submitRequiresAnExplicitBehaviorPlan() {
+	void submitRequiresBehaviorSource() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
 		draft.execute("set_texture", itemTextureArguments());
 		draft.execute("set_item_properties", ordinaryItemArguments());
@@ -181,46 +178,27 @@ class ContentGenerationDraftTest {
 		ContentGenerationDraft.ToolExecution inspected = draft.execute("inspect_draft", new JsonObject());
 
 		assertFalse(inspected.output().get("complete").getAsBoolean(), inspected.output().toString());
-		assertTrue(inspected.output().getAsJsonArray("missing").toString().contains("behaviorPlan"));
-		assertEquals("undecided", inspected.output().get("behaviorMode").getAsString());
-	}
-
-	@Test
-	void customBehaviorPlanRequiresSource() {
-		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "fairy wand");
-		draft.execute("set_behavior_plan", behaviorPlanArguments("custom"));
-
-		ContentGenerationDraft.ToolExecution inspected = draft.execute("inspect_draft", new JsonObject());
-
 		assertTrue(inspected.output().getAsJsonArray("missing").toString().contains("behaviorSource"));
 		assertTrue(inspected.output().get("behaviorRequired").getAsBoolean());
-		assertEquals("custom", inspected.output().get("behaviorMode").getAsString());
 	}
 
 	@Test
-	void behaviorSourceIsRejectedWithoutCustomPlan() {
+	void behaviorSourceIsAcceptedWithoutAPlan() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
-		JsonObject source = new JsonObject();
-		source.addProperty("source", "public final class GeneratedBehaviorImpl {}");
 
-		ContentGenerationDraft.ToolExecution result = draft.execute("set_behavior_source", source);
+		ContentGenerationDraft.ToolExecution result = draft.execute("set_behavior_source", behaviorSourceArguments());
 
-		assertFalse(result.output().get("ok").getAsBoolean(), result.output().toString());
-		assertEquals("CUSTOM_BEHAVIOR_NOT_PLANNED", result.output().get("code").getAsString());
+		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
 	}
 
 	@Test
-	void minimalBehaviorApiExampleCompiles() {
+	void behaviorApiRequiresEveryMethodWithoutSupplyingAnImplementationTemplate() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "fairy wand");
-		draft.execute("set_behavior_plan", behaviorPlanArguments("custom"));
 		ContentGenerationDraft.ToolExecution inspected = draft.execute("inspect_behavior_api", new JsonObject());
-		JsonObject source = new JsonObject();
-		source.addProperty("source", inspected.output().get("example").getAsString());
-		draft.execute("set_behavior_source", source);
 
-		ContentGenerationDraft.ToolExecution compiled = draft.execute("compile_behavior", new JsonObject());
-
-		assertTrue(compiled.output().get("ok").getAsBoolean(), compiled.output().toString());
+		assertTrue(inspected.output().get("required").getAsBoolean(), inspected.output().toString());
+		assertTrue(inspected.output().get("implementationScope").getAsString().contains("Every DynamicBehavior method"));
+		assertFalse(inspected.output().has("example"));
 	}
 
 	@Test
@@ -316,12 +294,9 @@ class ContentGenerationDraftTest {
 		return arguments;
 	}
 
-	private static JsonObject behaviorPlanArguments(String mode) {
+	private static JsonObject behaviorSourceArguments() {
 		JsonObject arguments = new JsonObject();
-		arguments.addProperty("mode", mode);
-		arguments.addProperty("reason", mode.equals("custom")
-				? "The requested item has an active ability beyond native properties."
-				: "Native properties completely express this passive item.");
+		arguments.addProperty("source", DynamicBehaviorSource.completeLegacySource(null));
 		return arguments;
 	}
 }

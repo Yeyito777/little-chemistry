@@ -33,7 +33,7 @@ public final class DynamicCarrierItem extends Item {
 		super.inventoryTick(stack, level, owner, slot);
 		DynamicContentObjects.refreshDynamicAttributes(stack);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			DynamicBehaviorRegistry.inventoryTick(definition, level, owner, slot, stack);
 		}
 	}
@@ -42,7 +42,7 @@ public final class DynamicCarrierItem extends Item {
 	public InteractionResult useOn(UseOnContext context) {
 		ItemStack stack = context.getItemInHand();
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			if (context.getLevel().isClientSide()) return InteractionResult.SUCCESS;
 			if (context.getLevel() instanceof ServerLevel serverLevel
 					&& context.getPlayer() instanceof ServerPlayer serverPlayer) {
@@ -77,7 +77,7 @@ public final class DynamicCarrierItem extends Item {
 			blockEntity.setChanged();
 			level.sendBlockUpdated(position, state, state, 3);
 		}
-		if (definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.placedBlock(
 					definition, serverLevel, context.getPlayer(), position, state, stack);
 		}
@@ -93,7 +93,7 @@ public final class DynamicCarrierItem extends Item {
 	public InteractionResult use(Level level, Player player, InteractionHand hand) {
 		ItemStack stack = player.getItemInHand(hand);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult behaviorResult = DynamicBehaviorRegistry.useAir(
@@ -108,7 +108,7 @@ public final class DynamicCarrierItem extends Item {
 	public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity target,
 			InteractionHand hand) {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior()) {
+		if (definition != null) {
 			if (player.level().isClientSide()) return InteractionResult.SUCCESS;
 			if (player instanceof ServerPlayer serverPlayer && player.level() instanceof ServerLevel serverLevel) {
 				InteractionResult result = DynamicBehaviorRegistry.interactLivingEntity(
@@ -123,7 +123,7 @@ public final class DynamicCarrierItem extends Item {
 	public void postHurtEnemy(ItemStack stack, LivingEntity target, LivingEntity attacker) {
 		super.postHurtEnemy(stack, target, attacker);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior() && attacker.level() instanceof ServerLevel level) {
+		if (definition != null && attacker.level() instanceof ServerLevel level) {
 			DynamicBehaviorRegistry.postHurtEnemy(definition, level, attacker, target, stack);
 		}
 	}
@@ -132,7 +132,7 @@ public final class DynamicCarrierItem extends Item {
 	public boolean mineBlock(ItemStack stack, Level level, BlockState state, BlockPos position, LivingEntity miner) {
 		boolean result = super.mineBlock(stack, level, state, position, miner);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.mineBlock(definition, serverLevel, miner, position, state, stack);
 		}
 		return result;
@@ -143,7 +143,7 @@ public final class DynamicCarrierItem extends Item {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		ItemStack original = stack.copy();
 		ItemStack result = super.finishUsingItem(stack, level, consumer);
-		if (definition != null && definition.hasBehavior() && level instanceof ServerLevel serverLevel) {
+		if (definition != null && level instanceof ServerLevel serverLevel) {
 			return DynamicBehaviorRegistry.finishUsing(definition, serverLevel, consumer, original, result);
 		}
 		return result;
@@ -153,7 +153,7 @@ public final class DynamicCarrierItem extends Item {
 	public void onCraftedBy(ItemStack stack, Player player) {
 		super.onCraftedBy(stack, player);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
-		if (definition != null && definition.hasBehavior() && player instanceof ServerPlayer serverPlayer
+		if (definition != null && player instanceof ServerPlayer serverPlayer
 				&& player.level() instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.crafted(definition, serverLevel, serverPlayer, stack);
 		}

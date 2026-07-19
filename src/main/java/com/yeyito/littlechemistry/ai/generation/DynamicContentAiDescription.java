@@ -144,11 +144,6 @@ public final class DynamicContentAiDescription {
 
 	private static JsonObject describeBehavior(String source) {
 		JsonObject result = new JsonObject();
-		if (source == null) {
-			result.addProperty("mode", "native");
-			return result;
-		}
-		result.addProperty("mode", "custom");
 		JsonArray callbacks = new JsonArray();
 		for (String callback : BEHAVIOR_CALLBACKS) {
 			if (Pattern.compile("\\b" + callback + "\\s*\\(").matcher(source).find()) callbacks.add(callback);

@@ -73,4 +73,41 @@ final class DynamicBehaviorCompilerTest {
 		assertTrue(error.getMessage().contains("Java compilation failed"));
 		assertTrue(error.getMessage().contains("Line"));
 	}
+
+	@Test
+	void rejectsAClassThatReliesOnInterfaceDefaults() {
+		String incomplete = """
+				public final class GeneratedBehaviorImpl implements com.yeyito.littlechemistry.behavior.DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+				}
+				""";
+
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> DynamicBehaviorCompiler.compile(incomplete));
+
+		assertTrue(error.getMessage().contains("abstract"), error.getMessage());
+	}
+
+	@Test
+	void legacySourceMigrationAddsExplicitMethodsAndPreservesExistingCode() {
+		String legacy = """
+				import com.yeyito.littlechemistry.behavior.*;
+				import net.minecraft.world.InteractionResult;
+
+				public final class GeneratedBehaviorImpl implements DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+				    // Mentioning useOnBlock(...) in a comment must not hide the missing method.
+				    private final Object decoy = new Object() { public void useOnBlock(Object ignored) {} };
+				    @Override public InteractionResult useAir(DynamicItemUseContext context) {
+				        return InteractionResult.SUCCESS;
+				    }
+				}
+				""";
+
+		String migrated = DynamicBehaviorSource.completeLegacySource(legacy);
+		DynamicBehavior behavior = DynamicBehaviorCompiler.compile(migrated).instantiate();
+
+		assertEquals(InteractionResult.SUCCESS, behavior.useAir(null));
+		assertEquals(InteractionResult.PASS, behavior.useOnBlock(null));
+	}
 }
