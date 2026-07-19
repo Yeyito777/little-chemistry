@@ -1,8 +1,8 @@
 # Little Chemistry
 
-Little Chemistry is an experimental Fabric mod about using AI to make everything craftable in Minecraft.
+Little Chemistry is an experimental Fabric mod about using AI to make everything craftable and smeltable in Minecraft.
 
-The goal is simple: when a player tries to craft something whose recipe does not exist—or whose generated recipe has not yet been cached for the current server—the mod asks AI to invent a fitting result, including how many items the recipe produces, and makes it appear. The crafting snapshot resolves generated ingredients to their complete native gameplay properties and a bounded view of any hot-loaded behavior, so the model reasons about the logical item, block, or armor piece instead of its shared carrier registry entry. Once generated, the server caches the recipe and its output count so everyone can reuse it without another AI request.
+The goal is simple: when a player tries to craft or furnace-smelt something whose recipe does not exist—or whose generated recipe has not yet been cached for the current server—the mod asks AI to invent a fitting result, including how many items the recipe produces, and makes it appear. Recipe snapshots resolve generated ingredients to their complete native gameplay properties and a bounded view of any hot-loaded behavior, so the model reasons about the logical item, block, or armor piece instead of its shared carrier registry entry. Once generated, the server caches the recipe and its output count so everyone can reuse it without another AI request. Crafting tables and normal furnaces expose the same **Make Recipe** workflow; furnace recipes use Minecraft's native fuel, 200-tick cooking cycle, result stacking, and experience handling.
 
 The current first milestone provides:
 

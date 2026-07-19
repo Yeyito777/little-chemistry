@@ -135,6 +135,17 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 	}
 
 	@Override
+	public boolean littleChemistry$requestRecipe(ServerPlayer player) {
+		AiCraftingManager manager = AiCraftingManager.active();
+		return manager != null && littleChemistry$table != null && manager.requestRecipe(player, littleChemistry$table);
+	}
+
+	@Override
+	public boolean littleChemistry$isLockedRecipeSlot(int slotIndex) {
+		return slotIndex >= 0 && slotIndex <= 9;
+	}
+
+	@Override
 	public @Nullable SharedCraftingContainer littleChemistry$getSharedTable() {
 		return littleChemistry$table;
 	}

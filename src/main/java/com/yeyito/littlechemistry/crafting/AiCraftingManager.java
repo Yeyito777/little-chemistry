@@ -10,6 +10,7 @@ import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.GenerationModel;
 import com.yeyito.littlechemistry.ai.generation.RecipeGenerationAgent;
+import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
@@ -23,6 +24,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Container;
 import net.minecraft.world.Containers;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.item.ItemStack;
@@ -30,8 +32,12 @@ import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.SingleRecipeInput;
+import net.minecraft.world.item.crafting.SmeltingRecipe;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.FurnaceBlockEntity;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
@@ -39,8 +45,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,10 +60,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-/** Owns physical and portable crafting grids, cached AI recipes, and active recipe jobs. */
+/** Owns physical and portable crafting grids, persistent AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 1;
-	private static final int RECIPES_FORMAT = 2;
+	private static final int RECIPES_FORMAT = 3;
 	private static final int MAX_ACTIVE_JOBS = 8;
 	private static final String REASONING_EFFORT = "low";
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
@@ -66,8 +74,13 @@ public final class AiCraftingManager {
 	private final Path recipesFile;
 	private final Map<TableKey, SharedCraftingContainer> tables = new HashMap<>();
 	private final Map<RecipeSignature, AiCraftingRecipe> recipes = new LinkedHashMap<>();
+	private final Map<SmeltingRecipeSignature, AiSmeltingRecipe> smeltingRecipes = new LinkedHashMap<>();
+	private final Map<ResourceKey<Recipe<?>>, RecipeHolder<?>> recipesByKey = new HashMap<>();
 	private final Map<RecipeSignature, ActiveJob> jobs = new HashMap<>();
+	private final Map<SmeltingRecipeSignature, ActiveSmeltingJob> smeltingJobs = new HashMap<>();
+	private final Map<Container, SmeltingRecipeSignature> furnaceLocks = new IdentityHashMap<>();
 	private boolean tablesDirty;
+	private boolean recipesNeedRewrite;
 
 	private AiCraftingManager(MinecraftServer server) throws IOException {
 		this.server = server;
@@ -76,14 +89,17 @@ public final class AiCraftingManager {
 		this.recipesFile = directory.resolve("ai-recipes.json");
 		loadTables();
 		loadRecipes();
+		if (pruneUnavailableRecipes()) recipesNeedRewrite = true;
+		if (recipesNeedRewrite) saveRecipes(recipes, smeltingRecipes);
+		rebuildRecipeIndex();
 	}
 
 	public static void start(MinecraftServer server) {
 		try {
 			AiCraftingManager manager = new AiCraftingManager(server);
 			active = manager;
-			LittleChemistry.LOGGER.info("Loaded {} shared crafting tables and {} AI recipes",
-					manager.tables.size(), manager.recipes.size());
+			LittleChemistry.LOGGER.info("Loaded {} shared crafting tables, {} AI crafting recipes, and {} AI smelting recipes",
+					manager.tables.size(), manager.recipes.size(), manager.smeltingRecipes.size());
 		} catch (IOException error) {
 			throw new IllegalStateException("Could not load Little Chemistry crafting data", error);
 		}
@@ -99,6 +115,12 @@ public final class AiCraftingManager {
 			job.tables.forEach(table -> table.unlock(job.signature));
 		}
 		manager.jobs.clear();
+		for (ActiveSmeltingJob job : List.copyOf(manager.smeltingJobs.values())) {
+			job.promise.completeExceptionally(new IllegalStateException("Server stopped during recipe generation"));
+			if (job.task != null) job.task.cancel(true);
+		}
+		manager.smeltingJobs.clear();
+		manager.furnaceLocks.clear();
 		try {
 			manager.flushTables();
 		} catch (IOException error) {
@@ -108,6 +130,14 @@ public final class AiCraftingManager {
 
 	public static AiCraftingManager active() {
 		return active;
+	}
+
+	public boolean belongsTo(Level level) {
+		return level.getServer() == server;
+	}
+
+	public boolean ownsRecipeManager(RecipeManager recipeManager) {
+		return server.getRecipeManager() == recipeManager;
 	}
 
 	public static void tick(MinecraftServer server) {
@@ -141,9 +171,33 @@ public final class AiCraftingManager {
 		AiCraftingRecipe recipe = recipes.get(signature);
 		if (recipe == null) recipe = recipes.get(signature.mirrored());
 		if (recipe == null || !recipe.outputAvailable()) return Optional.empty();
-		ResourceKey<Recipe<?>> key = ResourceKey.create(Registries.RECIPE,
-				LittleChemistry.id("ai/" + Integer.toUnsignedString(recipe.signature().hashCode(), 16) + "_" + recipe.outputName()));
-		return Optional.of(new RecipeHolder<>(key, recipe));
+		return Optional.of(craftingHolder(recipe));
+	}
+
+	public Optional<RecipeHolder<SmeltingRecipe>> findSmeltingRecipe(SingleRecipeInput input, Level level) {
+		if (level.getServer() != server) return Optional.empty();
+		SmeltingRecipeSignature signature = SmeltingRecipeSignature.fromInput(input);
+		if (signature == null) return Optional.empty();
+		AiSmeltingRecipe recipe = smeltingRecipes.get(signature);
+		if (recipe == null || !recipe.outputAvailable()) return Optional.empty();
+		return Optional.of(smeltingHolder(recipe));
+	}
+
+	public boolean hasSmeltingRecipe(ItemStack stack, Level level) {
+		return findSmeltingRecipe(new SingleRecipeInput(stack), level).isPresent();
+	}
+
+	public boolean hasAnySmeltingRecipe(ItemStack stack, Level level) {
+		return belongsTo(level) && server.getRecipeManager()
+				.getRecipeFor(RecipeType.SMELTING, new SingleRecipeInput(stack), level).isPresent();
+	}
+
+	public Optional<RecipeHolder<?>> findRecipeByKey(ResourceKey<Recipe<?>> key) {
+		return Optional.ofNullable(recipesByKey.get(key));
+	}
+
+	public boolean isSmeltingLocked(Container furnace) {
+		return furnaceLocks.containsKey(furnace);
 	}
 
 	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table) {
@@ -163,7 +217,7 @@ public final class AiCraftingManager {
 
 		ActiveJob existing = jobs.get(signature);
 		if (existing == null) existing = jobs.get(signature.mirrored());
-		if (existing == null && jobs.size() >= MAX_ACTIVE_JOBS) {
+		if (existing == null && activeJobCount() >= MAX_ACTIVE_JOBS) {
 			player.sendSystemMessage(error("The AI is busy inventing other recipes. Try again shortly."));
 			return false;
 		}
@@ -180,17 +234,7 @@ public final class AiCraftingManager {
 		jobs.put(signature, job);
 		JsonObject context = signature.toAiContext();
 		try {
-			job.task = GENERATION_EXECUTOR.submit(() -> {
-				try {
-					OpenAiClient client = new OpenAiClient(new AuthConfig(), GenerationModel.SOL.modelId(), REASONING_EFFORT);
-					job.promise.complete(new RecipeGenerationAgent(client).generate(context));
-				} catch (InterruptedException interrupted) {
-					Thread.currentThread().interrupt();
-					job.promise.completeExceptionally(interrupted);
-				} catch (Throwable failure) {
-					job.promise.completeExceptionally(failure);
-				}
-			});
+			job.task = submitGeneration(job.promise, context);
 		} catch (Throwable submissionFailure) {
 			jobs.remove(signature);
 			table.unlock(signature);
@@ -202,6 +246,65 @@ public final class AiCraftingManager {
 		job.promise.whenComplete((generated, failure) -> {
 			if (!server.isRunning()) return;
 			server.execute(() -> complete(job, generated, failure));
+		});
+		return true;
+	}
+
+	public boolean requestSmeltingRecipe(ServerPlayer player, Container furnace) {
+		if (!(furnace instanceof FurnaceBlockEntity furnaceEntity)
+				|| !(player.containerMenu instanceof AiFurnaceMenuAccess access)
+				|| access.littleChemistry$getFurnaceContainer() != furnace
+				|| furnaceEntity.getLevel() != player.level()
+				|| player.level().getBlockEntity(furnaceEntity.getBlockPos()) != furnaceEntity
+				|| !furnace.stillValid(player)) {
+			player.sendSystemMessage(error("That furnace is no longer available."));
+			return false;
+		}
+		if (isSmeltingLocked(furnace)) {
+			player.sendSystemMessage(error("This furnace is already waiting for the AI."));
+			return false;
+		}
+		SmeltingRecipeSignature signature = SmeltingRecipeSignature.fromStack(furnace.getItem(0));
+		if (signature == null) {
+			player.sendSystemMessage(error("Put an ingredient in the furnace first."));
+			return false;
+		}
+		SingleRecipeInput input = new SingleRecipeInput(furnace.getItem(0));
+		if (server.getRecipeManager().getRecipeFor(RecipeType.SMELTING, input, player.level()).isPresent()) {
+			player.sendSystemMessage(error("That ingredient already has a valid smelting recipe."));
+			return false;
+		}
+
+		ActiveSmeltingJob existing = smeltingJobs.get(signature);
+		if (existing == null && activeJobCount() >= MAX_ACTIVE_JOBS) {
+			player.sendSystemMessage(error("The AI is busy inventing other recipes. Try again shortly."));
+			return false;
+		}
+		SmeltingRecipeSignature lockSignature = existing == null ? signature : existing.signature;
+		furnaceLocks.put(furnace, lockSignature);
+		if (existing != null) {
+			existing.furnaces.add(furnace);
+			existing.requesters.add(player.getUUID());
+			return true;
+		}
+
+		ActiveSmeltingJob job = new ActiveSmeltingJob(signature);
+		job.furnaces.add(furnace);
+		job.requesters.add(player.getUUID());
+		smeltingJobs.put(signature, job);
+		try {
+			job.task = submitGeneration(job.promise, signature.toAiContext());
+		} catch (Throwable submissionFailure) {
+			smeltingJobs.remove(signature);
+			unlockFurnace(furnace, signature);
+			player.sendSystemMessage(error("Could not start the smelting recipe generation job."));
+			LittleChemistry.LOGGER.error("Could not submit a smelting recipe generation job", submissionFailure);
+			return false;
+		}
+
+		job.promise.whenComplete((generated, failure) -> {
+			if (!server.isRunning()) return;
+			server.execute(() -> completeSmelting(job, generated, failure));
 		});
 		return true;
 	}
@@ -241,12 +344,37 @@ public final class AiCraftingManager {
 	}
 
 	public void removeRecipesFor(Set<String> outputNames) throws IOException {
+		cancelJobsReferencing(outputNames);
 		Map<RecipeSignature, AiCraftingRecipe> updated = new LinkedHashMap<>(recipes);
-		updated.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName()));
-		if (updated.size() == recipes.size()) return;
-		saveRecipes(updated);
+		updated.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
+				|| entry.getKey().referencesDynamicContent(outputNames));
+		Map<SmeltingRecipeSignature, AiSmeltingRecipe> updatedSmelting = new LinkedHashMap<>(smeltingRecipes);
+		updatedSmelting.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
+				|| entry.getKey().referencesDynamicContent(outputNames));
+		if (updated.size() == recipes.size() && updatedSmelting.size() == smeltingRecipes.size()) return;
+		saveRecipes(updated, updatedSmelting);
 		recipes.clear();
 		recipes.putAll(updated);
+		smeltingRecipes.clear();
+		smeltingRecipes.putAll(updatedSmelting);
+		rebuildRecipeIndex();
+	}
+
+	private void cancelJobsReferencing(Set<String> deletedNames) {
+		for (ActiveJob job : List.copyOf(jobs.values())) {
+			if (!job.signature.referencesDynamicContent(deletedNames) || !jobs.remove(job.signature, job)) continue;
+			if (job.task != null) job.task.cancel(true);
+			notifyRequesters(job, error("Recipe generation stopped because one of its ingredients was deleted."));
+			job.tables.forEach(table -> table.unlock(job.signature));
+		}
+		for (ActiveSmeltingJob job : List.copyOf(smeltingJobs.values())) {
+			if (!job.signature.referencesDynamicContent(deletedNames)
+					|| !smeltingJobs.remove(job.signature, job)) continue;
+			if (job.task != null) job.task.cancel(true);
+			notifyRequesters(job.requesters,
+					error("Smelting recipe generation stopped because its ingredient was deleted."));
+			job.furnaces.forEach(furnace -> unlockFurnace(furnace, job.signature));
+		}
 	}
 
 	private void complete(ActiveJob job, RecipeGenerationAgent.GeneratedRecipe generated, Throwable failure) {
@@ -296,9 +424,79 @@ public final class AiCraftingManager {
 	private void installRecipe(RecipeSignature signature, String outputName, int outputCount) throws IOException {
 		Map<RecipeSignature, AiCraftingRecipe> updated = new LinkedHashMap<>(recipes);
 		updated.put(signature, new AiCraftingRecipe(signature, outputName, outputCount));
-		saveRecipes(updated);
+		saveRecipes(updated, smeltingRecipes);
 		recipes.clear();
 		recipes.putAll(updated);
+		rebuildRecipeIndex();
+	}
+
+	private void completeSmelting(ActiveSmeltingJob job, RecipeGenerationAgent.GeneratedRecipe generated,
+			Throwable failure) {
+		if (smeltingJobs.get(job.signature) != job) return;
+		DynamicContentManager contentManager = null;
+		DynamicContentDefinition createdDefinition = null;
+		try {
+			if (failure != null) {
+				String message = safeMessage(failure);
+				notifyRequesters(job.requesters, error("The AI could not make this smelting recipe: " + message));
+				LittleChemistry.LOGGER.warn("AI smelting recipe generation failed: {}", message);
+				return;
+			}
+			if (job.signature.referencesUnavailableDynamicContent()) {
+				notifyRequesters(job.requesters, error("The smelting ingredient was deleted while its recipe was being made."));
+				return;
+			}
+			if (server.getRecipeManager().getRecipeFor(RecipeType.SMELTING,
+					new SingleRecipeInput(job.signature.ingredient()), server.overworld()).isPresent()) {
+				notifyRequesters(job.requesters, error("That ingredient gained a smelting recipe while the AI was working."));
+				return;
+			}
+			contentManager = DynamicContentManager.active();
+			if (contentManager == null || !contentManager.belongsTo(server)) {
+				notifyRequesters(job.requesters, error("The server stopped before the smelting recipe could be added."));
+				return;
+			}
+			String displayName = uniqueDisplayName(contentManager, generated.displayName());
+			createdDefinition = generated.armorSlot() == null
+					? contentManager.createGenerated(generated.type(), displayName, generated.content())
+					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
+			installSmeltingRecipe(job.signature, createdDefinition.name(), generated.outputCount());
+			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
+			notifyRequesters(job.requesters, Component.literal("[Little Chemistry] Smelting recipe invented: " + quantity)
+					.withStyle(ChatFormatting.GREEN)
+					.append(DynamicContentObjects.displayName(createdDefinition))
+					.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
+		} catch (Exception error) {
+			if (createdDefinition != null && contentManager != null) {
+				try {
+					contentManager.delete(List.of(createdDefinition.name()));
+				} catch (Exception rollbackFailure) {
+					error.addSuppressed(rollbackFailure);
+					LittleChemistry.LOGGER.error("Could not roll back dynamic content after smelting recipe persistence failed",
+							rollbackFailure);
+				}
+			}
+			String message = safeMessage(error);
+			notifyRequesters(job.requesters, AiCraftingManager.error(
+					"Could not save the invented smelting recipe: " + message));
+			LittleChemistry.LOGGER.error("Could not commit an AI smelting recipe", error);
+		} finally {
+			smeltingJobs.remove(job.signature, job);
+			job.furnaces.forEach(furnace -> unlockFurnace(furnace, job.signature));
+		}
+	}
+
+	private void installSmeltingRecipe(SmeltingRecipeSignature signature, String outputName, int outputCount)
+			throws IOException {
+		Map<SmeltingRecipeSignature, AiSmeltingRecipe> updated = new LinkedHashMap<>(smeltingRecipes);
+		AiSmeltingRecipe previous = updated.get(signature);
+		ResourceKey<Recipe<?>> recipeKey = previous == null ? newSmeltingRecipeKey() : previous.recipeKey();
+		updated.put(signature, new AiSmeltingRecipe(recipeKey, signature, outputName, outputCount,
+				AiSmeltingRecipe.DEFAULT_EXPERIENCE, AiSmeltingRecipe.DEFAULT_COOKING_TIME));
+		saveRecipes(recipes, updated);
+		smeltingRecipes.clear();
+		smeltingRecipes.putAll(updated);
+		rebuildRecipeIndex();
 	}
 
 	private static String uniqueDisplayName(DynamicContentManager manager, String requested) {
@@ -314,10 +512,89 @@ public final class AiCraftingManager {
 	}
 
 	private void notifyRequesters(ActiveJob job, Component message) {
-		for (UUID playerId : job.requesters) {
+		notifyRequesters(job.requesters, message);
+	}
+
+	private void notifyRequesters(Set<UUID> requesters, Component message) {
+		for (UUID playerId : requesters) {
 			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
 			if (player != null) player.sendSystemMessage(message);
 		}
+	}
+
+	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
+			JsonObject context) {
+		return GENERATION_EXECUTOR.submit(() -> {
+			try {
+				OpenAiClient client = new OpenAiClient(new AuthConfig(), GenerationModel.SOL.modelId(), REASONING_EFFORT);
+				promise.complete(new RecipeGenerationAgent(client).generate(context));
+			} catch (InterruptedException interrupted) {
+				Thread.currentThread().interrupt();
+				promise.completeExceptionally(interrupted);
+			} catch (Throwable failure) {
+				promise.completeExceptionally(failure);
+			}
+		});
+	}
+
+	private int activeJobCount() {
+		return jobs.size() + smeltingJobs.size();
+	}
+
+	private void unlockFurnace(Container furnace, SmeltingRecipeSignature signature) {
+		furnaceLocks.remove(furnace, signature);
+	}
+
+	private RecipeHolder<CraftingRecipe> craftingHolder(AiCraftingRecipe recipe) {
+		ResourceKey<Recipe<?>> key = ResourceKey.create(Registries.RECIPE,
+				LittleChemistry.id("ai/" + Integer.toUnsignedString(recipe.signature().hashCode(), 16)
+						+ "_" + recipe.outputName()));
+		return new RecipeHolder<>(key, recipe);
+	}
+
+	private RecipeHolder<SmeltingRecipe> smeltingHolder(AiSmeltingRecipe recipe) {
+		return new RecipeHolder<>(recipe.recipeKey(), recipe);
+	}
+
+	private ResourceKey<Recipe<?>> newSmeltingRecipeKey() {
+		ResourceKey<Recipe<?>> key;
+		do {
+			key = ResourceKey.create(Registries.RECIPE,
+					LittleChemistry.id("ai/smelting/" + UUID.randomUUID()));
+		} while (hasSmeltingRecipeKey(key));
+		return key;
+	}
+
+	private boolean hasSmeltingRecipeKey(ResourceKey<Recipe<?>> key) {
+		return smeltingRecipes.values().stream().anyMatch(recipe -> recipe.recipeKey().equals(key));
+	}
+
+	private ResourceKey<Recipe<?>> legacySmeltingRecipeKey(SmeltingRecipeSignature signature, String outputName) {
+		return ResourceKey.create(Registries.RECIPE,
+				LittleChemistry.id("ai/smelting_" + Integer.toUnsignedString(signature.hashCode(), 16)
+						+ "_" + outputName));
+	}
+
+	private void rebuildRecipeIndex() {
+		recipesByKey.clear();
+		for (AiCraftingRecipe recipe : recipes.values()) {
+			RecipeHolder<CraftingRecipe> holder = craftingHolder(recipe);
+			recipesByKey.put(holder.id(), holder);
+		}
+		for (AiSmeltingRecipe recipe : smeltingRecipes.values()) {
+			RecipeHolder<SmeltingRecipe> holder = smeltingHolder(recipe);
+			recipesByKey.put(holder.id(), holder);
+		}
+	}
+
+	private boolean pruneUnavailableRecipes() {
+		boolean craftingRemoved = recipes.entrySet().removeIf(entry ->
+				DynamicContentCatalog.find(entry.getValue().outputName()) == null
+						|| entry.getKey().referencesUnavailableDynamicContent());
+		boolean smeltingRemoved = smeltingRecipes.entrySet().removeIf(entry ->
+				DynamicContentCatalog.find(entry.getValue().outputName()) == null
+						|| entry.getKey().referencesUnavailableDynamicContent());
+		return craftingRemoved || smeltingRemoved;
 	}
 
 	private void loadTables() throws IOException {
@@ -351,17 +628,6 @@ public final class AiCraftingManager {
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
 		for (JsonElement element : encodedRecipes) {
 			if (!(element instanceof JsonObject encoded)) throw new IOException("Invalid AI recipe entry");
-			int width = encoded.get("width").getAsInt();
-			int height = encoded.get("height").getAsInt();
-			JsonArray encodedIngredients = encoded.getAsJsonArray("ingredients");
-			if (encodedIngredients == null || encodedIngredients.size() != width * height) {
-				throw new IOException("Invalid AI recipe ingredients");
-			}
-			List<ItemStack> ingredients = new ArrayList<>(encodedIngredients.size());
-			for (JsonElement ingredient : encodedIngredients) {
-				ingredients.add(ItemStack.OPTIONAL_CODEC.parse(ops, ingredient).getOrThrow(IOException::new));
-			}
-			RecipeSignature signature = new RecipeSignature(width, height, ingredients);
 			String output = encoded.get("output").getAsString();
 			if (!output.matches("[a-z0-9_]{1,64}")) throw new IOException("Invalid AI recipe output identifier");
 			double rawOutputCount = format >= 2 && encoded.has("outputCount")
@@ -370,7 +636,69 @@ public final class AiCraftingManager {
 					|| rawOutputCount < 1 || rawOutputCount > 64) {
 				throw new IOException("Invalid AI recipe output count");
 			}
-			recipes.put(signature, new AiCraftingRecipe(signature, output, (int) rawOutputCount));
+			int outputCount = (int) rawOutputCount;
+			String type = format >= 3 ? encoded.get("type").getAsString() : "crafting";
+			switch (type) {
+				case "crafting" -> {
+					int width = encoded.get("width").getAsInt();
+					int height = encoded.get("height").getAsInt();
+					JsonArray encodedIngredients = encoded.getAsJsonArray("ingredients");
+					if (encodedIngredients == null || encodedIngredients.size() != width * height) {
+						throw new IOException("Invalid AI crafting recipe ingredients");
+					}
+					List<ItemStack> ingredients = new ArrayList<>(encodedIngredients.size());
+					for (JsonElement ingredient : encodedIngredients) {
+						ingredients.add(ItemStack.OPTIONAL_CODEC.parse(ops, ingredient).getOrThrow(IOException::new));
+					}
+					RecipeSignature signature = new RecipeSignature(width, height, ingredients);
+					recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount));
+				}
+				case "smelting" -> {
+					JsonElement encodedIngredient = encoded.get("ingredient");
+					if (encodedIngredient == null) throw new IOException("Invalid AI smelting recipe ingredient");
+					ItemStack ingredient = ItemStack.OPTIONAL_CODEC.parse(ops, encodedIngredient)
+							.getOrThrow(IOException::new);
+					if (ingredient.isEmpty()) throw new IOException("Invalid empty AI smelting recipe ingredient");
+					SmeltingRecipeSignature signature = new SmeltingRecipeSignature(ingredient);
+					ResourceKey<Recipe<?>> recipeKey = readSmeltingRecipeKey(encoded, signature, output);
+					if (!encoded.has("experience") || !encoded.has("cookingTime")) recipesNeedRewrite = true;
+					float experience = encoded.has("experience") ? encoded.get("experience").getAsFloat()
+							: AiSmeltingRecipe.DEFAULT_EXPERIENCE;
+					int cookingTime = encoded.has("cookingTime") ? encoded.get("cookingTime").getAsInt()
+							: AiSmeltingRecipe.DEFAULT_COOKING_TIME;
+					if (!Float.isFinite(experience) || experience < 0.0F) {
+						throw new IOException("Invalid AI smelting recipe experience");
+					}
+					if (cookingTime < 1 || cookingTime > Short.MAX_VALUE) {
+						throw new IOException("Invalid AI smelting recipe cooking time");
+					}
+					smeltingRecipes.put(signature, new AiSmeltingRecipe(
+							recipeKey, signature, output, outputCount, experience, cookingTime));
+				}
+				default -> throw new IOException("Unknown AI recipe type: " + type);
+			}
+		}
+	}
+
+	private ResourceKey<Recipe<?>> readSmeltingRecipeKey(JsonObject encoded, SmeltingRecipeSignature signature,
+			String outputName) throws IOException {
+		if (!encoded.has("id")) {
+			recipesNeedRewrite = true;
+			return legacySmeltingRecipeKey(signature, outputName);
+		}
+		try {
+			Identifier id = Identifier.parse(encoded.get("id").getAsString());
+			if (!LittleChemistry.MOD_ID.equals(id.getNamespace())
+					|| !(id.getPath().startsWith("ai/smelting/") || id.getPath().startsWith("ai/smelting_"))) {
+				throw new IOException("Invalid AI smelting recipe identifier");
+			}
+			ResourceKey<Recipe<?>> key = ResourceKey.create(Registries.RECIPE, id);
+			if (smeltingRecipes.values().stream().anyMatch(recipe -> recipe.recipeKey().equals(key))) {
+				throw new IOException("Duplicate AI smelting recipe identifier");
+			}
+			return key;
+		} catch (IllegalArgumentException | NullPointerException error) {
+			throw new IOException("Invalid AI smelting recipe identifier", error);
 		}
 	}
 
@@ -397,13 +725,15 @@ public final class AiCraftingManager {
 		tablesDirty = false;
 	}
 
-	private void saveRecipes(Map<RecipeSignature, AiCraftingRecipe> savedRecipes) throws IOException {
+	private void saveRecipes(Map<RecipeSignature, AiCraftingRecipe> savedRecipes,
+			Map<SmeltingRecipeSignature, AiSmeltingRecipe> savedSmeltingRecipes) throws IOException {
 		JsonObject root = new JsonObject();
 		root.addProperty("format", RECIPES_FORMAT);
 		JsonArray encodedRecipes = new JsonArray();
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
 		for (AiCraftingRecipe recipe : savedRecipes.values()) {
 			JsonObject encoded = new JsonObject();
+			encoded.addProperty("type", "crafting");
 			encoded.addProperty("width", recipe.signature().width());
 			encoded.addProperty("height", recipe.signature().height());
 			JsonArray ingredients = new JsonArray();
@@ -413,6 +743,18 @@ public final class AiCraftingManager {
 			encoded.add("ingredients", ingredients);
 			encoded.addProperty("output", recipe.outputName());
 			encoded.addProperty("outputCount", recipe.outputCount());
+			encodedRecipes.add(encoded);
+		}
+		for (AiSmeltingRecipe recipe : savedSmeltingRecipes.values()) {
+			JsonObject encoded = new JsonObject();
+			encoded.addProperty("type", "smelting");
+			encoded.addProperty("id", recipe.recipeKey().identifier().toString());
+			encoded.add("ingredient", ItemStack.OPTIONAL_CODEC.encodeStart(ops, recipe.signature().ingredient())
+					.getOrThrow(IOException::new));
+			encoded.addProperty("output", recipe.outputName());
+			encoded.addProperty("outputCount", recipe.outputCount());
+			encoded.addProperty("experience", recipe.experience());
+			encoded.addProperty("cookingTime", recipe.cookingTime());
 			encodedRecipes.add(encoded);
 		}
 		root.add("recipes", encodedRecipes);
@@ -478,6 +820,18 @@ public final class AiCraftingManager {
 		private Future<?> task;
 
 		private ActiveJob(RecipeSignature signature) {
+			this.signature = signature;
+		}
+	}
+
+	private final class ActiveSmeltingJob {
+		private final SmeltingRecipeSignature signature;
+		private final Set<Container> furnaces = Collections.newSetFromMap(new IdentityHashMap<>());
+		private final Set<UUID> requesters = new HashSet<>();
+		private final CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise = new CompletableFuture<>();
+		private Future<?> task;
+
+		private ActiveSmeltingJob(SmeltingRecipeSignature signature) {
 			this.signature = signature;
 		}
 	}

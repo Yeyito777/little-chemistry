@@ -14,8 +14,8 @@ import java.io.IOException;
 public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
-			Create the requested Minecraft item, block, or armor piece with the tools. For crafting requests, derive a cohesive result
-			from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Fetch similar vanilla content
+			Create the requested Minecraft item, block, or armor piece with the tools. For recipe requests, derive a cohesive result
+			from the supplied process and ingredients, reflecting them in its appearance, properties, and behavior. Fetch similar vanilla content
 			for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. Complete every
 			applicable property and texture, author and compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
 			""";
@@ -32,24 +32,24 @@ public final class ContentGenerationAgent {
 	}
 
 	public GeneratedContentSpec generateForRecipe(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
-			String requestedName, int requestedOutputCount, JsonObject craftingContext)
+			String requestedName, int requestedOutputCount, JsonObject recipeContext)
 			throws IOException, InterruptedException {
-		if (craftingContext == null) throw new IllegalArgumentException("craftingContext");
-		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, craftingContext);
+		if (recipeContext == null) throw new IllegalArgumentException("recipeContext");
+		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, recipeContext);
 	}
 
 	private GeneratedContentSpec generate(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
-			String requestedName, int requestedOutputCount, JsonObject craftingContext)
+			String requestedName, int requestedOutputCount, JsonObject recipeContext)
 			throws IOException, InterruptedException {
 		ContentGenerationDraft draft = new ContentGenerationDraft(
 				type, requestedName, requestedArmorSlot, requestedOutputCount);
 		JsonArray history = new JsonArray();
 		JsonObject requestData = new JsonObject();
-		requestData.addProperty("source", craftingContext == null ? "wand" : "crafting");
+		requestData.addProperty("source", recipeContext == null ? "wand" : "recipe");
 		requestData.addProperty("requestedKind", type.serializedName());
 		requestData.addProperty("requestedName", requestedName);
-		if (craftingContext != null) requestData.addProperty("requestedOutputCount", requestedOutputCount);
-		if (craftingContext != null) requestData.add("craftingGrid", craftingContext.deepCopy());
+		if (recipeContext != null) requestData.addProperty("requestedOutputCount", requestedOutputCount);
+		if (recipeContext != null) requestData.add("recipe", recipeContext.deepCopy());
 		if (requestedArmorSlot != null) {
 			requestData.addProperty("requestedArmorSlot", requestedArmorSlot.serializedName());
 		}
