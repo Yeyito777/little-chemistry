@@ -82,7 +82,8 @@ import java.util.concurrent.Future;
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 2;
 	private static final int RECIPES_FORMAT = 3;
-	private static final int MAX_ACTIVE_JOBS = 8;
+	// This is the canonical server-wide limit for concurrent crafts.
+	private static final int MAX_ACTIVE_JOBS = 32;
 	private static final int PARTICLE_INTERVAL_TICKS = 8;
 	private static final String REASONING_EFFORT = "medium";
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
