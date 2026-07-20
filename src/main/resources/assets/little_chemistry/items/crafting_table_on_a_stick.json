@@ -1,6 +1,27 @@
 {
   "model": {
-    "type": "minecraft:model",
-    "model": "little_chemistry:item/crafting_table_on_a_stick"
+    "type": "minecraft:select",
+    "property": "minecraft:component",
+    "component": "little_chemistry:portable_crafting_state",
+    "cases": [
+      {
+        "when": "generating",
+        "model": {
+          "type": "minecraft:model",
+          "model": "little_chemistry:item/crafting_table_on_a_stick_generating"
+        }
+      },
+      {
+        "when": "ready",
+        "model": {
+          "type": "minecraft:model",
+          "model": "little_chemistry:item/crafting_table_on_a_stick_ready"
+        }
+      }
+    ],
+    "fallback": {
+      "type": "minecraft:model",
+      "model": "little_chemistry:item/crafting_table_on_a_stick"
+    }
   }
 }

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# create-worktree — create a Little Chemistry worktree and prepare Gradle.
+#
+# Usage:
+#   create-worktree <name>
+#   create-worktree --allow-dirty <name>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=./worktree-common.sh
+source "$SCRIPT_DIR/worktree-common.sh"
+
+ALLOW_DIRTY=0
+if [[ "${1:-}" == "--allow-dirty" ]]; then
+  ALLOW_DIRTY=1
+  shift
+fi
+
+[[ $# -eq 1 ]] || worktree_die "Usage: create-worktree [--allow-dirty] <name>"
+NAME="$1"
+[[ "$NAME" != */* ]] || worktree_die "Pass a worktree name, not a path: $NAME"
+git check-ref-format --branch "$NAME" >/dev/null 2>&1 || worktree_die "Invalid branch name: $NAME"
+
+WORKTREE_DIR="$LITTLE_CHEMISTRY_WORKTREES_DIR/$NAME"
+BASE_REF="refs/heads/main"
+
+git -C "$LITTLE_CHEMISTRY_ROOT" show-ref --verify --quiet "$BASE_REF" ||
+  worktree_die "Local main branch does not exist"
+
+DIRTY_STATUS="$(git -C "$LITTLE_CHEMISTRY_ROOT" status --porcelain=v1 --untracked-files=all)"
+if [[ -n "$DIRTY_STATUS" && $ALLOW_DIRTY -eq 0 ]]; then
+  worktree_die "Main checkout has uncommitted changes, which cannot be inherited by a worktree.
+Commit or otherwise clean them first, or intentionally branch from committed main with:
+  create-worktree --allow-dirty $NAME"
+fi
+
+BASE_COMMIT="$(git -C "$LITTLE_CHEMISTRY_ROOT" rev-parse --short=12 "$BASE_REF")"
+if [[ -n "$DIRTY_STATUS" ]]; then
+  printf '\n  ⚠ Main checkout is dirty. Creating from committed main at %s;\n' "$BASE_COMMIT" >&2
+  printf '    uncommitted and untracked files will remain only in the main checkout.\n\n' >&2
+fi
+
+[[ ! -e "$WORKTREE_DIR" && ! -L "$WORKTREE_DIR" ]] || worktree_die "Already exists: $WORKTREE_DIR"
+if git -C "$LITTLE_CHEMISTRY_ROOT" show-ref --verify --quiet "refs/heads/$NAME"; then
+  worktree_die "Branch already exists: $NAME"
+fi
+
+SETUP_STARTED=0
+rollback_failed_create() {
+  local status=$?
+  [[ $status -ne 0 && $SETUP_STARTED -eq 1 ]] || return "$status"
+
+  printf '\n  Rolling back incomplete worktree setup...\n' >&2
+  if is_registered_worktree "$WORKTREE_DIR"; then
+    git -C "$LITTLE_CHEMISTRY_ROOT" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  fi
+  if git -C "$LITTLE_CHEMISTRY_ROOT" show-ref --verify --quiet "refs/heads/$NAME"; then
+    git -C "$LITTLE_CHEMISTRY_ROOT" branch -D "$NAME" >/dev/null 2>&1 || true
+  fi
+  cleanup_worktree_config
+  return "$status"
+}
+trap rollback_failed_create EXIT
+
+mkdir -p "$LITTLE_CHEMISTRY_WORKTREES_DIR"
+SETUP_STARTED=1
+LITTLE_CHEMISTRY_SKIP_POST_CHECKOUT_SETUP=1 \
+  git -C "$LITTLE_CHEMISTRY_ROOT" worktree add "$WORKTREE_DIR" -b "$NAME" "$BASE_REF"
+
+prepare_gradle_worktree "$WORKTREE_DIR"
+
+SETUP_STARTED=0
+trap - EXIT
+
+cat <<EOF
+
+  ✓ Created worktree
+  name:   $NAME
+  path:   $WORKTREE_DIR
+  branch: $NAME
+  base:   main@$BASE_COMMIT
+
+  Machine-local Prism deployment config was not copied. Run the isolated test
+  and package gate (which never installs or launches Minecraft) with:
+    $LITTLE_CHEMISTRY_ROOT/scripts/dev/littlechemistrytest $NAME
+
+EOF

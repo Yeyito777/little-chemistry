@@ -17,8 +17,14 @@ import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundPlaceGhostRecipePacket;
+import net.minecraft.network.protocol.game.ClientboundRecipeBookAddPacket;
+import net.minecraft.network.protocol.game.ClientboundRecipeBookRemovePacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -26,16 +32,26 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.Containers;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.AbstractCraftingMenu;
 import net.minecraft.world.inventory.CraftingMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.Recipe;
+import net.minecraft.world.item.crafting.RecipeBookCategories;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.item.crafting.SingleRecipeInput;
 import net.minecraft.world.item.crafting.SmeltingRecipe;
+import net.minecraft.world.item.crafting.display.RecipeDisplay;
+import net.minecraft.world.item.crafting.display.RecipeDisplayEntry;
+import net.minecraft.world.item.crafting.display.RecipeDisplayId;
+import net.minecraft.recipebook.PlaceRecipeHelper;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.FurnaceBlockEntity;
 import net.minecraft.world.level.storage.LevelResource;
@@ -49,10 +65,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -62,10 +80,11 @@ import java.util.concurrent.Future;
 
 /** Owns physical and portable crafting grids, persistent AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
-	private static final int TABLES_FORMAT = 1;
+	private static final int TABLES_FORMAT = 2;
 	private static final int RECIPES_FORMAT = 3;
 	private static final int MAX_ACTIVE_JOBS = 8;
-	private static final String REASONING_EFFORT = "low";
+	private static final int PARTICLE_INTERVAL_TICKS = 8;
+	private static final String REASONING_EFFORT = "medium";
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 	private static volatile AiCraftingManager active;
 
@@ -73,12 +92,19 @@ public final class AiCraftingManager {
 	private final Path tablesFile;
 	private final Path recipesFile;
 	private final Map<TableKey, SharedCraftingContainer> tables = new HashMap<>();
+	private final Map<UUID, SharedCraftingContainer> portableTables = new HashMap<>();
 	private final Map<RecipeSignature, AiCraftingRecipe> recipes = new LinkedHashMap<>();
 	private final Map<SmeltingRecipeSignature, AiSmeltingRecipe> smeltingRecipes = new LinkedHashMap<>();
 	private final Map<ResourceKey<Recipe<?>>, RecipeHolder<?>> recipesByKey = new HashMap<>();
+	private final Map<RecipeSignature, RecipeDisplayId> recipeDisplayIds = new LinkedHashMap<>();
+	private final Map<RecipeDisplayId, AiCraftingRecipe> recipesByDisplayId = new HashMap<>();
 	private final Map<RecipeSignature, ActiveJob> jobs = new HashMap<>();
 	private final Map<SmeltingRecipeSignature, ActiveSmeltingJob> smeltingJobs = new HashMap<>();
 	private final Map<Container, SmeltingRecipeSignature> furnaceLocks = new IdentityHashMap<>();
+	private final Set<SharedCraftingContainer> animatedTables =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+	private int nextRecipeDisplayId = -1;
+	private int particleTicks;
 	private boolean tablesDirty;
 	private boolean recipesNeedRewrite;
 
@@ -92,6 +118,10 @@ public final class AiCraftingManager {
 		if (pruneUnavailableRecipes()) recipesNeedRewrite = true;
 		if (recipesNeedRewrite) saveRecipes(recipes, smeltingRecipes);
 		rebuildRecipeIndex();
+		for (Map.Entry<RecipeSignature, AiCraftingRecipe> entry : recipes.entrySet()) {
+			assignRecipeDisplay(entry.getKey(), entry.getValue());
+		}
+		clearInvalidReadyTables();
 	}
 
 	public static void start(MinecraftServer server) {
@@ -115,6 +145,7 @@ public final class AiCraftingManager {
 			job.tables.forEach(table -> table.unlock(job.signature));
 		}
 		manager.jobs.clear();
+		manager.portableTables.clear();
 		for (ActiveSmeltingJob job : List.copyOf(manager.smeltingJobs.values())) {
 			job.promise.completeExceptionally(new IllegalStateException("Server stopped during recipe generation"));
 			if (job.task != null) job.task.cancel(true);
@@ -142,7 +173,12 @@ public final class AiCraftingManager {
 
 	public static void tick(MinecraftServer server) {
 		AiCraftingManager manager = active;
-		if (manager == null || manager.server != server || !manager.tablesDirty) return;
+		if (manager == null || manager.server != server) return;
+		if (++manager.particleTicks >= PARTICLE_INTERVAL_TICKS) {
+			manager.particleTicks = 0;
+			manager.emitTableParticles();
+		}
+		if (!manager.tablesDirty) return;
 		try {
 			manager.flushTables();
 		} catch (IOException error) {
@@ -155,8 +191,41 @@ public final class AiCraftingManager {
 		return tables.computeIfAbsent(key, ignored -> SharedCraftingContainer.physical(this, key, List.of()));
 	}
 
-	public SharedCraftingContainer portableTable() {
-		return SharedCraftingContainer.portable(this);
+	public SharedCraftingContainer portableTable(ServerLevel level, UUID tableId, ItemStack carrier) {
+		SharedCraftingContainer table = portableTables.get(tableId);
+		if (table == null) {
+			NonNullList<ItemStack> items = portableItems(carrier);
+			PortableCraftingState savedState = carrier.get(PortableCraftingComponents.STATE);
+			boolean recipeReady = savedState != null && hasCraftingResult(items, level);
+			table = SharedCraftingContainer.portable(this, tableId, items, recipeReady);
+			portableTables.put(tableId, table);
+		}
+		table.attachPortableCarrier(carrier);
+		return table;
+	}
+
+	/** Reattaches moved/reloaded carrier stacks and repairs stale state left by an interrupted server. */
+	public void reconcilePortableStack(ItemStack carrier, ServerLevel level) {
+		UUID tableId = carrier.get(PortableCraftingComponents.TABLE_ID);
+		if (tableId == null) return;
+
+		SharedCraftingContainer table = portableTables.get(tableId);
+		if (table != null) {
+			table.attachPortableCarrier(carrier);
+			if (!table.hasViewers() && !table.isLocked()) portableTables.remove(tableId, table);
+			return;
+		}
+
+		PortableCraftingState savedState = carrier.get(PortableCraftingComponents.STATE);
+		if (savedState == null) return;
+		boolean recipeReady = hasCraftingResult(portableItems(carrier), level);
+		if (recipeReady) {
+			if (savedState != PortableCraftingState.READY) {
+				carrier.set(PortableCraftingComponents.STATE, PortableCraftingState.READY);
+			}
+		} else {
+			carrier.remove(PortableCraftingComponents.STATE);
+		}
 	}
 
 	public boolean isLocked(ServerLevel level, BlockPos pos) {
@@ -198,6 +267,88 @@ public final class AiCraftingManager {
 
 	public boolean isSmeltingLocked(Container furnace) {
 		return furnaceLocks.containsKey(furnace);
+	}
+
+	/** Adds every server-owned runtime recipe to a player's otherwise vanilla recipe book. */
+	public void sendRecipeBookSnapshot(ServerPlayer player) {
+		List<ClientboundRecipeBookAddPacket.Entry> entries = new ArrayList<>(recipes.size());
+		for (Map.Entry<RecipeSignature, AiCraftingRecipe> entry : recipes.entrySet()) {
+			ClientboundRecipeBookAddPacket.Entry bookEntry = recipeBookEntry(
+					recipeDisplayIds.get(entry.getKey()), entry.getValue());
+			if (bookEntry != null) entries.add(bookEntry);
+		}
+		if (!entries.isEmpty()) {
+			player.connection.send(new ClientboundRecipeBookAddPacket(entries, false));
+		}
+	}
+
+	/**
+	 * Handles a click on one of the negative display IDs reserved for runtime
+	 * recipes. Vanilla placement only understands recipes loaded by RecipeManager,
+	 * so runtime recipes need an exact-component-aware placement path of their own.
+	 */
+	public boolean handleRecipeBookPlacement(ServerPlayer player, int containerId,
+			RecipeDisplayId displayId, boolean useMaxItems) {
+		AiCraftingRecipe recipe = recipesByDisplayId.get(displayId);
+		if (recipe == null) return false;
+		if (player.isSpectator() || player.isDeadOrDying()
+				|| player.containerMenu.containerId != containerId
+				|| !player.containerMenu.stillValid(player)
+				|| !(player.containerMenu instanceof AbstractCraftingMenu menu)) {
+			return true;
+		}
+		if (menu instanceof AiCraftingMenuAccess access && access.littleChemistry$getSharedTable() != null
+				&& access.littleChemistry$getSharedTable().isLocked()) {
+			return true;
+		}
+
+		RecipeSignature signature = recipe.signature();
+		if (signature.width() > menu.getGridWidth() || signature.height() > menu.getGridHeight()) return true;
+		List<Slot> grid = menu.getInputGridSlots();
+		Inventory inventory = player.getInventory();
+		UUID excludedPortableId = null;
+		if (menu instanceof AiCraftingMenuAccess access) {
+			SharedCraftingContainer table = access.littleChemistry$getSharedTable();
+			if (table != null && table.isPortable()) excludedPortableId = table.portableId();
+		}
+		if (!player.isCreative() && !canReturnGridToInventory(inventory, grid)) return true;
+
+		int availableCrafts = biggestCraftableStack(signature, inventory, grid, excludedPortableId);
+		if (availableCrafts <= 0) {
+			clearGridIntoInventory(inventory, grid);
+			RecipeDisplay display = recipe.display().stream().findFirst().orElse(null);
+			if (display != null) {
+				player.connection.send(new ClientboundPlaceGhostRecipePacket(containerId, display));
+			}
+			return true;
+		}
+
+		boolean alreadyMatches = recipe.matches(craftingInput(menu, grid), player.level());
+		int amount = useMaxItems ? availableCrafts : 1;
+		if (!useMaxItems && alreadyMatches) {
+			int smallestPlacedStack = grid.stream()
+					.map(Slot::getItem)
+					.filter(stack -> !stack.isEmpty())
+					.mapToInt(ItemStack::getCount)
+					.min()
+					.orElse(0);
+			amount = Math.min(availableCrafts, smallestPlacedStack + 1);
+			if (amount <= smallestPlacedStack) return true;
+		}
+
+		clearGridIntoInventory(inventory, grid);
+		int placedAmount = amount;
+		UUID protectedPortableId = excludedPortableId;
+		PlaceRecipeHelper.placeRecipe(menu.getGridWidth(), menu.getGridHeight(), signature.width(), signature.height(),
+				signature.ingredients(), (ingredient, gridIndex, gridX, gridY) -> {
+					if (!ingredient.isEmpty()) {
+						grid.get(gridIndex).set(takeMatching(
+								inventory, ingredient, placedAmount, protectedPortableId));
+					}
+				});
+		inventory.setChanged();
+		player.containerMenu.broadcastChanges();
+		return true;
 	}
 
 	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table) {
@@ -314,14 +465,27 @@ public final class AiCraftingManager {
 		tableViewStateChanged(table);
 	}
 
+	void tableGenerationStateChanged(SharedCraftingContainer table) {
+		if (table.isPortable()) {
+			if (!table.hasViewers() && !table.isLocked()) {
+				portableTables.remove(table.portableId(), table);
+			}
+			return;
+		}
+		if (table.hasGenerationParticles()) animatedTables.add(table);
+		else animatedTables.remove(table);
+		tablesDirty = true;
+	}
+
 	void tableViewerClosed(SharedCraftingContainer table) {
 		if (table.isPortable()) {
-			for (ActiveJob job : jobs.values()) job.tables.remove(table);
-			RecipeSignature lockSignature = table.lockSignature();
-			if (lockSignature != null) table.unlock(lockSignature);
+			if (!table.hasViewers() && !table.isLocked()) {
+				portableTables.remove(table.portableId(), table);
+			}
 			return;
 		}
 		if (!table.hasViewers() && !table.isLocked() && table.isEmpty() && tables.remove(table.key(), table)) {
+			animatedTables.remove(table);
 			tablesDirty = true;
 		}
 	}
@@ -337,6 +501,7 @@ public final class AiCraftingManager {
 		TableKey key = TableKey.of(level, pos);
 		SharedCraftingContainer table = tables.remove(key);
 		if (table == null) return;
+		animatedTables.remove(table);
 		for (ActiveJob job : jobs.values()) job.tables.remove(table);
 		NonNullList<ItemStack> contents = table.drain();
 		tablesDirty = true;
@@ -352,12 +517,23 @@ public final class AiCraftingManager {
 		updatedSmelting.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
 				|| entry.getKey().referencesDynamicContent(outputNames));
 		if (updated.size() == recipes.size() && updatedSmelting.size() == smeltingRecipes.size()) return;
+		List<RecipeDisplayId> removedDisplays = recipes.keySet().stream()
+				.filter(signature -> !updated.containsKey(signature))
+				.map(recipeDisplayIds::get)
+				.filter(java.util.Objects::nonNull)
+				.toList();
 		saveRecipes(updated, updatedSmelting);
 		recipes.clear();
 		recipes.putAll(updated);
 		smeltingRecipes.clear();
 		smeltingRecipes.putAll(updatedSmelting);
+		for (RecipeDisplayId displayId : removedDisplays) recipesByDisplayId.remove(displayId);
+		recipeDisplayIds.keySet().removeIf(signature -> !updated.containsKey(signature));
 		rebuildRecipeIndex();
+		clearInvalidReadyTables();
+		if (!removedDisplays.isEmpty()) {
+			server.getPlayerList().broadcastAll(new ClientboundRecipeBookRemovePacket(removedDisplays));
+		}
 	}
 
 	private void cancelJobsReferencing(Set<String> deletedNames) {
@@ -381,11 +557,23 @@ public final class AiCraftingManager {
 		if (jobs.get(job.signature) != job) return;
 		DynamicContentManager contentManager = null;
 		DynamicContentDefinition createdDefinition = null;
+		boolean recipeReady = false;
 		try {
 			if (failure != null) {
 				String message = safeMessage(failure);
 				notifyRequesters(job, error("The AI could not make this recipe: " + message));
 				LittleChemistry.LOGGER.warn("AI recipe generation failed: {}", message);
+				return;
+			}
+			if (job.signature.referencesUnavailableDynamicContent()) {
+				notifyRequesters(job, error("A crafting ingredient was deleted while its recipe was being made."));
+				return;
+			}
+			CraftingInput completedInput = CraftingInput.of(
+					job.signature.width(), job.signature.height(), job.signature.ingredients());
+			if (server.getRecipeManager().getRecipeFor(
+					RecipeType.CRAFTING, completedInput, server.overworld()).isPresent()) {
+				notifyRequesters(job, error("That crafting grid gained a recipe while the AI was working."));
 				return;
 			}
 			contentManager = DynamicContentManager.active();
@@ -403,6 +591,7 @@ public final class AiCraftingManager {
 					.withStyle(ChatFormatting.GREEN)
 					.append(DynamicContentObjects.displayName(createdDefinition))
 					.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
+			recipeReady = true;
 		} catch (Exception error) {
 			if (createdDefinition != null && contentManager != null) {
 				try {
@@ -417,17 +606,57 @@ public final class AiCraftingManager {
 			LittleChemistry.LOGGER.error("Could not commit an AI crafting recipe", error);
 		} finally {
 			jobs.remove(job.signature, job);
-			job.tables.forEach(table -> table.unlock(job.signature));
+			boolean succeeded = recipeReady;
+			job.tables.forEach(table -> table.finishGeneration(job.signature, succeeded));
+		}
+	}
+
+	private void emitTableParticles() {
+		Iterator<SharedCraftingContainer> iterator = animatedTables.iterator();
+		while (iterator.hasNext()) {
+			SharedCraftingContainer table = iterator.next();
+			ParticleOptions particle;
+			if (table.isLocked()) particle = ParticleTypes.CRIT;
+			else if (table.isRecipeReady()) particle = ParticleTypes.HAPPY_VILLAGER;
+			else {
+				iterator.remove();
+				continue;
+			}
+
+			ServerLevel level = server.getLevel(table.key().dimension());
+			BlockPos pos = BlockPos.of(table.key().packedPos());
+			if (level == null || !level.isLoaded(pos) || !level.getBlockState(pos).is(Blocks.CRAFTING_TABLE)) continue;
+			level.sendParticles(particle,
+					pos.getX() + 0.5, pos.getY() + 1.08, pos.getZ() + 0.5,
+					2, 0.32, 0.08, 0.32, 0.04);
+		}
+	}
+
+	private void clearInvalidReadyTables() {
+		List<SharedCraftingContainer> candidates = new ArrayList<>(animatedTables);
+		candidates.addAll(portableTables.values());
+		for (SharedCraftingContainer table : candidates) {
+			if (!table.isRecipeReady()) continue;
+			RecipeSignature signature = RecipeSignature.capture(table);
+			AiCraftingRecipe recipe = signature == null ? null : recipes.get(signature);
+			if (recipe == null && signature != null) recipe = recipes.get(signature.mirrored());
+			if (recipe == null || !recipe.outputAvailable()) table.clearRecipeReady();
 		}
 	}
 
 	private void installRecipe(RecipeSignature signature, String outputName, int outputCount) throws IOException {
 		Map<RecipeSignature, AiCraftingRecipe> updated = new LinkedHashMap<>(recipes);
-		updated.put(signature, new AiCraftingRecipe(signature, outputName, outputCount));
+		AiCraftingRecipe installed = new AiCraftingRecipe(signature, outputName, outputCount);
+		updated.put(signature, installed);
 		saveRecipes(updated, smeltingRecipes);
 		recipes.clear();
 		recipes.putAll(updated);
 		rebuildRecipeIndex();
+		RecipeDisplayId displayId = assignRecipeDisplay(signature, installed);
+		ClientboundRecipeBookAddPacket.Entry bookEntry = recipeBookEntry(displayId, installed);
+		if (bookEntry != null) {
+			server.getPlayerList().broadcastAll(new ClientboundRecipeBookAddPacket(List.of(bookEntry), false));
+		}
 	}
 
 	private void completeSmelting(ActiveSmeltingJob job, RecipeGenerationAgent.GeneratedRecipe generated,
@@ -600,7 +829,7 @@ public final class AiCraftingManager {
 	private void loadTables() throws IOException {
 		if (!Files.isRegularFile(tablesFile)) return;
 		JsonObject root = parseObject(tablesFile);
-		requireFormat(root, TABLES_FORMAT, TABLES_FORMAT);
+		int format = requireFormat(root, 1, TABLES_FORMAT);
 		JsonArray encodedTables = root.getAsJsonArray("tables");
 		if (encodedTables == null || encodedTables.size() > 100_000) throw new IOException("Invalid shared crafting table list");
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
@@ -615,7 +844,11 @@ public final class AiCraftingManager {
 			for (JsonElement encodedItem : encodedItems) {
 				items.add(ItemStack.OPTIONAL_CODEC.parse(ops, encodedItem).getOrThrow(IOException::new));
 			}
-			tables.put(key, SharedCraftingContainer.physical(this, key, items));
+			boolean recipeReady = format >= 2 && encoded.has("recipeReady")
+					&& encoded.get("recipeReady").getAsBoolean();
+			SharedCraftingContainer table = SharedCraftingContainer.physical(this, key, items, recipeReady);
+			tables.put(key, table);
+			if (table.hasGenerationParticles()) animatedTables.add(table);
 		}
 	}
 
@@ -702,6 +935,159 @@ public final class AiCraftingManager {
 		}
 	}
 
+	private RecipeDisplayId assignRecipeDisplay(RecipeSignature signature, AiCraftingRecipe recipe) {
+		RecipeDisplayId existing = recipeDisplayIds.get(signature);
+		if (existing != null) {
+			recipesByDisplayId.put(existing, recipe);
+			return existing;
+		}
+		RecipeDisplayId assigned = new RecipeDisplayId(nextRecipeDisplayId--);
+		recipeDisplayIds.put(signature, assigned);
+		recipesByDisplayId.put(assigned, recipe);
+		return assigned;
+	}
+
+	private static ClientboundRecipeBookAddPacket.Entry recipeBookEntry(RecipeDisplayId id, AiCraftingRecipe recipe) {
+		if (id == null) return null;
+		RecipeDisplay display = recipe.display().stream().findFirst().orElse(null);
+		if (display == null) return null;
+		RecipeDisplayEntry contents = new RecipeDisplayEntry(
+				id,
+				display,
+				OptionalInt.empty(),
+				RecipeBookCategories.CRAFTING_MISC,
+				Optional.of(recipe.placementInfo().ingredients())
+		);
+		return new ClientboundRecipeBookAddPacket.Entry(contents, false, false);
+	}
+
+	private static CraftingInput craftingInput(AbstractCraftingMenu menu, List<Slot> grid) {
+		return CraftingInput.of(menu.getGridWidth(), menu.getGridHeight(), grid.stream().map(Slot::getItem).toList());
+	}
+
+	private static int biggestCraftableStack(RecipeSignature signature, Inventory inventory, List<Slot> grid,
+			UUID excludedPortableId) {
+		int result = Integer.MAX_VALUE;
+		List<ItemStack> ingredients = signature.ingredients();
+		for (int index = 0; index < ingredients.size(); index++) {
+			ItemStack ingredient = ingredients.get(index);
+			if (ingredient.isEmpty()) continue;
+			boolean seen = false;
+			for (int earlier = 0; earlier < index; earlier++) {
+				if (RecipeSignature.matchesIngredient(ingredient, ingredients.get(earlier))) {
+					seen = true;
+					break;
+				}
+			}
+			if (seen) continue;
+
+			int usesPerCraft = 0;
+			for (ItemStack candidate : ingredients) {
+				if (RecipeSignature.matchesIngredient(ingredient, candidate)) usesPerCraft++;
+			}
+			int available = countMatching(inventory.getNonEquipmentItems(), ingredient, excludedPortableId)
+					+ countMatching(grid.stream().map(Slot::getItem).toList(), ingredient, excludedPortableId);
+			result = Math.min(result, available / usesPerCraft);
+			result = Math.min(result, ingredient.getMaxStackSize());
+		}
+		return result == Integer.MAX_VALUE ? 0 : result;
+	}
+
+	private static int countMatching(List<ItemStack> stacks, ItemStack ingredient, UUID excludedPortableId) {
+		int count = 0;
+		for (ItemStack stack : stacks) {
+			if (!isPortableCarrier(stack, excludedPortableId)
+					&& RecipeSignature.matchesIngredient(ingredient, stack)) count += stack.getCount();
+		}
+		return count;
+	}
+
+	private static ItemStack takeMatching(Inventory inventory, ItemStack ingredient, int amount,
+			UUID excludedPortableId) {
+		ItemStack taken = ItemStack.EMPTY;
+		int remaining = amount;
+		for (int slot = 0; slot < inventory.getNonEquipmentItems().size() && remaining > 0; slot++) {
+			ItemStack available = inventory.getItem(slot);
+			if (isPortableCarrier(available, excludedPortableId)) continue;
+			if (!RecipeSignature.matchesIngredient(ingredient, available)) continue;
+			if (!taken.isEmpty() && !ItemStack.isSameItemSameComponents(taken, available)) continue;
+			int count = Math.min(remaining, available.getCount());
+			ItemStack removed = inventory.removeItem(slot, count);
+			if (taken.isEmpty()) taken = removed;
+			else taken.grow(removed.getCount());
+			remaining -= removed.getCount();
+		}
+		if (remaining != 0) throw new IllegalStateException("Counted recipe ingredient disappeared during placement");
+		return taken;
+	}
+
+	private static boolean isPortableCarrier(ItemStack stack, UUID tableId) {
+		return tableId != null && tableId.equals(stack.get(PortableCraftingComponents.TABLE_ID));
+	}
+
+	private static void clearGridIntoInventory(Inventory inventory, List<Slot> grid) {
+		for (Slot slot : grid) {
+			ItemStack stack = slot.getItem().copy();
+			if (!stack.isEmpty()) returnToMainInventory(inventory, stack);
+			slot.set(ItemStack.EMPTY);
+		}
+		inventory.setChanged();
+	}
+
+	private static boolean canReturnGridToInventory(Inventory inventory, List<Slot> grid) {
+		List<ItemStack> simulated = new ArrayList<>(
+				inventory.getNonEquipmentItems().stream().map(ItemStack::copy).toList());
+		for (Slot slot : grid) {
+			ItemStack remaining = slot.getItem().copy();
+			if (remaining.isEmpty()) continue;
+			for (ItemStack target : simulated) {
+				if (!remaining.isEmpty() && ItemStack.isSameItemSameComponents(target, remaining)
+						&& target.getCount() < target.getMaxStackSize()) {
+					int moved = Math.min(remaining.getCount(), target.getMaxStackSize() - target.getCount());
+					target.grow(moved);
+					remaining.shrink(moved);
+				}
+			}
+			for (int index = 0; index < simulated.size() && !remaining.isEmpty(); index++) {
+				if (!simulated.get(index).isEmpty()) continue;
+				int moved = Math.min(remaining.getCount(), remaining.getMaxStackSize());
+				simulated.set(index, remaining.copyWithCount(moved));
+				remaining.shrink(moved);
+			}
+			if (!remaining.isEmpty()) return false;
+		}
+		return true;
+	}
+
+	private static void returnToMainInventory(Inventory inventory, ItemStack remaining) {
+		for (ItemStack target : inventory.getNonEquipmentItems()) {
+			if (!remaining.isEmpty() && ItemStack.isSameItemSameComponents(target, remaining)
+					&& target.getCount() < target.getMaxStackSize()) {
+				int moved = Math.min(remaining.getCount(), target.getMaxStackSize() - target.getCount());
+				target.grow(moved);
+				remaining.shrink(moved);
+			}
+		}
+		for (int slot = 0; slot < inventory.getNonEquipmentItems().size() && !remaining.isEmpty(); slot++) {
+			if (!inventory.getItem(slot).isEmpty()) continue;
+			int moved = Math.min(remaining.getCount(), remaining.getMaxStackSize());
+			inventory.setItem(slot, remaining.split(moved));
+		}
+		if (!remaining.isEmpty()) inventory.player.drop(remaining, false);
+	}
+
+	private static NonNullList<ItemStack> portableItems(ItemStack carrier) {
+		NonNullList<ItemStack> items = NonNullList.withSize(9, ItemStack.EMPTY);
+		carrier.getOrDefault(DataComponents.CONTAINER, ItemContainerContents.EMPTY).copyInto(items);
+		return items;
+	}
+
+	private boolean hasCraftingResult(List<ItemStack> items, ServerLevel level) {
+		return !items.stream().allMatch(ItemStack::isEmpty)
+				&& server.getRecipeManager().getRecipeFor(
+						RecipeType.CRAFTING, CraftingInput.of(3, 3, items), level).isPresent();
+	}
+
 	private void flushTables() throws IOException {
 		if (!tablesDirty) return;
 		JsonObject root = new JsonObject();
@@ -718,6 +1104,7 @@ public final class AiCraftingManager {
 				items.add(ItemStack.OPTIONAL_CODEC.encodeStart(ops, stack).getOrThrow(IOException::new));
 			}
 			encoded.add("items", items);
+			if (table.isRecipeReady()) encoded.addProperty("recipeReady", true);
 			encodedTables.add(encoded);
 		}
 		root.add("tables", encodedTables);

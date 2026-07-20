@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# clean-worktree — remove a Little Chemistry worktree and its merged branch.
+#
+# Usage:
+#   clean-worktree <worktree-name|path>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=./worktree-common.sh
+source "$SCRIPT_DIR/worktree-common.sh"
+
+INPUT="${1:-}"
+WORKTREE_DIR="$(resolve_worktree_dir "$INPUT")"
+WT_NAME="$(basename "$WORKTREE_DIR")"
+BRANCH=""
+
+if ! is_registered_worktree "$WORKTREE_DIR"; then
+  if [[ -e "$WORKTREE_DIR/.git" || -L "$WORKTREE_DIR/.git" ]]; then
+    worktree_die "Directory looks like a worktree but is not registered: $WORKTREE_DIR"
+  fi
+  worktree_die "Not a registered worktree: $WORKTREE_DIR"
+fi
+BRANCH="$(registered_worktree_branch "$WORKTREE_DIR")"
+
+LIVE_PROCESSES="$(processes_using_worktree "$WORKTREE_DIR")"
+if [[ -n "$LIVE_PROCESSES" ]]; then
+  worktree_die "Worktree is still in use by running process(es):
+$LIVE_PROCESSES
+Close them, then rerun clean-worktree."
+fi
+
+# Git intentionally refuses to remove a checkout with uncommitted, non-ignored
+# files. Do not force it: preserving unfinished work is safer than convenience.
+git -C "$LITTLE_CHEMISTRY_ROOT" worktree remove "$WORKTREE_DIR"
+
+if [[ -n "$BRANCH" ]] && git -C "$LITTLE_CHEMISTRY_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  # -d protects commits that have not yet been merged.
+  git -C "$LITTLE_CHEMISTRY_ROOT" branch -d "$BRANCH"
+fi
+
+cleanup_worktree_config
+
+cat <<EOF
+
+  ✓ Cleaned worktree
+  name:   $WT_NAME
+  path:   $WORKTREE_DIR
+  branch: ${BRANCH:-$WT_NAME}
+
+EOF

@@ -14,7 +14,7 @@ public final class LockedCraftingSlot extends Slot {
 
 	@Override
 	public boolean mayPlace(ItemStack stack) {
-		return !table.isLocked();
+		return table.mayPlace(stack);
 	}
 
 	@Override

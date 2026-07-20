@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 public final class ContentGenerationService {
-	private static final String GENERATION_REASONING_EFFORT = "low";
+	private static final String GENERATION_REASONING_EFFORT = "medium";
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 	private static final Map<GenerationKey, ActiveJob> ACTIVE = new ConcurrentHashMap<>();
 

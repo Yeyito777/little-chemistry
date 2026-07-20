@@ -19,6 +19,8 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.ClientRecipeBook;
+import net.minecraft.client.gui.screens.recipebook.RecipeUpdateListener;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
 import net.minecraft.client.renderer.special.SpecialModelRenderers;
 import net.minecraft.network.chat.Component;
@@ -108,6 +110,7 @@ public final class LittleChemistryClient implements ClientModInitializer {
 							return;
 						}
 						refreshCreativeTabs(client);
+						refreshRecipeBook(client);
 						for (int start = 0; start < missing.size(); start += DynamicAssetRequestPayload.MAX_HASHES) {
 							int end = Math.min(missing.size(), start + DynamicAssetRequestPayload.MAX_HASHES);
 							ClientPlayNetworking.send(new DynamicAssetRequestPayload(missing.subList(start, end)));
@@ -146,6 +149,14 @@ public final class LittleChemistryClient implements ClientModInitializer {
 					client.level.registryAccess()
 			);
 		}
+	}
+
+	private static void refreshRecipeBook(Minecraft client) {
+		if (client.player == null || client.level == null || client.getConnection() == null) return;
+		ClientRecipeBook recipeBook = client.player.getRecipeBook();
+		recipeBook.rebuildCollections();
+		client.getConnection().searchTrees().updateRecipes(recipeBook, client.level);
+		if (client.gui.screen() instanceof RecipeUpdateListener listener) listener.recipesUpdated();
 	}
 
 	private static String safeMessage(Exception error) {

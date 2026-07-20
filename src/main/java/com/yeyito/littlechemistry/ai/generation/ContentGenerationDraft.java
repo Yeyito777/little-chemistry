@@ -82,6 +82,7 @@ final class ContentGenerationDraft {
 	private DynamicFoodProperties foodProperties;
 	private Boolean placeable;
 	private DynamicCraftingUse craftingUse;
+	private Integer fuelBurnTicks;
 	private DynamicPlacementProperties placementProperties;
 	private DynamicTool itemTool;
 	private DynamicBreakingPower breakingPower;
@@ -504,7 +505,8 @@ final class ContentGenerationDraft {
 	}
 
 	private ToolExecution setItemProperties(JsonObject arguments) {
-		requireOnly(arguments, "itemType", "heldType", "maxStack", "foil", "enchantability", "reach", "placeable", "craftingUse");
+		requireOnly(arguments, "itemType", "heldType", "maxStack", "foil", "enchantability", "reach",
+				"placeable", "craftingUse", "fuelBurnTicks");
 		DynamicItemType candidateItemType = DynamicItemType.parse(requiredString(arguments, "itemType"));
 		DynamicHeldType candidateHeldType = DynamicHeldType.parse(requiredString(arguments, "heldType"));
 		int candidateMaxStack = requiredInt(arguments, "maxStack");
@@ -513,6 +515,7 @@ final class ContentGenerationDraft {
 		double candidateReach = requiredDouble(arguments, "reach");
 		boolean candidatePlaceable = requiredBoolean(arguments, "placeable");
 		DynamicCraftingUse candidateCraftingUse = DynamicCraftingUse.parse(requiredString(arguments, "craftingUse"));
+		int candidateFuelBurnTicks = requiredInt(arguments, "fuelBurnTicks");
 		if (candidateMaxStack < 1 || candidateMaxStack > 64) {
 			throw new IllegalArgumentException("maxStack must be between 1 and 64");
 		}
@@ -521,6 +524,10 @@ final class ContentGenerationDraft {
 		}
 		if (!Double.isFinite(candidateReach) || candidateReach < 0 || candidateReach > 16) {
 			throw new IllegalArgumentException("reach must be between 0 and 16");
+		}
+		if (candidateFuelBurnTicks < 0 || candidateFuelBurnTicks > DynamicItemProperties.MAX_FUEL_BURN_TICKS) {
+			throw new IllegalArgumentException("fuelBurnTicks must be between 0 and "
+					+ DynamicItemProperties.MAX_FUEL_BURN_TICKS);
 		}
 		if (candidateMaxStack < requestedOutputCount) {
 			throw new IllegalArgumentException("maxStack must be at least the requested recipe output count of "
@@ -537,7 +544,7 @@ final class ContentGenerationDraft {
 					rarity == null ? net.minecraft.world.item.Rarity.COMMON : rarity.vanillaRarity(),
 					candidateFoil, candidateEnchantability, candidateReach,
 					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
-					null, null, candidateCraftingUse);
+					null, null, candidateCraftingUse, candidateFuelBurnTicks);
 		} else if (candidateItemType == DynamicItemType.TOOL && candidateMaxStack != 1) {
 			throw new IllegalArgumentException("Tools must use maxStack 1");
 		}
@@ -549,6 +556,7 @@ final class ContentGenerationDraft {
 		reach = candidateReach;
 		placeable = candidatePlaceable;
 		craftingUse = candidateCraftingUse;
+		fuelBurnTicks = candidateFuelBurnTicks;
 		if (itemType != DynamicItemType.FOOD) foodProperties = null;
 		if (!placeable) placementProperties = null;
 		return ToolExecution.success(message("General item properties were accepted."), null);
@@ -572,7 +580,7 @@ final class ContentGenerationDraft {
 				rarity == null ? net.minecraft.world.item.Rarity.COMMON : rarity.vanillaRarity(),
 				foil, enchantability, reach,
 				itemTool, breakingPower, breakingSpeed, attackDamage, attackSpeed,
-				durability, damagePerBlock, damagePerAttack, null, null, craftingUse);
+				durability, damagePerBlock, damagePerAttack, null, null, craftingUse, fuelBurnTicks);
 		return ToolExecution.success(message("Tool mining, combat, and durability properties were accepted."), null);
 	}
 
@@ -771,12 +779,12 @@ final class ContentGenerationDraft {
 			DynamicItemProperties item = itemType == DynamicItemType.TOOL
 					? new DynamicItemProperties(itemType, heldType, maxStack, rarity.vanillaRarity(), foil, enchantability, reach,
 							itemTool, breakingPower, breakingSpeed, attackDamage, attackSpeed,
-							durability, damagePerBlock, damagePerAttack, null, null, craftingUse)
+							durability, damagePerBlock, damagePerAttack, null, null, craftingUse, fuelBurnTicks)
 					: new DynamicItemProperties(itemType, heldType, maxStack, rarity.vanillaRarity(), foil, enchantability, reach,
 							DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
 							itemType == DynamicItemType.FOOD ? foodProperties : null,
 							itemType == DynamicItemType.ITEM && Boolean.TRUE.equals(placeable) ? placementProperties : null,
-							craftingUse);
+							craftingUse, fuelBurnTicks);
 			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource, null,
 					rarity, description, customParticles);
 		} else {
@@ -837,6 +845,7 @@ final class ContentGenerationDraft {
 			result.addProperty("silkTouchDropsSelf", blockDrops.silkTouchDropsSelf());
 			result.addProperty("dropExplosionDecay", blockDrops.explosionDecay());
 		}
+		if (fuelBurnTicks != null) result.addProperty("fuelBurnTicks", fuelBurnTicks);
 		return result;
 	}
 
@@ -860,7 +869,8 @@ final class ContentGenerationDraft {
 			if (blockDrops == null) missing.add("blockDrops");
 		} else if (type == DynamicContentType.ITEM) {
 			if (itemType == null || heldType == null || maxStack == null || foil == null
-					|| enchantability == null || reach == null || placeable == null || craftingUse == null) {
+					|| enchantability == null || reach == null || placeable == null || craftingUse == null
+					|| fuelBurnTicks == null) {
 				missing.add("itemProperties");
 			} else if (itemType == DynamicItemType.FOOD && foodProperties == null) {
 				missing.add("foodProperties");

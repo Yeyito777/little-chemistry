@@ -24,6 +24,11 @@ final class RecipeIngredient {
 		if (stack.isEmpty()) return ItemStack.EMPTY;
 		ItemStack normalized = stack.copyWithCount(1);
 		if (normalized.has(DataComponents.DAMAGE)) normalized.setDamageValue(0);
+		if (normalized.getItem() == LittleChemistry.CRAFTING_TABLE_ON_A_STICK) {
+			normalized.remove(PortableCraftingComponents.TABLE_ID);
+			normalized.remove(PortableCraftingComponents.STATE);
+			normalized.remove(DataComponents.CONTAINER);
+		}
 		return normalized;
 	}
 

@@ -20,8 +20,11 @@ public record DynamicItemProperties(
 		int damagePerAttack,
 		DynamicFoodProperties food,
 		DynamicPlacementProperties placement,
-		DynamicCraftingUse craftingUse
+		DynamicCraftingUse craftingUse,
+		int fuelBurnTicks
 ) {
+	/** Furnace fields store their remaining burn duration as a signed short in world data. */
+	public static final int MAX_FUEL_BURN_TICKS = Short.MAX_VALUE;
 	public static final DynamicItemProperties DEFAULT = ordinary(64, Rarity.COMMON, false, 0, 0.0);
 
 	/** Compatibility constructor for definitions predating reusable crafting ingredients. */
@@ -31,7 +34,18 @@ public record DynamicItemProperties(
 			int damagePerAttack, DynamicFoodProperties food, DynamicPlacementProperties placement) {
 		this(itemType, heldType, maxStack, rarity, foil, enchantability, reach, tool, breakingPower,
 				breakingSpeed, attackDamage, attackSpeed, durability, damagePerBlock, damagePerAttack,
-				food, placement, DynamicCraftingUse.CONSUME);
+				food, placement, DynamicCraftingUse.CONSUME, 0);
+	}
+
+	/** Compatibility constructor for definitions predating per-stack furnace fuel durations. */
+	public DynamicItemProperties(DynamicItemType itemType, DynamicHeldType heldType, int maxStack, Rarity rarity,
+			boolean foil, int enchantability, double reach, DynamicTool tool, DynamicBreakingPower breakingPower,
+			float breakingSpeed, double attackDamage, double attackSpeed, int durability, int damagePerBlock,
+			int damagePerAttack, DynamicFoodProperties food, DynamicPlacementProperties placement,
+			DynamicCraftingUse craftingUse) {
+		this(itemType, heldType, maxStack, rarity, foil, enchantability, reach, tool, breakingPower,
+				breakingSpeed, attackDamage, attackSpeed, durability, damagePerBlock, damagePerAttack,
+				food, placement, craftingUse, 0);
 	}
 
 	public DynamicItemProperties {
@@ -48,6 +62,10 @@ public record DynamicItemProperties(
 		if (durability < 0 || durability > 100_000) throw new IllegalArgumentException("Durability must be between 0 and 100000");
 		if (damagePerBlock < 0 || damagePerBlock > 64 || damagePerAttack < 0 || damagePerAttack > 64) {
 			throw new IllegalArgumentException("Durability costs must be between 0 and 64");
+		}
+		if (fuelBurnTicks < 0 || fuelBurnTicks > MAX_FUEL_BURN_TICKS) {
+			throw new IllegalArgumentException("Fuel burn duration must be between 0 and "
+					+ MAX_FUEL_BURN_TICKS + " ticks");
 		}
 		if (itemType != DynamicItemType.TOOL) {
 			if (tool != DynamicTool.NONE || breakingPower != DynamicBreakingPower.NONE || durability != 0

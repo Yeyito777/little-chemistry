@@ -9,10 +9,12 @@
     "CraftingMenuMixin",
     "CreativeModeTabsAccessor",
     "FurnaceMenuMixin",
+    "FuelValuesMixin",
     "ItemCooldownsMixin",
     "PistonStructureResolverMixin",
     "RecipeManagerMixin",
     "ServerGamePacketListenerMixin",
+    "ServerRecipeBookMixin",
     "ServerPlayerGameModeMixin"
   ],
   "client": [

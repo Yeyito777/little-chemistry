@@ -1,6 +1,8 @@
 package com.yeyito.littlechemistry.crafting;
 
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ContainerInput;
 
 /** Common menu contract for asking the AI to invent a runtime recipe. */
 public interface AiRecipeMenuAccess {
@@ -14,4 +16,9 @@ public interface AiRecipeMenuAccess {
 	boolean littleChemistry$requestRecipe(ServerPlayer player);
 
 	boolean littleChemistry$isLockedRecipeSlot(int slotIndex);
+
+	default boolean littleChemistry$isProtectedCarrierInteraction(
+			int slotIndex, int buttonNum, ContainerInput input, Player player) {
+		return false;
+	}
 }

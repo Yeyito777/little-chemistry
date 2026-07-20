@@ -7,6 +7,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicItemProperties;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 
 import java.io.IOException;
@@ -157,7 +158,7 @@ public final class ContentGenerationAgent {
 		} else if (type == DynamicContentType.ITEM) {
 			tools.add(tool("set_texture", "Set the complete indexed 16x16 inventory texture.", textureSchema()));
 			tools.add(tool("set_item_properties",
-					"Choose gameplay itemType independently from the visual heldType pose. Examples: regular for materials, food, and small objects; tool for swords, pickaxes, axes, staffs, and wands; rod for fishing rods or reversed long rods; bow for bows; crossbow for crossbows; mace for hammers, clubs, and other heavy-headed weapons; spear for spears and lances. A pose does not add its example's mechanics or animations. Also set stack, foil, enchantability, reach, placeable properties, and craftingUse. Use consume normally, keep for unchanged reusable catalysts or molds, and damage for reusable tools such as cutters or hammers that lose one durability per craft. maxStack must accommodate requestedOutputCount when supplied.",
+					"Choose gameplay itemType independently from the visual heldType pose. Examples: regular for materials, food, and small objects; tool for swords, pickaxes, axes, staffs, and wands; rod for fishing rods or reversed long rods; bow for bows; crossbow for crossbows; mace for hammers, clubs, and other heavy-headed weapons; spear for spears and lances. A pose does not add its example's mechanics or animations. Also set stack, foil, enchantability, reach, placeable properties, craftingUse, and fuelBurnTicks. Set fuelBurnTicks=0 when it is not furnace fuel; otherwise choose a duration using 20 ticks per second and 200 ticks per standard smelt. Vanilla references: stick=100, coal/charcoal=1600, blaze rod=2400, lava bucket=20000. Use consume normally, keep for unchanged reusable catalysts or molds, and damage for reusable tools such as cutters or hammers that lose one durability per craft. maxStack must accommodate requestedOutputCount when supplied.",
 					itemPropertiesSchema()));
 			tools.add(tool("set_tool_properties",
 					"Required only for itemType=tool. Set tool category, breaking power/speed, native total attack damage and attack speed shown in the tooltip, durability, and durability costs.",
@@ -399,7 +400,8 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject itemPropertiesSchema() {
-		JsonObject schema = objectSchema("itemType", "heldType", "maxStack", "foil", "enchantability", "reach", "placeable", "craftingUse");
+		JsonObject schema = objectSchema("itemType", "heldType", "maxStack", "foil", "enchantability", "reach",
+				"placeable", "craftingUse", "fuelBurnTicks");
 		JsonObject properties = schema.getAsJsonObject("properties");
 		properties.add("itemType", enumSchema("item", "food", "tool"));
 		properties.add("heldType", enumSchema("regular", "tool", "rod", "bow", "crossbow", "mace", "spear"));
@@ -409,6 +411,7 @@ public final class ContentGenerationAgent {
 		properties.add("reach", numberSchema(0, 16));
 		properties.add("placeable", typeSchema("boolean"));
 		properties.add("craftingUse", enumSchema("consume", "keep", "damage"));
+		properties.add("fuelBurnTicks", integerSchema(0, DynamicItemProperties.MAX_FUEL_BURN_TICKS));
 		return schema;
 	}
 

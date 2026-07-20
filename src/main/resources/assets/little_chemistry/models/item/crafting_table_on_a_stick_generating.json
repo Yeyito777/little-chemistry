@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "little_chemistry:item/crafting_table_on_a_stick_generating"
+  }
+}

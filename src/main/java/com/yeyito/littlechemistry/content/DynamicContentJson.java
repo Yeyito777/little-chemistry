@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 16;
+	public static final int CURRENT_FORMAT = 17;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -458,6 +458,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("breakingSpeed", item.breakingSpeed());
 		encoded.addProperty("reach", item.reach());
 		encoded.addProperty("craftingUse", item.craftingUse().serializedName());
+		encoded.addProperty("fuelBurnTicks", item.fuelBurnTicks());
 		if (item.itemType() == DynamicItemType.TOOL) {
 			encoded.addProperty("attackDamage", item.attackDamage());
 			encoded.addProperty("attackSpeed", item.attackSpeed());
@@ -516,6 +517,7 @@ public final class DynamicContentJson {
 		DynamicCraftingUse craftingUse = encoded.has("craftingUse")
 				? DynamicCraftingUse.parse(encoded.get("craftingUse").getAsString())
 				: DynamicCraftingUse.CONSUME;
+		int fuelBurnTicks = encoded.has("fuelBurnTicks") ? encoded.get("fuelBurnTicks").getAsInt() : 0;
 		JsonObject encodedFood = encoded.get("food") instanceof JsonObject value ? value
 				: encoded.get("consumable") instanceof JsonObject legacy ? legacy : null;
 		if (itemType == DynamicItemType.ITEM && encodedFood != null) itemType = DynamicItemType.FOOD;
@@ -552,7 +554,7 @@ public final class DynamicContentJson {
 			}
 			return new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
 					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
-					food, placement, craftingUse);
+					food, placement, craftingUse, fuelBurnTicks);
 		}
 		return new DynamicItemProperties(
 				DynamicItemType.TOOL, heldType, 1, rarity, foil, enchantability, reach,
@@ -566,7 +568,8 @@ public final class DynamicContentJson {
 				encoded.has("damagePerAttack") ? encoded.get("damagePerAttack").getAsInt() : 2,
 				null,
 				null,
-				craftingUse
+				craftingUse,
+				fuelBurnTicks
 		);
 	}
 

@@ -6,6 +6,7 @@ import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
+import com.yeyito.littlechemistry.crafting.PortableCraftingComponents;
 import com.yeyito.littlechemistry.item.CraftingTableOnAStickItem;
 import com.yeyito.littlechemistry.item.WandOfCreationItem;
 import com.yeyito.littlechemistry.item.WandOfDeletionItem;
@@ -82,6 +83,7 @@ public final class LittleChemistry implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		PortableCraftingComponents.register();
 		DynamicContentObjects.register();
 		DynamicParticleRegistry.register();
 		LittleChemistryCommands.register();
@@ -139,6 +141,11 @@ public final class LittleChemistry implements ModInitializer {
 		ServerLifecycleEvents.SERVER_STOPPING.register(AiCraftingManager::stop);
 		ServerLifecycleEvents.SERVER_STOPPED.register(DynamicContentManager::stop);
 		ServerTickEvents.END_SERVER_TICK.register(AiCraftingManager::tick);
+		ServerLifecycleEvents.SYNC_DATA_PACK_CONTENTS.register((player, joined) -> {
+			for (var recipe : player.level().getServer().getRecipeManager().getRecipes()) {
+				player.getRecipeBook().add(recipe.id());
+			}
+		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			DynamicContentManager manager = DynamicContentManager.active();
 			if (manager != null) {

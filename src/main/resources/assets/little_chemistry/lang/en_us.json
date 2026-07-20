@@ -5,6 +5,8 @@
   "button.little_chemistry.making_smelting_recipe": "Making Smelting Recipe…",
   "container.little_chemistry.crafting_table_on_a_stick": "Crafting Table on a Stick",
   "item.little_chemistry.crafting_table_on_a_stick": "Crafting Table on a Stick",
+  "tooltip.little_chemistry.crafting_table_on_a_stick.generating": "Inventing a recipe…",
+  "tooltip.little_chemistry.crafting_table_on_a_stick.ready": "Recipe ready — use to collect it",
   "item.little_chemistry.wand_of_creation": "Wand of Creation",
   "item.little_chemistry.wand_of_deletion": "Wand of Deletion",
   "itemGroup.little_chemistry.main": "Little Chemistry",
@@ -37,5 +39,6 @@
   "tooltip.little_chemistry.block_drop.self": "itself",
   "tooltip.little_chemistry.block_drop.fortune": " (Fortune)",
   "tooltip.little_chemistry.block_drop.silk_touch": "Silk Touch: drops itself",
-  "tooltip.little_chemistry.block_drop.explosion_decay": "Explosion damage may reduce drops"
+  "tooltip.little_chemistry.block_drop.explosion_decay": "Explosion damage may reduce drops",
+  "tooltip.little_chemistry.furnace_fuel": "Furnace fuel: %s s (%s smelts)"
 }

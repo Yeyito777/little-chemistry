@@ -5,6 +5,9 @@ run/
 bin/
 out/
 
+# Linked development worktrees
+.worktrees/
+
 # Machine-local configuration (may contain private filesystem paths)
 local.properties
 
@@ -20,6 +23,7 @@ local.properties
 
 # Logs, JVM dumps, and OS files
 *.log
+*.log.gz
 *.hprof
 hs_err_pid*
 .DS_Store

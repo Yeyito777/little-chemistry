@@ -37,10 +37,38 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("reach", 0.0);
 		arguments.addProperty("placeable", false);
 		arguments.addProperty("craftingUse", "keep");
+		arguments.addProperty("fuelBurnTicks", 1600);
 
 		ContentGenerationDraft.ToolExecution result = draft.execute("set_item_properties", arguments);
 
 		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
+		assertEquals(1600, draft.execute("inspect_draft", new JsonObject()).output()
+				.get("fuelBurnTicks").getAsInt());
+	}
+
+	@Test
+	void furnaceFuelDurationIsBoundedAndZeroDisablesFuel() {
+		ContentGenerationDraft fuelDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "compressed embers");
+		JsonObject fuel = ordinaryItemArguments();
+		fuel.addProperty("fuelBurnTicks", 3200);
+		ContentGenerationDraft.ToolExecution fuelResult = fuelDraft.execute("set_item_properties", fuel);
+
+		ContentGenerationDraft noFuelDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "wet dust");
+		ContentGenerationDraft.ToolExecution noFuelResult = noFuelDraft.execute(
+				"set_item_properties", ordinaryItemArguments());
+
+		ContentGenerationDraft invalidDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "endless ember");
+		JsonObject invalid = ordinaryItemArguments();
+		invalid.addProperty("fuelBurnTicks", com.yeyito.littlechemistry.content.DynamicItemProperties.MAX_FUEL_BURN_TICKS + 1);
+		ContentGenerationDraft.ToolExecution invalidResult = invalidDraft.execute("set_item_properties", invalid);
+
+		assertTrue(fuelResult.output().get("ok").getAsBoolean(), fuelResult.output().toString());
+		assertEquals(3200, fuelDraft.execute("inspect_draft", new JsonObject()).output()
+				.get("fuelBurnTicks").getAsInt());
+		assertTrue(noFuelResult.output().get("ok").getAsBoolean(), noFuelResult.output().toString());
+		assertEquals(0, noFuelDraft.execute("inspect_draft", new JsonObject()).output()
+				.get("fuelBurnTicks").getAsInt());
+		assertFalse(invalidResult.output().get("ok").getAsBoolean(), invalidResult.output().toString());
 	}
 
 	@Test
@@ -422,7 +450,9 @@ class ContentGenerationDraftTest {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
 		draft.execute("set_metadata", metadataArguments("rare", "A dense cobalt bar with an icy sheen."));
 		draft.execute("set_texture", itemTextureArguments());
-		draft.execute("set_item_properties", ordinaryItemArguments());
+		JsonObject itemProperties = ordinaryItemArguments();
+		itemProperties.addProperty("fuelBurnTicks", 1600);
+		draft.execute("set_item_properties", itemProperties);
 		draft.execute("set_behavior_source", behaviorSourceArguments());
 		draft.execute("compile_behavior", new JsonObject());
 
@@ -435,6 +465,7 @@ class ContentGenerationDraftTest {
 		assertTrue(submitted.submitted().behaviorSource().contains("GeneratedBehaviorImpl"));
 		assertEquals("A dense cobalt bar with\nan icy sheen.", submitted.submitted().description());
 		assertEquals(net.minecraft.world.item.Rarity.RARE, submitted.submitted().item().rarity());
+		assertEquals(1600, submitted.submitted().item().fuelBurnTicks());
 	}
 
 	@Test
@@ -559,6 +590,7 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("reach", 0.0);
 		arguments.addProperty("placeable", false);
 		arguments.addProperty("craftingUse", "consume");
+		arguments.addProperty("fuelBurnTicks", 0);
 		return arguments;
 	}
 

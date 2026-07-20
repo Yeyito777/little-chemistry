@@ -35,17 +35,18 @@ class DynamicContentJsonTest {
 		DynamicItemProperties item = new DynamicItemProperties(
 				DynamicItemType.ITEM, DynamicHeldType.TOOL, 16, Rarity.UNCOMMON, false, 0, 0.0,
 				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
-				0, 0, 0, null, null, DynamicCraftingUse.KEEP);
+				0, 0, 0, null, null, DynamicCraftingUse.KEEP, 1600);
 		DynamicContentDefinition definition = definition("staff", item);
 
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(16, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(17, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 		assertEquals(DynamicCraftingUse.KEEP, decoded.definitions().getFirst().item().craftingUse());
+		assertEquals(1600, decoded.definitions().getFirst().item().fuelBurnTicks());
 		DynamicBehaviorCompiler.compile(decoded.definitions().getFirst().behaviorSource());
 	}
 
@@ -147,12 +148,14 @@ class DynamicContentJsonTest {
 				.getAsJsonObject("item");
 		legacyItem.remove("heldType");
 		legacyItem.remove("craftingUse");
+		legacyItem.remove("fuelBurnTicks");
 
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				legacy.toString().getBytes(StandardCharsets.UTF_8));
 
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 		assertEquals(DynamicCraftingUse.CONSUME, decoded.definitions().getFirst().item().craftingUse());
+		assertEquals(0, decoded.definitions().getFirst().item().fuelBurnTicks());
 	}
 
 	@Test

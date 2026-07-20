@@ -1,43 +1,57 @@
 package com.yeyito.littlechemistry.crafting;
 
 import net.minecraft.core.NonNullList;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.StackedItemContents;
 import net.minecraft.world.inventory.CraftingContainer;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemContainerContents;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
-/** Server-owned grid for either a shared physical table or one portable menu. */
+/** Server-owned grid for either a shared physical table or one persistent portable item. */
 public final class SharedCraftingContainer implements CraftingContainer {
 	private final AiCraftingManager owner;
 	private final AiCraftingManager.@Nullable TableKey key;
+	private final @Nullable UUID portableId;
 	private final NonNullList<ItemStack> items = NonNullList.withSize(9, ItemStack.EMPTY);
 	private final Set<CraftingMenu> viewers = Collections.newSetFromMap(new IdentityHashMap<>());
+	private final Set<ItemStack> portableCarriers = Collections.newSetFromMap(new IdentityHashMap<>());
 	private RecipeSignature lockSignature;
+	private boolean recipeReady;
 
 	private SharedCraftingContainer(AiCraftingManager owner, AiCraftingManager.@Nullable TableKey key,
-			List<ItemStack> initialItems) {
+			@Nullable UUID portableId, List<ItemStack> initialItems, boolean recipeReady) {
 		this.owner = owner;
 		this.key = key;
+		this.portableId = portableId;
 		for (int i = 0; i < Math.min(items.size(), initialItems.size()); i++) {
 			items.set(i, initialItems.get(i).copy());
 		}
+		this.recipeReady = recipeReady && !isEmpty();
 	}
 
 	static SharedCraftingContainer physical(AiCraftingManager owner, AiCraftingManager.TableKey key,
 			List<ItemStack> initialItems) {
-		return new SharedCraftingContainer(owner, key, initialItems);
+		return physical(owner, key, initialItems, false);
 	}
 
-	static SharedCraftingContainer portable(AiCraftingManager owner) {
-		return new SharedCraftingContainer(owner, null, List.of());
+	static SharedCraftingContainer physical(AiCraftingManager owner, AiCraftingManager.TableKey key,
+			List<ItemStack> initialItems, boolean recipeReady) {
+		return new SharedCraftingContainer(owner, key, null, initialItems, recipeReady);
+	}
+
+	static SharedCraftingContainer portable(AiCraftingManager owner, UUID portableId,
+			List<ItemStack> initialItems, boolean recipeReady) {
+		return new SharedCraftingContainer(owner, null, portableId, initialItems, recipeReady);
 	}
 
 	AiCraftingManager.TableKey key() {
@@ -49,25 +63,58 @@ public final class SharedCraftingContainer implements CraftingContainer {
 		return key == null;
 	}
 
+	UUID portableId() {
+		if (portableId == null) throw new IllegalStateException("Physical crafting tables do not have a portable ID");
+		return portableId;
+	}
+
 	public boolean isLocked() {
 		return lockSignature != null;
 	}
 
-	RecipeSignature lockSignature() {
-		return lockSignature;
+	boolean isRecipeReady() {
+		return recipeReady;
+	}
+
+	boolean hasGenerationParticles() {
+		return !isPortable() && (isLocked() || recipeReady);
 	}
 
 	void lock(RecipeSignature signature) {
 		if (lockSignature != null) throw new IllegalStateException("Crafting table is already locked");
+		recipeReady = false;
 		lockSignature = signature;
+		syncPortableCarriers();
+		owner.tableGenerationStateChanged(this);
 		notifyViewers();
 	}
 
 	void unlock(RecipeSignature signature) {
+		finishGeneration(signature, false);
+	}
+
+	void finishGeneration(RecipeSignature signature, boolean succeeded) {
 		if (lockSignature != null && lockSignature.equals(signature)) {
 			lockSignature = null;
+			recipeReady = succeeded;
+			syncPortableCarriers();
+			owner.tableGenerationStateChanged(this);
 			notifyViewers();
 		}
+	}
+
+	void clearRecipeReady() {
+		if (!recipeReady) return;
+		recipeReady = false;
+		syncPortableCarriers();
+		owner.tableGenerationStateChanged(this);
+		notifyViewers();
+	}
+
+	public void attachPortableCarrier(ItemStack carrier) {
+		if (!isPortable()) throw new IllegalStateException("Cannot attach an item to a physical crafting table");
+		portableCarriers.add(carrier);
+		syncPortableCarrier(carrier);
 	}
 
 	public void addViewer(CraftingMenu menu) {
@@ -97,6 +144,9 @@ public final class SharedCraftingContainer implements CraftingContainer {
 		NonNullList<ItemStack> removed = copyItems();
 		items.clear();
 		lockSignature = null;
+		recipeReady = false;
+		syncPortableCarriers();
+		owner.tableGenerationStateChanged(this);
 		notifyViewers();
 		return removed;
 	}
@@ -135,7 +185,7 @@ public final class SharedCraftingContainer implements CraftingContainer {
 
 	@Override
 	public void setItem(int slot, ItemStack stack) {
-		if (isLocked()) return;
+		if (isLocked() || !mayPlace(stack)) return;
 		items.set(slot, stack);
 		stack.limitSize(getMaxStackSize(stack));
 		changed();
@@ -179,7 +229,32 @@ public final class SharedCraftingContainer implements CraftingContainer {
 	}
 
 	private void changed() {
+		clearRecipeReady();
+		syncPortableCarriers();
 		owner.tableContentsChanged(this);
+	}
+
+	boolean mayPlace(ItemStack stack) {
+		if (isLocked()) return false;
+		return !isPortable() || stack.isEmpty()
+				|| !portableId().equals(stack.get(PortableCraftingComponents.TABLE_ID));
+	}
+
+	private void syncPortableCarriers() {
+		if (!isPortable()) return;
+		portableCarriers.removeIf(carrier -> !syncPortableCarrier(carrier));
+	}
+
+	private boolean syncPortableCarrier(ItemStack carrier) {
+		if (carrier.isEmpty() || !portableId().equals(carrier.get(PortableCraftingComponents.TABLE_ID))) return false;
+
+		if (isEmpty()) carrier.remove(DataComponents.CONTAINER);
+		else carrier.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(items));
+
+		if (isLocked()) carrier.set(PortableCraftingComponents.STATE, PortableCraftingState.GENERATING);
+		else if (recipeReady) carrier.set(PortableCraftingComponents.STATE, PortableCraftingState.READY);
+		else carrier.remove(PortableCraftingComponents.STATE);
+		return true;
 	}
 
 	private void notifyViewers() {

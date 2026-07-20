@@ -76,7 +76,7 @@ class DynamicContentAiDescriptionTest {
 		DynamicItemProperties item = new DynamicItemProperties(
 				DynamicItemType.FOOD, DynamicHeldType.REGULAR, 16, Rarity.EPIC, true, 12, 2.5,
 				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
-				0, 0, 0, food, null);
+				0, 0, 0, food, null, com.yeyito.littlechemistry.content.DynamicCraftingUse.CONSUME, 400);
 		String source = """
 				public final class GeneratedBehaviorImpl implements
 				        com.yeyito.littlechemistry.behavior.DynamicBehavior,
@@ -100,6 +100,7 @@ class DynamicContentAiDescriptionTest {
 		assertEquals("food", properties.get("itemType").getAsString());
 		assertEquals(16, properties.get("maxStack").getAsInt());
 		assertEquals("consume", properties.get("craftingUse").getAsString());
+		assertEquals(400, properties.get("fuelBurnTicks").getAsInt());
 		assertEquals("mythical", description.get("rarity").getAsString());
 		assertEquals("A berry that flickers between\nnearby moments.", description.get("description").getAsString());
 		assertTrue(properties.get("foil").getAsBoolean());

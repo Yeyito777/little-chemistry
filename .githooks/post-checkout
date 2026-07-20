@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Prepare manually-created worktrees after their initial branch checkout.
+
+set -euo pipefail
+
+[[ "${LITTLE_CHEMISTRY_SKIP_POST_CHECKOUT_SETUP:-}" == "1" ]] && exit 0
+[[ "${3:-0}" == "1" ]] || exit 0
+
+CHECKOUT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$CHECKOUT_ROOT" ]] || exit 0
+
+# The primary checkout already has its own Gradle state. Limit automatic setup to
+# a newly created linked worktree so ordinary branch checkouts stay side-effect-free.
+GIT_DIR="$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$GIT_DIR" && -n "$COMMON_GIT_DIR" && "$GIT_DIR" != "$COMMON_GIT_DIR" ]] || exit 0
+
+COMMON="$CHECKOUT_ROOT/scripts/dev/worktree-common.sh"
+[[ -f "$COMMON" ]] || exit 0
+
+# shellcheck source=../scripts/dev/worktree-common.sh
+source "$COMMON"
+
+prepare_gradle_worktree "$CHECKOUT_ROOT"
+exit 0

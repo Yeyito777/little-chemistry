@@ -28,6 +28,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Locale;
 import java.util.function.Consumer;
 
 public final class DynamicCarrierItem extends Item {
@@ -194,6 +195,17 @@ public final class DynamicCarrierItem extends Item {
 				case CONSUME -> {
 				}
 			}
+			if (definition.item().fuelBurnTicks() > 0) {
+				builder.accept(Component.translatable("tooltip.little_chemistry.furnace_fuel",
+						formatDecimal(definition.item().fuelBurnTicks() / 20.0),
+						formatDecimal(definition.item().fuelBurnTicks() / 200.0))
+						.withStyle(ChatFormatting.DARK_GRAY));
+			}
 		}
+	}
+
+	private static String formatDecimal(double value) {
+		String formatted = String.format(Locale.ROOT, "%.2f", value);
+		return formatted.replaceFirst("\\.?0+$", "");
 	}
 }

@@ -4,6 +4,7 @@ import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.crafting.AiCraftingMenuAccess;
 import com.yeyito.littlechemistry.crafting.LockedCraftingSlot;
 import com.yeyito.littlechemistry.crafting.PortableCraftingAccess;
+import com.yeyito.littlechemistry.crafting.PortableCraftingComponents;
 import com.yeyito.littlechemistry.crafting.SharedCraftingContainer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -11,6 +12,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractCraftingMenu;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.ContainerLevelAccess;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.DataSlot;
@@ -28,11 +30,14 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.UUID;
+
 @Mixin(CraftingMenu.class)
 public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements AiCraftingMenuAccess {
 	@Unique private @Nullable SharedCraftingContainer littleChemistry$table;
 	@Unique private @Nullable ServerLevel littleChemistry$level;
 	@Unique private boolean littleChemistry$portable;
+	@Unique private @Nullable UUID littleChemistry$portableId;
 	@Unique private int littleChemistry$clientRecipeState;
 
 	protected CraftingMenuMixin(MenuType<?> menuType, int containerId, int width, int height) {
@@ -46,9 +51,11 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 		AiCraftingManager manager = AiCraftingManager.active();
 		if (access instanceof PortableCraftingAccess portableAccess) {
 			littleChemistry$portable = true;
+			littleChemistry$portableId = portableAccess.tableId();
 			if (portableAccess.level() instanceof ServerLevel serverLevel && manager != null) {
 				littleChemistry$level = serverLevel;
-				littleChemistry$table = manager.portableTable();
+				littleChemistry$table = manager.portableTable(
+						serverLevel, portableAccess.tableId(), portableAccess.carrier());
 			}
 		} else {
 			access.execute((level, pos) -> {
@@ -108,8 +115,11 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 	@Inject(method = "removed", at = @At("HEAD"), cancellable = true)
 	private void littleChemistry$keepSharedContents(Player player, CallbackInfo callback) {
 		if (littleChemistry$table == null) return;
+		if (littleChemistry$portable) {
+			ItemStack carrier = littleChemistry$findPortableCarrier(player);
+			if (!carrier.isEmpty()) littleChemistry$table.attachPortableCarrier(carrier);
+		}
 		littleChemistry$table.removeViewer((CraftingMenu)(Object)this);
-		if (littleChemistry$portable) return;
 		if (player instanceof ServerPlayer serverPlayer) {
 			ItemStack carried = this.getCarried();
 			if (!carried.isEmpty()) {
@@ -126,7 +136,7 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 	@Inject(method = "stillValid", at = @At("HEAD"), cancellable = true)
 	private void littleChemistry$keepPortableMenuValid(Player player,
 			CallbackInfoReturnable<Boolean> result) {
-		if (littleChemistry$portable) result.setReturnValue(true);
+		if (littleChemistry$portable) result.setReturnValue(!littleChemistry$findPortableCarrier(player).isEmpty());
 	}
 
 	@Override
@@ -146,6 +156,20 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 	}
 
 	@Override
+	public boolean littleChemistry$isProtectedCarrierInteraction(
+			int slotIndex, int buttonNum, ContainerInput input, Player player) {
+		if (!littleChemistry$portable || littleChemistry$portableId == null) return false;
+		if (littleChemistry$isPortableCarrier(this.getCarried())) return true;
+		if (slotIndex >= 0 && slotIndex < this.slots.size()
+				&& littleChemistry$isPortableCarrier(this.slots.get(slotIndex).getItem())) {
+			return true;
+		}
+		return input == ContainerInput.SWAP
+				&& ((buttonNum >= 0 && buttonNum < 9) || buttonNum == Inventory.SLOT_OFFHAND)
+				&& littleChemistry$isPortableCarrier(player.getInventory().getItem(buttonNum));
+	}
+
+	@Override
 	public @Nullable SharedCraftingContainer littleChemistry$getSharedTable() {
 		return littleChemistry$table;
 	}
@@ -157,6 +181,24 @@ public abstract class CraftingMenuMixin extends AbstractCraftingMenu implements 
 		if (littleChemistry$table.isEmpty()) return EMPTY_OR_VALID;
 		return littleChemistry$level.getServer().getRecipeManager()
 				.getRecipeFor(RecipeType.CRAFTING, littleChemistry$table.asCraftInput(), littleChemistry$level)
-				.isPresent() ? EMPTY_OR_VALID : MAKE_RECIPE_AVAILABLE;
+					.isPresent() ? EMPTY_OR_VALID : MAKE_RECIPE_AVAILABLE;
+	}
+
+	@Unique
+	private ItemStack littleChemistry$findPortableCarrier(Player player) {
+		ItemStack carried = this.getCarried();
+		if (littleChemistry$isPortableCarrier(carried)) return carried;
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack candidate = inventory.getItem(slot);
+			if (littleChemistry$isPortableCarrier(candidate)) return candidate;
+		}
+		return ItemStack.EMPTY;
+	}
+
+	@Unique
+	private boolean littleChemistry$isPortableCarrier(ItemStack stack) {
+		return !stack.isEmpty() && littleChemistry$portableId != null
+				&& littleChemistry$portableId.equals(stack.get(PortableCraftingComponents.TABLE_ID));
 	}
 }
