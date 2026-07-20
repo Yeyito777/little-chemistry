@@ -106,6 +106,7 @@ public record DynamicBlockDrops(
 			case BLOCK -> 64;
 			case ITEM -> definition.item().maxStack();
 			case ARMOR -> 1;
+			case ENTITY -> 64;
 		};
 	}
 

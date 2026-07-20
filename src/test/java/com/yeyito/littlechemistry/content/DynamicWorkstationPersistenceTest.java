@@ -52,7 +52,7 @@ class DynamicWorkstationPersistenceTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 7, List.of(definition));
 		DynamicContentJson.Decoded catalog = DynamicContentJson.decode(encoded);
 
-		assertEquals(18, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(19, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(workstation, catalog.definitions().getFirst().workstation());
 		assertEquals("Separates mixed materials through controlled rotational force.",
 				catalog.definitions().getFirst().workstation().processDescription());

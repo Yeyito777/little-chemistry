@@ -20,6 +20,7 @@ public final class WandCreationScreen extends Screen {
 	private static final Component ITEM = Component.translatable("screen.little_chemistry.creation.item");
 	private static final Component BLOCK = Component.translatable("screen.little_chemistry.creation.block");
 	private static final Component ARMOR = Component.translatable("screen.little_chemistry.creation.armor");
+	private static final Component ENTITY = Component.translatable("screen.little_chemistry.creation.entity");
 	private static final Component MODEL_LABEL = Component.translatable("screen.little_chemistry.creation.model");
 
 	private EditBox nameEdit;
@@ -57,10 +58,12 @@ public final class WandCreationScreen extends Screen {
 							case ITEM -> ITEM;
 							case BLOCK -> BLOCK;
 							case ARMOR -> ARMOR;
+							case ENTITY -> ENTITY;
 						},
 						DynamicContentType.ITEM
 				)
-						.withValues(DynamicContentType.ITEM, DynamicContentType.BLOCK, DynamicContentType.ARMOR)
+						.withValues(DynamicContentType.ITEM, DynamicContentType.BLOCK,
+								DynamicContentType.ARMOR, DynamicContentType.ENTITY)
 						.displayOnlyValue()
 						.create(this.left, this.top + 74, 304, 20, TYPE_LABEL)
 		);

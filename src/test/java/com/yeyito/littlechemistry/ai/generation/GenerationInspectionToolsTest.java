@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class GenerationInspectionToolsTest {
 	@Test
@@ -24,5 +25,14 @@ final class GenerationInspectionToolsTest {
 				"inspect_java_class",
 				"inspect_java_source"
 		), names);
+		var search = tools.asList().stream().map(element -> element.getAsJsonObject())
+				.filter(tool -> tool.get("name").getAsString().equals("search_dynamic_content"))
+				.findFirst().orElseThrow();
+		assertTrue(search.getAsJsonObject("parameters").getAsJsonObject("properties")
+				.getAsJsonObject("kind").getAsJsonArray("enum").toString().contains("entity"));
+		var inspect = tools.asList().stream().map(element -> element.getAsJsonObject())
+				.filter(tool -> tool.get("name").getAsString().equals("inspect_dynamic_content"))
+				.findFirst().orElseThrow();
+		assertTrue(inspect.get("description").getAsString().contains("entity"));
 	}
 }

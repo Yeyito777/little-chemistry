@@ -1170,7 +1170,7 @@ public final class AiCraftingManager {
 					RecipeSignature signature = new RecipeSignature(width, height, ingredients);
 					recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount));
 				}
-					case "smelting" -> {
+				case "smelting" -> {
 					JsonElement encodedIngredient = encoded.get("ingredient");
 					if (encodedIngredient == null) throw new IOException("Invalid AI smelting recipe ingredient");
 					ItemStack ingredient = ItemStack.OPTIONAL_CODEC.parse(ops, encodedIngredient)
@@ -1189,42 +1189,42 @@ public final class AiCraftingManager {
 					if (cookingTime < 1 || cookingTime > Short.MAX_VALUE) {
 						throw new IOException("Invalid AI smelting recipe cooking time");
 					}
-						smeltingRecipes.put(signature, new AiSmeltingRecipe(
-								recipeKey, signature, output, outputCount, experience, cookingTime));
+					smeltingRecipes.put(signature, new AiSmeltingRecipe(
+							recipeKey, signature, output, outputCount, experience, cookingTime));
+				}
+				case "workstation" -> {
+					String workstation = encoded.get("workstation").getAsString();
+					String process = encoded.get("process").getAsString();
+					String discriminator = encoded.has("discriminator")
+							? encoded.get("discriminator").getAsString() : "";
+					JsonArray encodedIngredients = encoded.getAsJsonArray("ingredients");
+					if (encodedIngredients == null || encodedIngredients.isEmpty()
+							|| encodedIngredients.size() > WorkstationRecipeRequest.MAX_INGREDIENTS) {
+						throw new IOException("Invalid AI workstation recipe ingredients");
 					}
-					case "workstation" -> {
-						String workstation = encoded.get("workstation").getAsString();
-						String process = encoded.get("process").getAsString();
-						String discriminator = encoded.has("discriminator")
-								? encoded.get("discriminator").getAsString() : "";
-						JsonArray encodedIngredients = encoded.getAsJsonArray("ingredients");
-						if (encodedIngredients == null || encodedIngredients.isEmpty()
-								|| encodedIngredients.size() > WorkstationRecipeRequest.MAX_INGREDIENTS) {
-							throw new IOException("Invalid AI workstation recipe ingredients");
-						}
-						List<WorkstationRecipeSignature.Ingredient> ingredients = new ArrayList<>();
-						for (JsonElement ingredientElement : encodedIngredients) {
-							JsonObject ingredient = ingredientElement.getAsJsonObject();
-							ItemStack stack = ItemStack.OPTIONAL_CODEC.parse(ops, ingredient.get("stack"))
-									.getOrThrow(IOException::new);
-							ingredients.add(new WorkstationRecipeSignature.Ingredient(
-									ingredient.get("slot").getAsString(), stack,
-									ingredient.get("count").getAsInt(),
-									WorkstationRecipeRequest.IngredientUse.valueOf(
-											ingredient.get("use").getAsString().toUpperCase(java.util.Locale.ROOT))));
-						}
-						WorkstationRecipeSignature signature = new WorkstationRecipeSignature(
-								workstation, process, discriminator, ingredients);
-						JsonObject recipeData = encoded.get("recipeData") instanceof JsonObject data
-								? data.deepCopy() : new JsonObject();
-						DynamicContentDefinition workstationDefinition = DynamicContentCatalog.find(workstation);
-						if (workstationDefinition != null && workstationDefinition.workstation() != null) {
-							workstationDefinition.workstation().recipeDataSchema().validateValue(recipeData);
-						}
-						workstationRecipes.put(signature,
-								new AiWorkstationRecipe(signature, output, outputCount, recipeData));
+					List<WorkstationRecipeSignature.Ingredient> ingredients = new ArrayList<>();
+					for (JsonElement ingredientElement : encodedIngredients) {
+						JsonObject ingredient = ingredientElement.getAsJsonObject();
+						ItemStack stack = ItemStack.OPTIONAL_CODEC.parse(ops, ingredient.get("stack"))
+								.getOrThrow(IOException::new);
+						ingredients.add(new WorkstationRecipeSignature.Ingredient(
+								ingredient.get("slot").getAsString(), stack,
+								ingredient.get("count").getAsInt(),
+								WorkstationRecipeRequest.IngredientUse.valueOf(
+										ingredient.get("use").getAsString().toUpperCase(java.util.Locale.ROOT))));
 					}
-					default -> throw new IOException("Unknown AI recipe type: " + type);
+					WorkstationRecipeSignature signature = new WorkstationRecipeSignature(
+							workstation, process, discriminator, ingredients);
+					JsonObject recipeData = encoded.get("recipeData") instanceof JsonObject data
+							? data.deepCopy() : new JsonObject();
+					DynamicContentDefinition workstationDefinition = DynamicContentCatalog.find(workstation);
+					if (workstationDefinition != null && workstationDefinition.workstation() != null) {
+						workstationDefinition.workstation().recipeDataSchema().validateValue(recipeData);
+					}
+					workstationRecipes.put(signature,
+							new AiWorkstationRecipe(signature, output, outputCount, recipeData));
+				}
+				default -> throw new IOException("Unknown AI recipe type: " + type);
 			}
 		}
 	}

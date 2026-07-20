@@ -46,6 +46,7 @@ public final class DynamicContentObjects {
 	public static DynamicCarrierItem ARMOR_CHEST;
 	public static DynamicCarrierItem ARMOR_LEGGINGS;
 	public static DynamicCarrierItem ARMOR_BOOTS;
+	public static DynamicEntitySpawnerItem ENTITY_SPAWNER;
 	public static DynamicCarrierBlock BLOCK;
 	public static DynamicCarrierBlockItem BLOCK_ITEM;
 	public static BlockEntityType<DynamicBlockEntity> BLOCK_ENTITY_TYPE;
@@ -75,6 +76,11 @@ public final class DynamicContentObjects {
 		ARMOR_CHEST = registerArmorCarrier("dynamic_armor_chest");
 		ARMOR_LEGGINGS = registerArmorCarrier("dynamic_armor_leggings");
 		ARMOR_BOOTS = registerArmorCarrier("dynamic_armor_boots");
+
+		ResourceKey<Item> entitySpawnerKey = ResourceKey.create(Registries.ITEM,
+				LittleChemistry.id("dynamic_entity"));
+		ENTITY_SPAWNER = Registry.register(BuiltInRegistries.ITEM, entitySpawnerKey,
+				new DynamicEntitySpawnerItem(new Item.Properties().setId(entitySpawnerKey)));
 
 		ResourceKey<Block> blockKey = ResourceKey.create(Registries.BLOCK, LittleChemistry.id("dynamic_block"));
 		BLOCK = Registry.register(
@@ -112,6 +118,7 @@ public final class DynamicContentObjects {
 			case BLOCK -> BLOCK_ITEM;
 			case ITEM -> heldCarrier(definition.item().heldType());
 			case ARMOR -> armorCarrier(definition.armor().slot());
+			case ENTITY -> ENTITY_SPAWNER;
 		};
 		ItemStack stack = new ItemStack(carrier);
 		stack.set(CONTENT_ID, LittleChemistry.id(definition.name()));
@@ -157,6 +164,9 @@ public final class DynamicContentObjects {
 					.setAsset(armorAsset(definition.effectiveArmorDisplayTextureHash()))
 					.build());
 			stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes(armor));
+		}
+		if (definition.entity() != null) {
+			stack.set(DataComponents.MAX_STACK_SIZE, 64);
 		}
 		return stack;
 	}
@@ -277,6 +287,7 @@ public final class DynamicContentObjects {
 
 	/** Infrastructure carriers are never valid standalone item identities. */
 	public static boolean isCarrierItem(Item item) {
-		return item instanceof DynamicCarrierItem || item instanceof DynamicCarrierBlockItem;
+		return item instanceof DynamicCarrierItem || item instanceof DynamicCarrierBlockItem
+				|| item instanceof DynamicEntitySpawnerItem;
 	}
 }

@@ -13,7 +13,7 @@ final class GenerationInspectionTools {
 				"Search all previously generated content in this world by name, description, type, gameplay properties, callback, or Java behavior concept. Results are summaries; use inspect_dynamic_content for complete source and visual data.",
 				dynamicContentSearchSchema()));
 		tools.add(tool("inspect_dynamic_content",
-				"Inspect one previously generated item, block, or armor definition in full, including untruncated Java behavior source and every stored texture/model/property field.",
+				"Inspect one previously generated item, block, armor, or entity definition in full, including untruncated Java behavior source and every stored texture/model/property field.",
 				dynamicContentInspectSchema()));
 		tools.add(tool("search_java_classes",
 				"Search the running Minecraft, Fabric, and Little Chemistry class graph by concept or class-name fragment.",
@@ -43,7 +43,7 @@ final class GenerationInspectionTools {
 		JsonObject query = typeSchema("string");
 		query.addProperty("maxLength", 160);
 		properties.add("query", query);
-		properties.add("kind", enumSchema("any", "item", "block", "armor"));
+		properties.add("kind", enumSchema("any", "item", "block", "armor", "entity"));
 		properties.add("limit", integerSchema(1, 100));
 		return schema;
 	}

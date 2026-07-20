@@ -26,6 +26,12 @@ import com.yeyito.littlechemistry.content.DynamicDropTargetKind;
 import com.yeyito.littlechemistry.content.DynamicFoodEffect;
 import com.yeyito.littlechemistry.content.DynamicFoodProperties;
 import com.yeyito.littlechemistry.content.DynamicFortuneMode;
+import com.yeyito.littlechemistry.content.DynamicEntityDisposition;
+import com.yeyito.littlechemistry.content.DynamicEntityDrop;
+import com.yeyito.littlechemistry.content.DynamicEntityModel;
+import com.yeyito.littlechemistry.content.DynamicEntityMovement;
+import com.yeyito.littlechemistry.content.DynamicEntityProperties;
+import com.yeyito.littlechemistry.content.DynamicEntityVisualProfile;
 import com.yeyito.littlechemistry.content.DynamicHeldType;
 import com.yeyito.littlechemistry.content.DynamicItemProperties;
 import com.yeyito.littlechemistry.content.DynamicItemType;
@@ -60,6 +66,8 @@ final class ContentGenerationDraft {
 	private final int requestedOutputCount;
 	private DynamicTextureSpec texture;
 	private DynamicBlockModel blockModel;
+	private DynamicEntityModel entityModel;
+	private DynamicEntityProperties entityProperties;
 	private DynamicArmorDisplayTextureSpec armorDisplayTexture;
 	private DynamicArmorSlot armorDisplaySlot;
 	private DynamicMaterial material;
@@ -141,16 +149,16 @@ final class ContentGenerationDraft {
 			if (arguments.has("_malformed")) {
 				throw new IllegalArgumentException("Tool arguments were not valid JSON");
 			}
-				return switch (tool) {
+			return switch (tool) {
 				case "set_metadata" -> setMetadata(arguments);
 				case "set_texture" -> setTexture(arguments);
 				case "set_block_model" -> requireBlock(() -> setBlockModel(arguments));
 				case "set_custom_particles" -> setCustomParticles(arguments);
 				case "set_armor_display_texture" -> requireArmor(() -> setArmorDisplayTexture(arguments));
-					case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
-					case "set_block_role" -> requireBlock(() -> setBlockRole(arguments));
-					case "set_workstation_policy" -> requireBlock(() -> setWorkstationPolicy(arguments));
-					case "set_workstation_layout" -> requireBlock(() -> setWorkstationLayout(arguments));
+				case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
+				case "set_block_role" -> requireBlock(() -> setBlockRole(arguments));
+				case "set_workstation_policy" -> requireBlock(() -> setWorkstationPolicy(arguments));
+				case "set_workstation_layout" -> requireBlock(() -> setWorkstationLayout(arguments));
 				case "set_block_redstone" -> requireBlock(() -> setBlockRedstone(arguments));
 				case "set_block_light" -> requireBlock(() -> setBlockLight(arguments));
 				case "set_block_particles" -> requireBlock(() -> setBlockParticles(arguments));
@@ -160,6 +168,9 @@ final class ContentGenerationDraft {
 				case "set_food_properties" -> requireItem(() -> setFoodProperties(arguments));
 				case "set_placement_properties" -> requireItem(() -> setPlacementProperties(arguments));
 				case "set_armor_properties" -> requireArmor(() -> setArmorProperties(arguments));
+				case "set_entity_properties" -> requireEntity(() -> setEntityProperties(arguments));
+				case "set_entity_model" -> requireEntity(() -> setEntityModel(arguments));
+				case "set_entity_vanilla_model" -> requireEntity(() -> setEntityVanillaModel(arguments));
 				case "inspect_behavior_api" -> inspectBehaviorApi(arguments);
 				case "set_behavior_source" -> setBehaviorSource(arguments);
 				case "compile_behavior" -> compileBehavior(arguments);
@@ -290,6 +301,91 @@ final class ContentGenerationDraft {
 		details.addProperty("totalTexturePixels", totalPixels);
 		details.addProperty("elementCount", elements.size());
 		details.addProperty("shape", blockShape.serializedName());
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setEntityModel(JsonObject arguments) throws Exception {
+		requireOnly(arguments, "textures", "particleTexture", "faces", "elements");
+		JsonArray encodedTextures = requiredArray(arguments, "textures");
+		if (encodedTextures.isEmpty() || encodedTextures.size() > DynamicBlockModel.MAX_TEXTURES) {
+			throw new IllegalArgumentException("Entity models require 1-12 textures");
+		}
+		List<DynamicBlockTexture> textures = new ArrayList<>();
+		int totalPixels = 0;
+		for (JsonElement element : encodedTextures) {
+			if (!(element instanceof JsonObject encoded)) {
+				throw new IllegalArgumentException("Every entity texture must be an object");
+			}
+			requireOnly(encoded, "id", "width", "height", "palette", "rows");
+			int width = requiredInt(encoded, "width");
+			int height = requiredInt(encoded, "height");
+			DynamicTextureSpec specification = new DynamicTextureSpec(
+					strings(requiredArray(encoded, "palette")), strings(requiredArray(encoded, "rows")));
+			specification.requireDimensions(width, height);
+			totalPixels += width * height;
+			if (totalPixels > 16_384) {
+				throw new IllegalArgumentException("Entity model textures exceed the 16,384-pixel budget");
+			}
+			validateBlockModelTexture(specification);
+			byte[] png = specification.renderPng();
+			textures.add(new DynamicBlockTexture(requiredString(encoded, "id"),
+					DynamicTextureAsset.sha256(png), specification));
+		}
+
+		Map<Direction, DynamicBlockModelFace> defaultFaces = parseBlockFaces(
+				requiredObject(arguments, "faces"), Map.of(), true);
+		JsonArray encodedElements = requiredArray(arguments, "elements");
+		if (encodedElements.isEmpty()) throw new IllegalArgumentException("Entity models require at least one cuboid element");
+		if (encodedElements.size() > DynamicBlockModel.MAX_ELEMENTS) {
+			throw new IllegalArgumentException("Entity models may have at most 24 cuboid elements");
+		}
+		List<DynamicBlockModelElement> elements = new ArrayList<>();
+		for (JsonElement element : encodedElements) {
+			if (!(element instanceof JsonObject encoded)) {
+				throw new IllegalArgumentException("Every entity model element must be an object");
+			}
+			requireOnly(encoded, "from", "to", "faces");
+			float[] from = coordinates(requiredArray(encoded, "from"), 3);
+			float[] to = coordinates(requiredArray(encoded, "to"), 3);
+			Map<Direction, DynamicBlockModelFace> faces = parseBlockFaces(
+					requiredObject(encoded, "faces"), defaultFaces, false);
+			elements.add(new DynamicBlockModelElement(from[0], from[1], from[2], to[0], to[1], to[2],
+					false, faces));
+		}
+		DynamicBlockModel candidate = new DynamicBlockModel(textures, requiredString(arguments, "particleTexture"),
+				defaultFaces, elements);
+		candidate.validateFor(DynamicBlockShape.CUSTOM);
+		entityModel = new DynamicEntityModel(candidate);
+		JsonObject details = message("The entity model and all of its textures were accepted.");
+		details.addProperty("textureCount", textures.size());
+		details.addProperty("totalTexturePixels", totalPixels);
+		details.addProperty("elementCount", elements.size());
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setEntityVanillaModel(JsonObject arguments) throws Exception {
+		requireOnly(arguments, "profile", "width", "height", "palette", "rows");
+		DynamicEntityVisualProfile profile = DynamicEntityVisualProfile.parse(requiredString(arguments, "profile"));
+		if (!profile.usesVanillaModel()) {
+			throw new IllegalArgumentException("profile=custom must use set_entity_model with authored cuboids");
+		}
+		int width = requiredInt(arguments, "width");
+		int height = requiredInt(arguments, "height");
+		if (width != profile.textureWidth() || height != profile.textureHeight()) {
+			throw new IllegalArgumentException("The " + profile.serializedName() + " profile requires a "
+					+ profile.textureWidth() + "x" + profile.textureHeight() + " texture sheet");
+		}
+		DynamicTextureSpec specification = new DynamicTextureSpec(
+				strings(requiredArray(arguments, "palette")), strings(requiredArray(arguments, "rows")));
+		specification.requireDimensions(width, height);
+		validateBlockModelTexture(specification);
+		byte[] png = specification.renderPng();
+		DynamicBlockTexture skin = new DynamicBlockTexture("skin", DynamicTextureAsset.sha256(png), specification);
+		entityModel = DynamicEntityModel.vanilla(profile, skin);
+		JsonObject details = message("The animated vanilla model profile and compatible entity skin were accepted.");
+		details.addProperty("profile", profile.serializedName());
+		details.addProperty("textureWidth", width);
+		details.addProperty("textureHeight", height);
 		return ToolExecution.success(details, null);
 	}
 
@@ -787,6 +883,51 @@ final class ContentGenerationDraft {
 		return ToolExecution.success(message("Armor slot, protection, and durability properties were accepted."), null);
 	}
 
+	private ToolExecution setEntityProperties(JsonObject arguments) {
+		requireOnly(arguments, "movement", "disposition", "width", "height", "eyeHeight", "maxHealth",
+				"movementSpeed", "attackDamage", "armor", "knockbackResistance", "followRange",
+				"experienceReward", "fireImmune", "ambientSound", "hurtSound", "deathSound", "drops");
+		List<DynamicEntityDrop> drops = new ArrayList<>();
+		JsonArray encodedDrops = requiredArray(arguments, "drops");
+		if (encodedDrops.size() > 16) throw new IllegalArgumentException("Entities may define at most 16 drops");
+		for (JsonElement element : encodedDrops) {
+			if (!(element instanceof JsonObject encoded)) {
+				throw new IllegalArgumentException("Every entity drop must be an object");
+			}
+			requireOnly(encoded, "item", "minimum", "maximum", "chance");
+			Identifier item = Identifier.parse(requiredString(encoded, "item"));
+			if (!net.minecraft.core.registries.BuiltInRegistries.ITEM.containsKey(item)) {
+				throw new IllegalArgumentException("Unknown entity drop item: " + item);
+			}
+			if (item.getNamespace().equals(com.yeyito.littlechemistry.LittleChemistry.MOD_ID)) {
+				throw new IllegalArgumentException("Entity drops cannot use unresolved Little Chemistry carrier items");
+			}
+			drops.add(new DynamicEntityDrop(item, requiredInt(encoded, "minimum"),
+					requiredInt(encoded, "maximum"), requiredDouble(encoded, "chance")));
+		}
+		Identifier ambientSound = registeredSound(arguments, "ambientSound");
+		Identifier hurtSound = registeredSound(arguments, "hurtSound");
+		Identifier deathSound = registeredSound(arguments, "deathSound");
+		entityProperties = new DynamicEntityProperties(
+				DynamicEntityMovement.parse(requiredString(arguments, "movement")),
+				DynamicEntityDisposition.parse(requiredString(arguments, "disposition")),
+				requiredFloat(arguments, "width"), requiredFloat(arguments, "height"),
+				requiredFloat(arguments, "eyeHeight"), requiredDouble(arguments, "maxHealth"),
+				requiredDouble(arguments, "movementSpeed"), requiredDouble(arguments, "attackDamage"),
+				requiredDouble(arguments, "armor"), requiredDouble(arguments, "knockbackResistance"),
+				requiredDouble(arguments, "followRange"), requiredInt(arguments, "experienceReward"),
+				requiredBoolean(arguments, "fireImmune"), ambientSound, hurtSound, deathSound, drops);
+		return ToolExecution.success(message("Entity dimensions, attributes, AI profile, sounds, and drops were accepted."), null);
+	}
+
+	private static Identifier registeredSound(JsonObject arguments, String field) {
+		Identifier sound = Identifier.parse(requiredString(arguments, field));
+		if (!net.minecraft.core.registries.BuiltInRegistries.SOUND_EVENT.containsKey(sound)) {
+			throw new IllegalArgumentException("Unknown sound event: " + sound);
+		}
+		return sound;
+	}
+
 	private ToolExecution inspectBehaviorApi(JsonObject arguments) {
 		requireOnly(arguments);
 		JsonObject details = new JsonObject();
@@ -796,6 +937,7 @@ final class ContentGenerationDraft {
 		details.addProperty("implementationScope", "DynamicBehavior is an empty marker. Add only the callback capability interfaces the content actually needs; each selected interface has one abstract method and no default implementation.");
 		JsonArray capabilities = new JsonArray();
 		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
+			if (!allowsCapability(capability)) continue;
 			JsonObject encoded = new JsonObject();
 			encoded.addProperty("interface", capability.interfaceName());
 			encoded.addProperty("callback", capability.callbackName());
@@ -803,13 +945,20 @@ final class ContentGenerationDraft {
 		}
 		details.add("capabilities", capabilities);
 		details.addProperty("inspection", "Call inspect_java_class on a capability in com.yeyito.littlechemistry.behavior for its exact method signature, and inspect its context record when applicable.");
-		details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
-		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
-		details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
+		if (type == DynamicContentType.ENTITY) {
+			details.addProperty("entityContext", "context.level(): ServerLevel; context.entity(): DynamicCarrierEntity; context.definition(): DynamicContentDefinition; context.state(): bounded per-instance DynamicEntityState persisted with the entity");
+			details.addProperty("semantics", "Callbacks run only on the authoritative server. Entity interaction PASS continues normal mob interaction; SUCCESS or CONSUME handles it; FAIL rejects it. Store per-instance values in context.state(), not fields on the shared behavior object.");
+		} else {
+			details.addProperty("airContext", "context.level(): ServerLevel; context.player(): ServerPlayer; context.hand(): InteractionHand; context.stack(): ItemStack; context.definition(): DynamicContentDefinition");
+			details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
+			details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
+		}
 		details.addProperty("customParticleApi", "Use only the budgeted com.yeyito.littlechemistry.particle.DynamicParticles.spawn(ServerLevel, DynamicContentDefinition, String particleId, double x, double y, double z, double velocityX, double velocityY, double velocityZ) API for one directionally moving particle. The burst overload adds int count, double spreadX, spreadY, spreadZ, and double speed, matching ServerLevel.sendParticles semantics. Pass a string-literal local ID declared by set_custom_particles; never construct particle options or use the particle registry directly.");
-		details.addProperty("workstationCore", "A workstation must implement WorkstationBehavior.createWorkstationRecipe(DynamicWorkstationContext). Keep this callback pure: inspect named slots and return a WorkstationRecipeRequest builder capturing required counts only with consume, keep, or damage. aiContext is bounded descriptive prompt material and is excluded from recipe-cache identity. If any contextual value may affect the selected output or recipeData, encode it deterministically in the canonical cacheDiscriminator too. Return null when the current layout cannot define a recipe.");
-		details.addProperty("workstationTick", "A workstation must implement WorkstationTickBehavior for processing. Inspect context.recipeStatus(), recipeOutput(), and recipeData(); store all placement state with persistentState/setPersistentState and declared synchronized gauges with uiState/setUiState. Measure durations in Minecraft ticks (20 ticks per second). Call context.tryCompleteRecipe() for one atomic input/output transaction only when your timing, fuel, redstone, environment, and output-capacity rules allow it. Its Map<String,ItemStack> overload atomically adds bounded existing-item outputs/byproducts to named output or byproduct slots.");
-		details.addProperty("workstationSafety", "Generated behavior instances are shared stateless singletons, and workstation-capable GeneratedBehaviorImpl classes are rejected if they declare any fields. Keep placement state only in DynamicWorkstationContext, never register menus/block entities/packets/recipes, and prefer the engine transaction over direct setStack mutations. Optional WorkstationSlotBehavior and WorkstationAutomationBehavior are read-only predicates; WorkstationButtonBehavior adds bounded custom actions.");
+		if (type == DynamicContentType.BLOCK) {
+			details.addProperty("workstationCore", "A workstation must implement WorkstationBehavior.createWorkstationRecipe(DynamicWorkstationContext). Keep this callback pure: inspect named slots and return a WorkstationRecipeRequest builder capturing required counts only with consume, keep, or damage. aiContext is bounded descriptive prompt material and is excluded from recipe-cache identity. If any contextual value may affect the selected output or recipeData, encode it deterministically in the canonical cacheDiscriminator too. Return null when the current layout cannot define a recipe.");
+			details.addProperty("workstationTick", "A workstation must implement WorkstationTickBehavior for processing. Inspect context.recipeStatus(), recipeOutput(), and recipeData(); store all placement state with persistentState/setPersistentState and declared synchronized gauges with uiState/setUiState. Measure durations in Minecraft ticks (20 ticks per second). Call context.tryCompleteRecipe() for one atomic input/output transaction only when your timing, fuel, redstone, environment, and output-capacity rules allow it. Its Map<String,ItemStack> overload atomically adds bounded existing-item outputs/byproducts to named output or byproduct slots.");
+			details.addProperty("workstationSafety", "Generated behavior instances are shared stateless singletons, and workstation-capable GeneratedBehaviorImpl classes are rejected if they declare any fields. Keep placement state only in DynamicWorkstationContext, never register menus/block entities/packets/recipes, and prefer the engine transaction over direct setStack mutations. Optional WorkstationSlotBehavior and WorkstationAutomationBehavior are read-only predicates; WorkstationButtonBehavior adds bounded custom actions.");
+		}
 		return ToolExecution.success(details, null);
 	}
 
@@ -843,6 +992,13 @@ final class ContentGenerationDraft {
 		}
 		try {
 			DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(behaviorSource);
+			Set<DynamicBehaviorCapability> unsupported = new HashSet<>(
+					DynamicBehaviorSource.capabilities(compiled.source()));
+			unsupported.removeIf(this::allowsCapability);
+			if (!unsupported.isEmpty()) {
+				throw new IllegalArgumentException("Behavior implements callbacks that do not apply to "
+						+ type.serializedName() + " content: " + unsupported);
+			}
 			behaviorSource = compiled.source();
 			behaviorCompiled = true;
 			JsonObject details = message("Java behavior compiled successfully.");
@@ -912,12 +1068,16 @@ final class ContentGenerationDraft {
 							craftingUse, fuelBurnTicks);
 			generated = new GeneratedContentSpec(texture, null, item, null, null, behaviorSource, null,
 					rarity, description, customParticles);
-		} else {
+		} else if (type == DynamicContentType.ARMOR) {
 			generated = new GeneratedContentSpec(texture, null, null,
 					new DynamicArmorProperties(armorSlot, rarity.vanillaRarity(), armorFoil, armorEnchantability,
 							armorDefense, armorToughness, armorKnockbackResistance, armorDurability),
 					armorDisplayTexture,
 					behaviorSource, null, rarity, description, customParticles);
+		} else {
+			generated = new GeneratedContentSpec(texture, null, null, null, null,
+					behaviorSource, null, rarity, description, customParticles, null,
+					entityProperties, entityModel);
 		}
 		JsonObject details = message("The draft passed validation and was submitted.");
 		details.addProperty("submitted", true);
@@ -972,6 +1132,14 @@ final class ContentGenerationDraft {
 			result.addProperty("blockModelTextureCount", blockModel.textures().size());
 			result.addProperty("blockModelElementCount", blockModel.elements().size());
 		}
+		result.addProperty("entityPropertiesSet", entityProperties != null);
+		result.addProperty("entityModelSet", entityModel != null);
+		if (entityModel != null) {
+			result.addProperty("entityModelProfile", entityModel.profile().serializedName());
+			result.addProperty("entityModelAnimated", entityModel.usesVanillaModel());
+			result.addProperty("entityModelTextureCount", entityModel.textures().size());
+			result.addProperty("entityModelElementCount", entityModel.elements().size());
+		}
 		result.addProperty("blockDropsSet", blockDrops != null);
 		if (blockDrops != null) {
 			result.addProperty("blockDropEntryCount", blockDrops.entries().size());
@@ -989,6 +1157,7 @@ final class ContentGenerationDraft {
 			if (blockModel == null) missing.add("blockModel");
 		} else if (texture == null) missing.add("texture");
 		if (type == DynamicContentType.ARMOR && armorDisplayTexture == null) missing.add("armorDisplayTexture");
+		if (type == DynamicContentType.ENTITY && entityModel == null) missing.add("entityModel");
 		if (behaviorSource == null) missing.add("behaviorSource");
 		else if (!behaviorCompiled) missing.add("behaviorCompilation");
 		if (type == DynamicContentType.BLOCK) {
@@ -1001,14 +1170,14 @@ final class ContentGenerationDraft {
 						behaviorSource, DynamicBehaviorCapability.WORKSTATION)) {
 					missing.add("workstationBehavior");
 				}
-					if (behaviorSource != null && !DynamicBehaviorSource.supports(
-							behaviorSource, DynamicBehaviorCapability.WORKSTATION_TICK)) {
-						missing.add("workstationTickBehavior");
-					}
-				} else if (Boolean.FALSE.equals(workstationRole) && behaviorSource != null
-						&& DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.WORKSTATION)) {
-					missing.add("ordinaryBlockWorkstationBehaviorMismatch");
+				if (behaviorSource != null && !DynamicBehaviorSource.supports(
+						behaviorSource, DynamicBehaviorCapability.WORKSTATION_TICK)) {
+					missing.add("workstationTickBehavior");
 				}
+			} else if (Boolean.FALSE.equals(workstationRole) && behaviorSource != null
+					&& DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.WORKSTATION)) {
+				missing.add("ordinaryBlockWorkstationBehaviorMismatch");
+			}
 			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null
 					|| blockShape == null || directional == null) {
 				missing.add("blockProperties");
@@ -1031,9 +1200,13 @@ final class ContentGenerationDraft {
 					|| damagePerBlock == null || damagePerAttack == null)) {
 				missing.add("toolProperties");
 			}
-		} else if (armorSlot == null || armorFoil == null || armorEnchantability == null || armorDefense == null
-				|| armorToughness == null || armorKnockbackResistance == null || armorDurability == null) {
-			missing.add("armorProperties");
+		} else if (type == DynamicContentType.ARMOR) {
+			if (armorSlot == null || armorFoil == null || armorEnchantability == null || armorDefense == null
+					|| armorToughness == null || armorKnockbackResistance == null || armorDurability == null) {
+				missing.add("armorProperties");
+			}
+		} else if (entityProperties == null) {
+			missing.add("entityProperties");
 		}
 		return missing;
 	}
@@ -1051,6 +1224,26 @@ final class ContentGenerationDraft {
 	private ToolExecution requireArmor(ThrowingSupplier operation) throws Exception {
 		return type == DynamicContentType.ARMOR ? operation.get()
 				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is not creating armor");
+	}
+
+	private ToolExecution requireEntity(ThrowingSupplier operation) throws Exception {
+		return type == DynamicContentType.ENTITY ? operation.get()
+				: ToolExecution.error("WRONG_CONTENT_TYPE", "This job is not creating an entity");
+	}
+
+	private boolean allowsCapability(DynamicBehaviorCapability capability) {
+		boolean entityCapability = switch (capability) {
+			case ENTITY_SPAWNED, ENTITY_TICK, ENTITY_INTERACT, ENTITY_HURT, ENTITY_ATTACK, ENTITY_DEATH -> true;
+			default -> false;
+		};
+		if (type == DynamicContentType.ENTITY) return entityCapability;
+		if (entityCapability) return false;
+		if (type == DynamicContentType.BLOCK) return true;
+		return switch (capability) {
+			case USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, INVENTORY_TICK, POST_HURT_ENEMY,
+					MINE_BLOCK, FINISH_USING, CRAFTED -> true;
+			default -> false;
+		};
 	}
 
 	private static JsonObject message(String value) {

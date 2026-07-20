@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.behavior;
 
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.content.DynamicCarrierEntity;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -16,6 +17,7 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.InsideBlockEffectApplier;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.block.Block;
@@ -290,6 +292,62 @@ public final class DynamicBehaviorRegistry {
 				declarativeDefault, false,
 				behavior -> behavior.canAutomateWorkstationSlot(context, slotId, stack.copy(), action, side));
 		return Boolean.TRUE.equals(result);
+	}
+
+	public static void entitySpawned(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state) {
+		invoke(definition, null, EntitySpawnedBehavior.class, null, null, behavior -> {
+			behavior.entitySpawned(entityContext(definition, level, entity, state));
+			return null;
+		});
+	}
+
+	public static void entityTick(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state) {
+		invoke(definition, null, EntityTickBehavior.class, null, null, behavior -> {
+			behavior.entityTick(entityContext(definition, level, entity, state));
+			return null;
+		});
+	}
+
+	public static InteractionResult entityInteract(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state, ServerPlayer player,
+			InteractionHand hand, ItemStack heldStack) {
+		return interaction(definition, player, EntityInteractBehavior.class,
+				behavior -> behavior.entityInteract(entityContext(definition, level, entity, state),
+						player, hand, heldStack));
+	}
+
+	public static void entityHurt(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state, DamageSource source, float amount) {
+		invoke(definition, source.getEntity() instanceof ServerPlayer player ? player : null,
+				EntityHurtBehavior.class, null, null, behavior -> {
+					behavior.entityHurt(entityContext(definition, level, entity, state), source, amount);
+					return null;
+				});
+	}
+
+	public static void entityAttack(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state, Entity target) {
+		invoke(definition, target instanceof ServerPlayer player ? player : null,
+				EntityAttackBehavior.class, null, null, behavior -> {
+					behavior.entityAttack(entityContext(definition, level, entity, state), target);
+					return null;
+				});
+	}
+
+	public static void entityDeath(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state, DamageSource source) {
+		invoke(definition, source.getEntity() instanceof ServerPlayer player ? player : null,
+				EntityDeathBehavior.class, null, null, behavior -> {
+					behavior.entityDeath(entityContext(definition, level, entity, state), source);
+					return null;
+				});
+	}
+
+	private static DynamicGeneratedEntityContext entityContext(DynamicContentDefinition definition,
+			ServerLevel level, DynamicCarrierEntity entity, DynamicEntityState state) {
+		return new DynamicGeneratedEntityContext(level, entity, definition, state);
 	}
 
 	private static <B extends DynamicBehavior> InteractionResult interaction(

@@ -51,6 +51,16 @@ class RecipeGenerationAgentTest {
 	}
 
 	@Test
+	void parsesGeneratedEntitySpawnerOutput() throws IOException {
+		RecipeGenerationAgent.Choice choice = RecipeGenerationAgent.parseChoice(
+				choice("entity", "Crystal Wisp", 3), "test-model");
+
+		assertEquals(DynamicContentType.ENTITY, choice.type());
+		assertEquals("Crystal Wisp", choice.displayName());
+		assertEquals(3, choice.outputCount());
+	}
+
+	@Test
 	void workstationChoiceRequiresAndPreservesRecipeData() throws IOException {
 		JsonObject arguments = choice("block", "Pressure Crystal", 2);
 		JsonObject recipeData = new JsonObject();

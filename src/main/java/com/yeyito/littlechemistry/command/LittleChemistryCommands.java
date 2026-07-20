@@ -11,6 +11,7 @@ import com.yeyito.littlechemistry.ai.generation.GenerationModel;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.content.DynamicEntitySpawner;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.permission.v1.PermissionNode;
 import net.fabricmc.fabric.api.permission.v1.PermissionPredicates;
@@ -20,6 +21,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionLevel;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
 import java.util.Map;
@@ -76,6 +79,14 @@ public final class LittleChemistryCommands {
 								.then(literal("create")
 										.then(argument("name", StringArgumentType.greedyString())
 												.executes(context -> createDynamicContent(context, DynamicContentType.BLOCK, null)))))
+							.then(literal("entity")
+									.requires(CREATE_PREDICATE)
+									.then(literal("create")
+											.then(argument("name", StringArgumentType.greedyString())
+													.executes(context -> createDynamicContent(context, DynamicContentType.ENTITY, null))))
+									.then(literal("spawn")
+											.then(argument("name", StringArgumentType.word())
+													.executes(LittleChemistryCommands::spawnDynamicEntity))))
 							.then(literal("armor")
 									.requires(CREATE_PREDICATE)
 									.then(literal("head").then(literal("create")
@@ -140,6 +151,32 @@ public final class LittleChemistryCommands {
 			return 0;
 		}
 		return ContentGenerationService.request(player, type, armorSlot, name) ? 1 : 0;
+	}
+
+	private static int spawnDynamicEntity(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+		ServerPlayer player = context.getSource().getPlayerOrException();
+		DynamicContentManager manager = DynamicContentManager.active();
+		if (manager == null) {
+			context.getSource().sendFailure(error("Dynamic content is not available yet."));
+			return 0;
+		}
+		String name = DynamicContentManager.normalizeIdentifier(StringArgumentType.getString(context, "name"));
+		var definition = manager.findDefinition(LittleChemistry.id(name));
+		if (definition == null || definition.type() != DynamicContentType.ENTITY) {
+			context.getSource().sendFailure(error("No generated entity named '" + name + "' exists."));
+			return 0;
+		}
+		var position = Vec3.atBottomCenterOf(
+				player.blockPosition().relative(player.getDirection()));
+		var spawned = DynamicEntitySpawner.spawn(
+				player.level(), definition, position, player.getYRot(), player, EntitySpawnReason.COMMAND);
+		if (spawned == null) {
+			context.getSource().sendFailure(error("The entity cannot be spawned at that position."));
+			return 0;
+		}
+		context.getSource().sendSuccess(() -> Component.literal("Spawned ")
+				.append(spawned.getDisplayName()).withStyle(ChatFormatting.GREEN), false);
+		return 1;
 	}
 
 	private static int askLlm(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {

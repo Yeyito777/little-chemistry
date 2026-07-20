@@ -28,8 +28,8 @@ final class DynamicContentInspector {
 			String kind = arguments.has("kind") ? requiredString(arguments, "kind").strip().toLowerCase(Locale.ROOT) : "any";
 			int limit = arguments.has("limit") ? arguments.get("limit").getAsInt() : DEFAULT_LIMIT;
 			if (query.length() > 160) throw new IllegalArgumentException("query must contain at most 160 characters");
-			if (!Set.of("any", "item", "block", "armor").contains(kind)) {
-				throw new IllegalArgumentException("kind must be any, item, block, or armor");
+			if (!Set.of("any", "item", "block", "armor", "entity").contains(kind)) {
+				throw new IllegalArgumentException("kind must be any, item, block, armor, or entity");
 			}
 			if (limit < 1 || limit > MAX_LIMIT) throw new IllegalArgumentException("limit must be between 1 and " + MAX_LIMIT);
 
@@ -124,8 +124,11 @@ final class DynamicContentInspector {
 		if (definition.block() != null) document.append(definition.block()).append(' ');
 		if (definition.item() != null) document.append(definition.item()).append(' ');
 		if (definition.armor() != null) document.append(definition.armor()).append(' ');
+		if (definition.entity() != null) document.append(definition.entity()).append(' ');
 		if (definition.blockModel() != null) document.append(definition.blockModel()).append(' ');
+		if (definition.entityModel() != null) document.append(definition.entityModel()).append(' ');
 		if (!definition.customParticles().isEmpty()) document.append(definition.customParticles()).append(' ');
+		if (definition.workstation() != null) document.append(definition.workstation()).append(' ');
 		document.append(definition.behaviorSource());
 		return document.toString().toLowerCase(Locale.ROOT);
 	}

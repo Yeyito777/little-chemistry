@@ -201,6 +201,16 @@ public final class DynamicBehaviorCompiler {
 			throw new IllegalArgumentException(GENERATED_CLASS_NAME
 					+ " must not declare fields when implementing workstation capabilities; use DynamicWorkstationContext state");
 		}
+		boolean entityBehavior = EntitySpawnedBehavior.class.isAssignableFrom(generated)
+				|| EntityTickBehavior.class.isAssignableFrom(generated)
+				|| EntityInteractBehavior.class.isAssignableFrom(generated)
+				|| EntityHurtBehavior.class.isAssignableFrom(generated)
+				|| EntityAttackBehavior.class.isAssignableFrom(generated)
+				|| EntityDeathBehavior.class.isAssignableFrom(generated);
+		if (entityBehavior && generated.getDeclaredFields().length != 0) {
+			throw new IllegalArgumentException(GENERATED_CLASS_NAME
+					+ " must not declare fields when implementing entity capabilities; use DynamicEntityState");
+		}
 	}
 
 	private static String normalize(String source) {

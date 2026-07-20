@@ -576,6 +576,63 @@ class ContentGenerationDraftTest {
 	}
 
 	@Test
+	void completeEntitySubmitsNativePropertiesModelParticlesAndCompiledBehavior() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ENTITY, "crystal wisp");
+		draft.execute("set_metadata", metadataArguments("rare", "A sharp-tempered crystal spirit."));
+		draft.execute("set_texture", itemTextureArguments());
+		draft.execute("set_custom_particles", customParticleArguments());
+
+		JsonObject properties = entityPropertiesArguments();
+		ContentGenerationDraft.ToolExecution acceptedProperties = draft.execute("set_entity_properties", properties);
+
+		JsonObject model = opaqueBlockModelArguments(16, 16);
+		JsonObject body = new JsonObject();
+		body.add("from", coordinates(2, 1, 2));
+		body.add("to", coordinates(14, 15, 14));
+		body.add("faces", new JsonObject());
+		model.getAsJsonArray("elements").add(body);
+		ContentGenerationDraft.ToolExecution acceptedModel = draft.execute("set_entity_model", model);
+		draft.execute("set_behavior_source", entityBehaviorSourceArguments());
+		draft.execute("compile_behavior", new JsonObject());
+
+		ContentGenerationDraft.ToolExecution submitted = draft.execute("submit", new JsonObject());
+
+		assertTrue(acceptedProperties.output().get("ok").getAsBoolean(), acceptedProperties.output().toString());
+		assertTrue(acceptedModel.output().get("ok").getAsBoolean(), acceptedModel.output().toString());
+		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
+		assertEquals(com.yeyito.littlechemistry.content.DynamicEntityMovement.FLYING,
+				submitted.submitted().entity().movement());
+		assertEquals(1, submitted.submitted().entityModel().elements().size());
+		assertEquals("embers", submitted.submitted().customParticles().getFirst().id());
+		assertTrue(submitted.submitted().behaviorSource().contains("EntityTickBehavior"));
+	}
+
+	@Test
+	void entityCanUseAnimatedVanillaModelWithCompatibleAuthoredSkin() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ENTITY, "amber cow");
+		JsonObject visual = new JsonObject();
+		visual.addProperty("profile", "cow");
+		visual.addProperty("width", 64);
+		visual.addProperty("height", 64);
+		com.google.gson.JsonArray palette = new com.google.gson.JsonArray();
+		palette.add("00000000");
+		palette.add("6B3E20FF");
+		palette.add("E0B070FF");
+		visual.add("palette", palette);
+		com.google.gson.JsonArray rows = new com.google.gson.JsonArray();
+		for (int y = 0; y < 64; y++) rows.add((y % 2 == 0 ? "12" : "21").repeat(32));
+		visual.add("rows", rows);
+
+		ContentGenerationDraft.ToolExecution accepted = draft.execute("set_entity_vanilla_model", visual);
+		ContentGenerationDraft.ToolExecution inspected = draft.execute("inspect_draft", new JsonObject());
+
+		assertTrue(accepted.output().get("ok").getAsBoolean(), accepted.output().toString());
+		assertEquals("cow", inspected.output().get("entityModelProfile").getAsString());
+		assertTrue(inspected.output().get("entityModelAnimated").getAsBoolean());
+		assertEquals(0, inspected.output().get("entityModelElementCount").getAsInt());
+	}
+
+	@Test
 	void metadataRequiresRarityAndShortDescription() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.ITEM, "cobalt ingot");
 
@@ -648,9 +705,41 @@ class ContentGenerationDraftTest {
 		assertTrue(inspected.output().get("implementationScope").getAsString().contains("empty marker"));
 		assertTrue(inspected.output().getAsJsonArray("capabilities").toString().contains("UseAirBehavior"));
 		assertTrue(inspected.output().getAsJsonArray("capabilities").toString().contains("useAir"));
-		assertTrue(inspected.output().get("workstationCore").getAsString().contains("excluded from recipe-cache identity"));
-		assertTrue(inspected.output().get("workstationCore").getAsString().contains("canonical cacheDiscriminator"));
+		assertFalse(inspected.output().getAsJsonArray("capabilities").toString().contains("EntityTickBehavior"));
+		assertFalse(inspected.output().has("workstationCore"));
+		ContentGenerationDraft blockDraft = new ContentGenerationDraft(DynamicContentType.BLOCK, "fairy press");
+		ContentGenerationDraft.ToolExecution blockApi = blockDraft.execute("inspect_behavior_api", new JsonObject());
+		assertTrue(blockApi.output().get("workstationCore").getAsString()
+				.contains("excluded from recipe-cache identity"));
+		assertTrue(blockApi.output().get("workstationCore").getAsString()
+				.contains("canonical cacheDiscriminator"));
+		ContentGenerationDraft entityDraft = new ContentGenerationDraft(DynamicContentType.ENTITY, "fairy");
+		ContentGenerationDraft.ToolExecution entityApi = entityDraft.execute("inspect_behavior_api", new JsonObject());
+		assertTrue(entityApi.output().getAsJsonArray("capabilities").toString().contains("EntityTickBehavior"));
+		assertFalse(entityApi.output().getAsJsonArray("capabilities").toString().contains("UseAirBehavior"));
+		assertFalse(entityApi.output().has("workstationCore"));
 		assertFalse(inspected.output().has("example"));
+	}
+
+	@Test
+	void behaviorCompilationRejectsCallbacksFromAnotherContentSubsystem() {
+		ContentGenerationDraft itemDraft = new ContentGenerationDraft(DynamicContentType.ITEM, "bad item");
+		JsonObject source = new JsonObject();
+		source.addProperty("source", """
+				public final class GeneratedBehaviorImpl implements
+						com.yeyito.littlechemistry.behavior.DynamicBehavior,
+						com.yeyito.littlechemistry.behavior.EntityTickBehavior {
+					public GeneratedBehaviorImpl() {}
+					public void entityTick(com.yeyito.littlechemistry.behavior.DynamicGeneratedEntityContext context) {}
+				}
+				""");
+		itemDraft.execute("set_behavior_source", source);
+
+		ContentGenerationDraft.ToolExecution compiled = itemDraft.execute("compile_behavior", new JsonObject());
+
+		assertFalse(compiled.output().get("ok").getAsBoolean(), compiled.output().toString());
+		assertTrue(compiled.output().get("message").getAsString().contains("do not apply"),
+				compiled.output().toString());
 	}
 
 	@Test
@@ -701,6 +790,35 @@ class ContentGenerationDraftTest {
 		arguments.addProperty("craftingUse", "consume");
 		arguments.addProperty("fuelBurnTicks", 0);
 		return arguments;
+	}
+
+	private static JsonObject entityPropertiesArguments() {
+		JsonObject properties = new JsonObject();
+		properties.addProperty("movement", "flying");
+		properties.addProperty("disposition", "hostile");
+		properties.addProperty("width", 0.8);
+		properties.addProperty("height", 1.2);
+		properties.addProperty("eyeHeight", 0.9);
+		properties.addProperty("maxHealth", 24.0);
+		properties.addProperty("movementSpeed", 0.3);
+		properties.addProperty("attackDamage", 5.0);
+		properties.addProperty("armor", 2.0);
+		properties.addProperty("knockbackResistance", 0.1);
+		properties.addProperty("followRange", 32.0);
+		properties.addProperty("experienceReward", 8);
+		properties.addProperty("fireImmune", false);
+		properties.addProperty("ambientSound", "minecraft:entity.zombie.ambient");
+		properties.addProperty("hurtSound", "minecraft:entity.zombie.hurt");
+		properties.addProperty("deathSound", "minecraft:entity.zombie.death");
+		com.google.gson.JsonArray drops = new com.google.gson.JsonArray();
+		JsonObject drop = new JsonObject();
+		drop.addProperty("item", "minecraft:amethyst_shard");
+		drop.addProperty("minimum", 1);
+		drop.addProperty("maximum", 2);
+		drop.addProperty("chance", 0.5);
+		drops.add(drop);
+		properties.add("drops", drops);
+		return properties;
 	}
 
 	private static JsonObject metadataArguments(String rarity, String description) {
@@ -934,6 +1052,28 @@ class ContentGenerationDraftTest {
 	private static JsonObject behaviorSourceArguments() {
 		JsonObject arguments = new JsonObject();
 		arguments.addProperty("source", DynamicBehaviorSource.completeLegacySource(null));
+		return arguments;
+	}
+
+	private static JsonObject entityBehaviorSourceArguments() {
+		JsonObject arguments = new JsonObject();
+		arguments.addProperty("source", """
+				import com.yeyito.littlechemistry.behavior.*;
+				import com.yeyito.littlechemistry.particle.DynamicParticles;
+				public final class GeneratedBehaviorImpl implements DynamicBehavior,
+						EntitySpawnedBehavior, EntityTickBehavior {
+					public GeneratedBehaviorImpl() {}
+					public void entitySpawned(DynamicGeneratedEntityContext context) {
+						context.state().setInt("ticks", 0);
+					}
+					public void entityTick(DynamicGeneratedEntityContext context) {
+						context.state().setInt("ticks", context.state().getInt("ticks", 0) + 1);
+						DynamicParticles.spawn(context.level(), context.definition(), "embers",
+								context.entity().getX(), context.entity().getY() + 0.5, context.entity().getZ(),
+								0.0, 0.01, 0.0);
+					}
+				}
+				""");
 		return arguments;
 	}
 

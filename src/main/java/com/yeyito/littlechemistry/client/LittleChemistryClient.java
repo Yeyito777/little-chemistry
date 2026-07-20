@@ -4,6 +4,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentJson;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.content.DynamicEntityObjects;
 import com.yeyito.littlechemistry.mixin.CreativeModeTabsAccessor;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
@@ -16,6 +17,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.particle.v1.ParticleProviderRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -52,6 +54,10 @@ public final class LittleChemistryClient implements ClientModInitializer {
 				DynamicContentObjects.BLOCK_ENTITY_TYPE,
 				context -> new DynamicBlockEntityRenderer()
 		);
+		EntityRendererRegistry.register(DynamicEntityObjects.GROUND_CREATURE, DynamicEntityRenderer::new);
+		EntityRendererRegistry.register(DynamicEntityObjects.GROUND_MONSTER, DynamicEntityRenderer::new);
+		EntityRendererRegistry.register(DynamicEntityObjects.FLYING_CREATURE, DynamicEntityRenderer::new);
+		EntityRendererRegistry.register(DynamicEntityObjects.FLYING_MONSTER, DynamicEntityRenderer::new);
 		ClientPlayNetworking.registerGlobalReceiver(DynamicContentPayload.TYPE,
 				(payload, context) -> apply(context.client(), payload));
 		ClientPlayNetworking.registerGlobalReceiver(DynamicAssetPayload.TYPE,
@@ -105,8 +111,16 @@ public final class LittleChemistryClient implements ClientModInitializer {
 						}
 						java.util.List<String> missing;
 						try {
-							missing = RuntimeTextureStore.commit(client, payload.serverId(), preparation,
-									() -> DynamicContentCatalog.replace(decoded.definitions()));
+							missing = RuntimeTextureStore.commit(client, payload.serverId(), preparation, () -> {
+								DynamicContentCatalog.replace(decoded.definitions());
+								if (client.level != null) {
+									for (var entity : client.level.entitiesForRendering()) {
+										if (entity instanceof com.yeyito.littlechemistry.content.DynamicCarrierEntity dynamic) {
+											dynamic.refreshDimensions();
+										}
+									}
+								}
+							});
 						} catch (Throwable commitError) {
 							LittleChemistry.LOGGER.error("Could not commit the Little Chemistry catalog and textures",
 									commitError);

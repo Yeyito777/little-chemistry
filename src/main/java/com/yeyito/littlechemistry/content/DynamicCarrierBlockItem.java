@@ -116,7 +116,7 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		if (entry.targetKind() == DynamicDropTargetKind.DYNAMIC_CONTENT) {
 			DynamicContentDefinition generated = DynamicContentCatalog.find(id);
 			return generated != null && switch (generated.type()) {
-				case BLOCK -> true;
+				case BLOCK, ENTITY -> true;
 				case ITEM -> generated.item().maxStack() > 1;
 				case ARMOR -> false;
 			};
