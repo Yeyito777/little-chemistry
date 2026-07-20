@@ -6,9 +6,9 @@
 
 Minecraft is a trademark of Microsoft Corporation. Little Chemistry is an independent project and is not affiliated with or endorsed by Mojang Studios or Microsoft.
 
-## Janino
+## Eclipse Compiler for Java
 
-Little Chemistry embeds Janino and Commons Compiler 3.1.12 for runtime Java compilation. Janino is distributed under the BSD 3-Clause License. See <https://janino-compiler.github.io/janino/>.
+Little Chemistry embeds Eclipse Compiler for Java (ECJ) 3.46.0 for runtime Java compilation. ECJ is distributed under the Eclipse Public License 2.0. See <https://github.com/eclipse-jdt/eclipse.jdt.core>.
 
 ## Vineflower
 

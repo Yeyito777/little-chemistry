@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.behavior;
 
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.ItemStack;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -68,6 +69,35 @@ final class DynamicBehaviorCompilerTest {
 		DynamicBehaviorCompiler.Compiled second = DynamicBehaviorCompiler.compile(EXTENSIVE_SOURCE);
 		assertNotSame(first.classLoader(), second.classLoader());
 		assertNotSame(first.instantiate().getClass(), second.instantiate().getClass());
+	}
+
+	@Test
+	void compilesInheritedInterfaceDefaultSuperCallsInAnonymousClasses() throws Exception {
+		String source = """
+				import com.yeyito.littlechemistry.behavior.DynamicBehavior;
+				import net.minecraft.world.SimpleContainer;
+				import net.minecraft.world.item.ItemStack;
+
+				public final class GeneratedBehaviorImpl implements DynamicBehavior {
+				    public GeneratedBehaviorImpl() {}
+
+				    public boolean canPlace(ItemStack stack) {
+				        SimpleContainer container = new SimpleContainer(1) {
+				            @Override public boolean canPlaceItem(int slot, ItemStack candidate) {
+				                return super.canPlaceItem(slot, candidate);
+				            }
+				        };
+				        return container.canPlaceItem(0, stack);
+				    }
+				}
+				""";
+
+		DynamicBehavior behavior = DynamicBehaviorCompiler.compile(source).instantiate();
+		boolean accepted = (boolean) behavior.getClass()
+				.getMethod("canPlace", ItemStack.class)
+				.invoke(behavior, ItemStack.EMPTY);
+
+		assertTrue(accepted);
 	}
 
 	@Test
