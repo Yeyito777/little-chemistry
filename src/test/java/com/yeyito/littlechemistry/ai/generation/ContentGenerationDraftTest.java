@@ -1,12 +1,14 @@
 package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicHeldType;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
 import net.minecraft.server.Bootstrap;
@@ -204,6 +206,7 @@ class ContentGenerationDraftTest {
 	@Test
 	void starBlockAcceptsTransparentTextureInItsModel() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "ember spray");
+		draft.execute("set_block_role", ordinaryBlockRole());
 		draft.execute("set_metadata", metadataArguments("uncommon", "A warm spray of suspended embers."));
 		draft.execute("set_block_properties", blockPropertiesArguments("star"));
 
@@ -267,6 +270,7 @@ class ContentGenerationDraftTest {
 	@Test
 	void completeTransparentBlockModelSubmitsWithCompiledBehavior() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "ember spray");
+		draft.execute("set_block_role", ordinaryBlockRole());
 		draft.execute("set_metadata", metadataArguments("uncommon", "A warm spray of suspended embers."));
 		JsonObject blockProperties = blockPropertiesArguments("star");
 		blockProperties.addProperty("directional", true);
@@ -299,6 +303,7 @@ class ContentGenerationDraftTest {
 	@Test
 	void completeBlockCanAuthorAnimatedParticleAndUseItForAmbience() {
 		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "ember crystal");
+		draft.execute("set_block_role", ordinaryBlockRole());
 		draft.execute("set_metadata", metadataArguments("rare", "A crystal that releases its own animated embers."));
 		draft.execute("set_block_properties", blockPropertiesArguments("full_cube"));
 		draft.execute("set_block_model", opaqueBlockModelArguments(16, 16));
@@ -378,6 +383,108 @@ class ContentGenerationDraftTest {
 
 		assertFalse(rejected.output().get("ok").getAsBoolean(), rejected.output().toString());
 		assertTrue(rejected.output().get("message").getAsString().contains("exactly one"));
+	}
+
+	@Test
+	void completeBlockCanExplicitlyDefineACompiledWorkstation() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "crystal press");
+		JsonObject role = new JsonObject();
+		role.addProperty("workstation", true);
+		assertTrue(draft.execute("set_block_role", role).output().get("ok").getAsBoolean());
+
+		JsonObject policy = new JsonObject();
+		policy.addProperty("processDescription", "Compresses one material through controlled pressure.");
+		policy.addProperty("recipeSystemPrompt", "Choose pressure-formed outputs that conserve the captured material. Express durations in Minecraft ticks; 20 ticks equal one second.");
+		JsonObject dataSchema = new JsonObject();
+		dataSchema.addProperty("type", "object");
+		dataSchema.add("properties", new JsonObject());
+		dataSchema.add("required", new com.google.gson.JsonArray());
+		dataSchema.addProperty("additionalProperties", false);
+		policy.add("recipeDataSchema", dataSchema);
+		assertTrue(draft.execute("set_workstation_policy", policy).output().get("ok").getAsBoolean());
+
+		JsonObject layout = new JsonObject();
+		com.google.gson.JsonArray slots = new com.google.gson.JsonArray();
+		slots.add(workstationSlot("input", "input", 28, 24, true, true));
+		slots.add(workstationSlot("result", "output", 132, 24, false, true));
+		layout.add("slots", slots);
+		JsonObject ui = new JsonObject();
+		ui.addProperty("width", 176); ui.addProperty("height", 166);
+		ui.addProperty("playerInventoryX", 7); ui.addProperty("playerInventoryY", 84);
+		ui.addProperty("titleX", 8); ui.addProperty("titleY", 6);
+		ui.addProperty("playerInventoryLabelX", 7); ui.addProperty("playerInventoryLabelY", 72);
+		ui.addProperty("backgroundColor", "202530FF");
+		ui.add("labels", new com.google.gson.JsonArray());
+		ui.add("gauges", new com.google.gson.JsonArray());
+		ui.add("stateChannels", new com.google.gson.JsonArray());
+		com.google.gson.JsonArray buttons = new com.google.gson.JsonArray();
+		JsonObject button = new JsonObject();
+		button.addProperty("id", "make_recipe"); button.addProperty("role", "make_recipe");
+		button.addProperty("label", "Make Recipe"); button.addProperty("x", 70); button.addProperty("y", 50);
+		button.addProperty("width", 76); button.addProperty("height", 20);
+		buttons.add(button); ui.add("buttons", buttons); layout.add("ui", ui);
+		assertTrue(draft.execute("set_workstation_layout", layout).output().get("ok").getAsBoolean());
+
+		JsonObject invalidReplacement = policy.deepCopy();
+		invalidReplacement.addProperty("processDescription", "This rejected replacement must not leak into the draft.");
+		invalidReplacement.addProperty("recipeSystemPrompt", "ticks "
+				+ "x".repeat(DynamicWorkstationSpec.MAX_RECIPE_SYSTEM_PROMPT_LENGTH));
+		ContentGenerationDraft.ToolExecution replacement = draft.execute("set_workstation_policy", invalidReplacement);
+		assertFalse(replacement.output().get("ok").getAsBoolean(), replacement.output().toString());
+
+		draft.execute("set_metadata", metadataArguments("rare", "A programmable pressure-forming workstation."));
+		draft.execute("set_block_properties", blockPropertiesArguments("full_cube"));
+		draft.execute("set_block_model", opaqueBlockModelArguments(16, 16));
+		JsonObject redstone = new JsonObject(); redstone.addProperty("redstonePower", 0); redstone.addProperty("comparatorPower", 0);
+		draft.execute("set_block_redstone", redstone);
+		JsonObject light = new JsonObject(); light.addProperty("level", 0); light.addProperty("visuallyEmissive", false);
+		draft.execute("set_block_light", light);
+		JsonObject particles = new JsonObject(); particles.add("emitters", new com.google.gson.JsonArray());
+		draft.execute("set_block_particles", particles);
+		draft.execute("set_block_drops", selfDropArguments());
+		JsonObject source = new JsonObject(); source.addProperty("source", workstationBehaviorSource());
+		draft.execute("set_behavior_source", source);
+		assertTrue(draft.execute("compile_behavior", new JsonObject()).output().get("ok").getAsBoolean());
+
+		ContentGenerationDraft.ToolExecution submitted = draft.execute("submit", new JsonObject());
+		assertTrue(submitted.output().get("ok").getAsBoolean(), submitted.output().toString());
+		assertEquals("Compresses one material through controlled pressure.",
+				submitted.submitted().workstation().processDescription());
+		assertEquals(policy.get("recipeSystemPrompt").getAsString(),
+				submitted.submitted().workstation().recipeSystemPrompt());
+	}
+
+	@Test
+	void workstationPolicyMustDescribeTimingInTicks() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "untimed press");
+		JsonObject role = new JsonObject();
+		role.addProperty("workstation", true);
+		draft.execute("set_block_role", role);
+		JsonObject policy = new JsonObject();
+		policy.addProperty("processDescription", "Presses an input.");
+		policy.addProperty("recipeSystemPrompt", "Choose a pressure-formed output after a brief duration.");
+		policy.add("recipeDataSchema", JsonParser.parseString(
+				"{\"type\":\"object\",\"properties\":{},\"required\":[],\"additionalProperties\":false}")
+				.getAsJsonObject());
+
+		ContentGenerationDraft.ToolExecution rejected = draft.execute("set_workstation_policy", policy);
+
+		assertFalse(rejected.output().get("ok").getAsBoolean(), rejected.output().toString());
+		assertTrue(rejected.output().get("message").getAsString().contains("Minecraft ticks"));
+	}
+
+	@Test
+	void ordinaryBlockInspectionReportsWorkstationBehaviorMismatch() {
+		ContentGenerationDraft draft = new ContentGenerationDraft(DynamicContentType.BLOCK, "misclassified press");
+		draft.execute("set_block_role", ordinaryBlockRole());
+		JsonObject source = new JsonObject();
+		source.addProperty("source", workstationBehaviorSource());
+		draft.execute("set_behavior_source", source);
+
+		ContentGenerationDraft.ToolExecution inspection = draft.execute("inspect_draft", new JsonObject());
+
+		assertTrue(inspection.output().getAsJsonArray("missing").toString()
+				.contains("ordinaryBlockWorkstationBehaviorMismatch"), inspection.output().toString());
 	}
 
 	@Test
@@ -541,6 +648,8 @@ class ContentGenerationDraftTest {
 		assertTrue(inspected.output().get("implementationScope").getAsString().contains("empty marker"));
 		assertTrue(inspected.output().getAsJsonArray("capabilities").toString().contains("UseAirBehavior"));
 		assertTrue(inspected.output().getAsJsonArray("capabilities").toString().contains("useAir"));
+		assertTrue(inspected.output().get("workstationCore").getAsString().contains("excluded from recipe-cache identity"));
+		assertTrue(inspected.output().get("workstationCore").getAsString().contains("canonical cacheDiscriminator"));
 		assertFalse(inspected.output().has("example"));
 	}
 
@@ -784,6 +893,42 @@ class ContentGenerationDraftTest {
 		particles.add(particle);
 		arguments.add("particles", particles);
 		return arguments;
+	}
+
+	private static JsonObject ordinaryBlockRole() {
+		JsonObject arguments = new JsonObject();
+		arguments.addProperty("workstation", false);
+		return arguments;
+	}
+
+	private static JsonObject workstationSlot(String id, String role, int x, int y,
+			boolean insert, boolean extract) {
+		JsonObject slot = new JsonObject();
+		slot.addProperty("id", id); slot.addProperty("role", role);
+		slot.addProperty("x", x); slot.addProperty("y", y); slot.addProperty("maxStack", 64);
+		slot.addProperty("allowPlayerInsert", insert); slot.addProperty("allowPlayerExtract", extract);
+		return slot;
+	}
+
+	private static String workstationBehaviorSource() {
+		return """
+				public final class GeneratedBehaviorImpl implements
+						com.yeyito.littlechemistry.behavior.DynamicBehavior,
+						com.yeyito.littlechemistry.behavior.WorkstationBehavior,
+						com.yeyito.littlechemistry.behavior.WorkstationTickBehavior {
+					public GeneratedBehaviorImpl() {}
+					public com.yeyito.littlechemistry.behavior.WorkstationRecipeRequest createWorkstationRecipe(
+							com.yeyito.littlechemistry.behavior.DynamicWorkstationContext context) {
+						if (context.stack("input").isEmpty()) return null;
+						return com.yeyito.littlechemistry.behavior.WorkstationRecipeRequest.builder("compression")
+								.consume("input", 1).putAiContext("pressure", "high").build();
+					}
+					public void workstationTick(com.yeyito.littlechemistry.behavior.DynamicWorkstationContext context) {
+						if (context.recipeStatus() == com.yeyito.littlechemistry.behavior.WorkstationRecipeStatus.READY)
+							context.tryCompleteRecipe();
+					}
+				}
+				""";
 	}
 
 	private static JsonObject behaviorSourceArguments() {

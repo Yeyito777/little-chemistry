@@ -21,6 +21,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.ClientRecipeBook;
 import net.minecraft.client.gui.screens.recipebook.RecipeUpdateListener;
+import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
 import net.minecraft.client.renderer.special.SpecialModelRenderers;
 import net.minecraft.network.chat.Component;
@@ -37,6 +38,8 @@ public final class LittleChemistryClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		MenuScreens.register(com.yeyito.littlechemistry.crafting.DynamicWorkstationMenu.TYPE,
+				DynamicWorkstationScreen::new);
 		ParticleProviderRegistry.getInstance().register(DynamicParticleRegistry.TYPE,
 				(options, level, x, y, z, velocityX, velocityY, velocityZ, random) ->
 						new RuntimeCustomParticle(level, options, x, y, z, velocityX, velocityY, velocityZ));

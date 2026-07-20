@@ -4,6 +4,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -62,6 +63,16 @@ public final class DynamicBehaviorRegistry {
 
 	public static synchronized void clear() {
 		LOADED.clear();
+	}
+
+	/** Returns the callback contracts implemented by the currently loaded singleton for a definition name. */
+	public static synchronized Set<DynamicBehaviorCapability> capabilities(String name) {
+		Loaded loaded = LOADED.get(name);
+		return loaded == null ? Set.of() : loaded.capabilities;
+	}
+
+	public static boolean supports(DynamicContentDefinition definition, DynamicBehaviorCapability capability) {
+		return capabilities(definition.name()).contains(capability);
 	}
 
 	public static InteractionResult useAir(DynamicContentDefinition definition, ServerLevel level,
@@ -229,6 +240,58 @@ public final class DynamicBehaviorRegistry {
 		});
 	}
 
+	/**
+	 * Captures the generated recipe description for the current workstation inventory.
+	 * A thrown callback disables this definition's shared behavior and is treated as no recipe.
+	 */
+	public static @Nullable WorkstationRecipeRequest createWorkstationRecipe(DynamicContentDefinition definition,
+			DynamicWorkstationContext context, @Nullable ServerPlayer requester) {
+		return invoke(definition, requester, WorkstationBehavior.class, null, null,
+				behavior -> behavior.createWorkstationRecipe(context));
+	}
+
+	/** Runs the optional placed-workstation server tick under the normal disable-on-throw guard. */
+	public static void workstationTick(DynamicContentDefinition definition, DynamicWorkstationContext context) {
+		invoke(definition, null, WorkstationTickBehavior.class, null, null, behavior -> {
+			behavior.workstationTick(context);
+			return null;
+		});
+	}
+
+	/**
+	 * Applies an optional player slot override. A missing capability preserves the declarative rule; a throwing
+	 * capability fails closed after disabling the generated behavior.
+	 */
+	public static boolean canUseWorkstationSlot(DynamicContentDefinition definition,
+			DynamicWorkstationContext context, ServerPlayer player, String slotId, ItemStack stack,
+			WorkstationSlotAction action, boolean declarativeDefault) {
+		Boolean result = invoke(definition, player, WorkstationSlotBehavior.class,
+				declarativeDefault, false,
+				behavior -> behavior.canUseWorkstationSlot(context, player, slotId, stack.copy(), action));
+		return Boolean.TRUE.equals(result);
+	}
+
+	/** Routes a custom button to generated code. The mandatory Make Recipe button is engine-owned. */
+	public static boolean workstationButtonPressed(DynamicContentDefinition definition,
+			DynamicWorkstationContext context, ServerPlayer player, String buttonId) {
+		Boolean result = invoke(definition, player, WorkstationButtonBehavior.class, false, false,
+				behavior -> behavior.workstationButtonPressed(context, player, buttonId));
+		return Boolean.TRUE.equals(result);
+	}
+
+	/**
+	 * Applies an optional sided-automation override. A missing capability preserves the declarative rule; a throwing
+	 * capability fails closed after disabling the generated behavior.
+	 */
+	public static boolean canAutomateWorkstationSlot(DynamicContentDefinition definition,
+			DynamicWorkstationContext context, String slotId, ItemStack stack, WorkstationSlotAction action,
+			@Nullable Direction side, boolean declarativeDefault) {
+		Boolean result = invoke(definition, null, WorkstationAutomationBehavior.class,
+				declarativeDefault, false,
+				behavior -> behavior.canAutomateWorkstationSlot(context, slotId, stack.copy(), action, side));
+		return Boolean.TRUE.equals(result);
+	}
+
 	private static <B extends DynamicBehavior> InteractionResult interaction(
 			DynamicContentDefinition definition, ServerPlayer player, Class<B> capability,
 			BehaviorCall<B, InteractionResult> call) {
@@ -277,6 +340,11 @@ public final class DynamicBehaviorRegistry {
 		T invoke(B behavior);
 	}
 
-	private record Loaded(DynamicBehavior behavior, ClassLoader classLoader) {
+	/** One shared, stateless generated behavior singleton per loaded content definition. */
+	private record Loaded(DynamicBehavior behavior, ClassLoader classLoader,
+			Set<DynamicBehaviorCapability> capabilities) {
+		private Loaded(DynamicBehavior behavior, ClassLoader classLoader) {
+			this(behavior, classLoader, DynamicBehaviorCapability.discover(behavior));
+		}
 	}
 }

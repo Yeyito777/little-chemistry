@@ -12,6 +12,8 @@ The current first milestone provides:
 - Right-clicking the wand opens an in-game creation screen for naming a new item, block, or armor piece.
 - A red-orange **Wand of Deletion** opens a multi-select menu for removing generated definitions.
 - A portable **Crafting Table on a Stick** opens a full 3×3 crafting grid with Little Chemistry's **Make Recipe** action.
+- AI-defined generated blocks can become persistent **custom workstations** with their own slots, UI, process prompt,
+  generated Java mechanics, and server-wide runtime recipe cache.
 - Image-generated chemistry artwork for the mod and Prism instance branding.
 - Server-owned dynamic items, blocks, and armor, including synchronized generated textures.
 - A server-wide recipe book: every data-pack recipe is unlocked for every player, and invented Little Chemistry recipes appear for everyone with their exact runtime ingredients and outputs.
@@ -39,6 +41,39 @@ Server administrators can switch the backend authentication mode:
 ```
 
 API keys are stored outside the world in Fabric's `config/little-chemistry/api-key.txt`, with owner-only permissions where the filesystem supports them. Authentication commands require administrator permission and never echo the key.
+
+## Custom workstations
+
+Whenever the content AI creates a block, it must explicitly classify the block as ordinary or as a workstation. A
+workstation remains a normal runtime Little Chemistry block, but its definition additionally owns a persistent process
+description, a self-contained system prompt for every recipe invented inside it, a closed schema for process-specific
+recipe data, named inventory slots, and a complete declarative screen layout. The AI controls slot roles and positions,
+title and player-inventory placement, colors, labels, gauges, state channels, the **Make Recipe** control, and optional
+custom buttons. One fixed client screen renders every validated layout; clients never compile Java received from a
+server.
+
+The workstation's generated `GeneratedBehaviorImpl` supplies the mechanics. Its pure recipe callback captures exact
+named slots and decides required counts plus consume, retain, or damage semantics. Its server-tick callback
+can implement instant assembly, timed pressure or heat, fuel, redstone gates, environmental checks, probabilistic
+stages, custom particles, and arbitrary Minecraft-side effects. Optional generated capabilities control player slots,
+sided automation, and custom buttons. Generated behavior objects are shared definition singletons, so placement-local
+values live in the engine's bounded persistent state and synchronized UI channels rather than Java fields.
+
+For an uncached valid input capture, the screen offers **Make Recipe** and locks only the captured slots while the AI
+works. Output selection uses the workstation's own system prompt and recipe-data schema, then the ordinary content
+compiler creates the resulting item, block, or armor with native properties, textures, particles, and Java behavior.
+The exact recipe is cached server-wide by workstation identity, process ID, normalized item components, required counts,
+uses, and an optional bounded discriminator, so every placement can reuse it. Descriptive AI context is not part of that
+identity; generated behavior must put every output-affecting machine mode or environmental value in the discriminator.
+Normal completion uses an atomic engine
+transaction that revalidates inputs, verifies output capacity, applies ingredient uses, and inserts the result without
+partial consumption.
+
+Placed workstation inventories, process state, and UI state are saved in the block entity and survive menu closure,
+chunk unload, and server restart. Workstations support vanilla hoppers and Fabric item-transfer automation through the
+same generated slot rules. In-flight AI locks are deliberately not persisted, so an interrupted server unlocks the
+items on restart. Cached workstation recipes are stored beside the existing AI crafting and smelting recipes and are
+removed when their workstation, result, or a dynamic ingredient is deleted.
 
 ## Dynamic server content
 

@@ -33,6 +33,8 @@ import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
@@ -81,6 +83,15 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	}
 
 	@Override
+	@SuppressWarnings("unchecked")
+	public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
+			BlockEntityType<T> type) {
+		if (level.isClientSide() || type != DynamicContentObjects.BLOCK_ENTITY_TYPE) return null;
+		return (serverLevel, position, blockState, blockEntity) -> DynamicBlockEntity.serverTick(
+				(ServerLevel) serverLevel, position, blockState, (DynamicBlockEntity) blockEntity);
+	}
+
+	@Override
 	protected RenderShape getRenderShape(BlockState state) {
 		return RenderShape.INVISIBLE;
 	}
@@ -97,13 +108,16 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		if (definition != null && DynamicBehaviorSource.supports(
 				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
-			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
-				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
-						definition, serverLevel, serverPlayer, hand, heldStack, position, state, hit);
-				if (result != InteractionResult.PASS) return result;
+				if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
+					InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
+							definition, serverLevel, serverPlayer, hand, heldStack, position, state, hit);
+					if (result != InteractionResult.PASS) return result;
+				}
 			}
-		}
-		return super.useItemOn(heldStack, state, level, position, player, hand, hit);
+			if (definition != null && definition.workstation() != null) {
+				return openWorkstation(level, position, player);
+			}
+			return super.useItemOn(heldStack, state, level, position, player, hand, hit);
 	}
 
 	@Override
@@ -113,13 +127,27 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		if (definition != null && DynamicBehaviorSource.supports(
 				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
-			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
+				if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
 						definition, serverLevel, serverPlayer, null, ItemStack.EMPTY, position, state, hit);
 				if (result != InteractionResult.PASS) return result;
+				}
 			}
+			if (definition != null && definition.workstation() != null) {
+				return openWorkstation(level, position, player);
+			}
+			return super.useWithoutItem(state, level, position, player, hit);
 		}
-		return super.useWithoutItem(state, level, position, player, hit);
+
+	private static InteractionResult openWorkstation(Level level, BlockPos position, Player player) {
+		if (level.isClientSide()) return InteractionResult.SUCCESS;
+		if (player instanceof ServerPlayer serverPlayer
+				&& level.getBlockEntity(position) instanceof DynamicBlockEntity workstation
+				&& workstation.isWorkstation()) {
+			serverPlayer.openMenu(workstation);
+			return InteractionResult.CONSUME;
+		}
+		return InteractionResult.FAIL;
 	}
 
 	@Override
@@ -254,6 +282,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 
 	@Override
 	protected float getDestroyProgress(BlockState state, Player player, BlockGetter level, BlockPos position) {
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity workstation
+				&& workstation.isWorkstationLocked()) return 0.0F;
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && definition.item() != null && definition.item().placement() != null) return 1.0F;
 		if (definition == null || definition.block() == null) {

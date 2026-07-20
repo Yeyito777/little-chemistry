@@ -10,6 +10,8 @@ import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.GenerationModel;
 import com.yeyito.littlechemistry.ai.generation.RecipeGenerationAgent;
+import com.yeyito.littlechemistry.behavior.WorkstationRecipeRequest;
+import com.yeyito.littlechemistry.content.DynamicBlockEntity;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
@@ -81,7 +83,7 @@ import java.util.concurrent.Future;
 /** Owns physical and portable crafting grids, persistent AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 2;
-	private static final int RECIPES_FORMAT = 3;
+	private static final int RECIPES_FORMAT = 4;
 	private static final int MAX_ACTIVE_JOBS = 8;
 	private static final int PARTICLE_INTERVAL_TICKS = 8;
 	private static final String REASONING_EFFORT = "medium";
@@ -95,11 +97,14 @@ public final class AiCraftingManager {
 	private final Map<UUID, SharedCraftingContainer> portableTables = new HashMap<>();
 	private final Map<RecipeSignature, AiCraftingRecipe> recipes = new LinkedHashMap<>();
 	private final Map<SmeltingRecipeSignature, AiSmeltingRecipe> smeltingRecipes = new LinkedHashMap<>();
+	private final Map<WorkstationRecipeSignature, AiWorkstationRecipe> workstationRecipes = new LinkedHashMap<>();
 	private final Map<ResourceKey<Recipe<?>>, RecipeHolder<?>> recipesByKey = new HashMap<>();
 	private final Map<RecipeSignature, RecipeDisplayId> recipeDisplayIds = new LinkedHashMap<>();
 	private final Map<RecipeDisplayId, AiCraftingRecipe> recipesByDisplayId = new HashMap<>();
 	private final Map<RecipeSignature, ActiveJob> jobs = new HashMap<>();
 	private final Map<SmeltingRecipeSignature, ActiveSmeltingJob> smeltingJobs = new HashMap<>();
+	/** Position-keyed lock registry; equal signatures at different positions may share one job value. */
+	private final Map<WorkstationKey, ActiveWorkstationJob> workstationJobs = new HashMap<>();
 	private final Map<Container, SmeltingRecipeSignature> furnaceLocks = new IdentityHashMap<>();
 	private final Set<SharedCraftingContainer> animatedTables =
 			Collections.newSetFromMap(new IdentityHashMap<>());
@@ -128,8 +133,9 @@ public final class AiCraftingManager {
 		try {
 			AiCraftingManager manager = new AiCraftingManager(server);
 			active = manager;
-			LittleChemistry.LOGGER.info("Loaded {} shared crafting tables, {} AI crafting recipes, and {} AI smelting recipes",
-					manager.tables.size(), manager.recipes.size(), manager.smeltingRecipes.size());
+			LittleChemistry.LOGGER.info("Loaded {} shared crafting tables, {} AI crafting recipes, {} AI smelting recipes, and {} AI workstation recipes",
+					manager.tables.size(), manager.recipes.size(), manager.smeltingRecipes.size(),
+					manager.workstationRecipes.size());
 		} catch (IOException error) {
 			throw new IllegalStateException("Could not load Little Chemistry crafting data", error);
 		}
@@ -151,6 +157,15 @@ public final class AiCraftingManager {
 			if (job.task != null) job.task.cancel(true);
 		}
 		manager.smeltingJobs.clear();
+		Set<ActiveWorkstationJob> workstationJobs = new HashSet<>(manager.workstationJobs.values());
+		for (ActiveWorkstationJob job : workstationJobs) {
+			job.promise.completeExceptionally(new IllegalStateException("Server stopped during recipe generation"));
+			if (job.task != null) job.task.cancel(true);
+		}
+		manager.workstationJobs.clear();
+		for (ActiveWorkstationJob job : workstationJobs) {
+			job.workstations.forEach(key -> manager.finishLoadedWorkstation(key, job.signature, false));
+		}
 		manager.furnaceLocks.clear();
 		try {
 			manager.flushTables();
@@ -259,6 +274,50 @@ public final class AiCraftingManager {
 	public boolean hasAnySmeltingRecipe(ItemStack stack, Level level) {
 		return belongsTo(level) && server.getRecipeManager()
 				.getRecipeFor(RecipeType.SMELTING, new SingleRecipeInput(stack), level).isPresent();
+	}
+
+	public AiWorkstationRecipe findWorkstationRecipe(WorkstationRecipeSignature signature) {
+		if (signature == null) return null;
+		AiWorkstationRecipe recipe = workstationRecipes.get(signature);
+		return recipe != null && recipe.outputAvailable() ? recipe : null;
+	}
+
+	/** Returns the recipe signature currently locking this placed workstation. */
+	public Optional<WorkstationRecipeSignature> workstationLockSignature(ServerLevel level, BlockPos pos) {
+		ActiveWorkstationJob job = workstationJob(level, pos);
+		return job == null ? Optional.empty() : Optional.of(job.signature);
+	}
+
+	/** Returns the stable workstation slot IDs locked while this position's recipe is generated. */
+	public Set<String> workstationLockedSlotIds(ServerLevel level, BlockPos pos) {
+		ActiveWorkstationJob job = workstationJob(level, pos);
+		return job == null ? Set.of() : job.lockedSlotIds;
+	}
+
+	/** Resolves locked slot IDs against the workstation's current data-defined slot order. */
+	public Set<Integer> workstationLockedSlotIndexes(ServerLevel level, BlockPos pos) {
+		ActiveWorkstationJob job = workstationJob(level, pos);
+		if (job == null) return Set.of();
+		DynamicContentDefinition definition = DynamicContentCatalog.find(job.signature.workstationName());
+		if (definition == null || definition.workstation() == null) return Set.of();
+		Set<Integer> result = new HashSet<>();
+		for (int index = 0; index < definition.workstation().slots().size(); index++) {
+			if (job.lockedSlotIds.contains(definition.workstation().slots().get(index).id())) result.add(index);
+		}
+		return Set.copyOf(result);
+	}
+
+	public boolean isWorkstationSlotLocked(ServerLevel level, BlockPos pos, int slotIndex) {
+		ActiveWorkstationJob job = workstationJob(level, pos);
+		if (job == null) return false;
+		DynamicContentDefinition definition = DynamicContentCatalog.find(job.signature.workstationName());
+		return definition != null && definition.workstation() != null && slotIndex >= 0
+				&& slotIndex < definition.workstation().slots().size()
+				&& job.lockedSlotIds.contains(definition.workstation().slots().get(slotIndex).id());
+	}
+
+	public boolean isWorkstationLocked(ServerLevel level, BlockPos pos) {
+		return workstationJob(level, pos) != null;
 	}
 
 	public Optional<RecipeHolder<?>> findRecipeByKey(ResourceKey<Recipe<?>> key) {
@@ -460,6 +519,79 @@ public final class AiCraftingManager {
 		return true;
 	}
 
+	/** Starts or joins a server-wide recipe job for one placed AI-defined workstation. */
+	public boolean requestWorkstationRecipe(ServerPlayer player, DynamicBlockEntity workstation) {
+		if (workstation == null || !workstation.isValidWorkstation(player)) {
+			player.sendSystemMessage(error("That workstation is no longer available."));
+			return false;
+		}
+		ServerLevel level = (ServerLevel) workstation.getLevel();
+		if (level.getServer() != server) {
+			player.sendSystemMessage(error("That workstation belongs to a different server."));
+			return false;
+		}
+		BlockPos pos = workstation.getBlockPos();
+		WorkstationKey workstationKey = WorkstationKey.of(level, pos);
+		if (workstationJobs.containsKey(workstationKey)) {
+			player.sendSystemMessage(error("This workstation is already waiting for the AI."));
+			return false;
+		}
+		DynamicContentDefinition definition = workstation.workstationDefinition();
+		WorkstationRecipeRequest request = workstation.captureWorkstationRecipe(player);
+		WorkstationRecipeSignature signature;
+		try {
+			signature = WorkstationRecipeSignature.capture(definition, request, workstation);
+		} catch (IllegalArgumentException invalid) {
+			player.sendSystemMessage(error("This workstation rejected its current inputs: " + safeMessage(invalid)));
+			return false;
+		}
+		if (signature == null) {
+			player.sendSystemMessage(error("Put a valid set of ingredients in the workstation first."));
+			return false;
+		}
+		if (findWorkstationRecipe(signature) != null) {
+			player.sendSystemMessage(error("That workstation input already has a generated recipe."));
+			return false;
+		}
+
+		ActiveWorkstationJob existing = findWorkstationJob(signature);
+		if (existing == null && activeJobCount() >= MAX_ACTIVE_JOBS) {
+			player.sendSystemMessage(error("The AI is busy inventing other recipes. Try again shortly."));
+			return false;
+		}
+		ActiveWorkstationJob job = existing == null ? new ActiveWorkstationJob(signature) : existing;
+		job.workstations.add(workstationKey);
+		workstationJobs.put(workstationKey, job);
+		try {
+			workstation.lockWorkstation(job.signature);
+		} catch (RuntimeException lockFailure) {
+			workstationJobs.remove(workstationKey, job);
+			job.workstations.remove(workstationKey);
+			player.sendSystemMessage(error("Could not lock that workstation for recipe generation."));
+			LittleChemistry.LOGGER.error("Could not lock a workstation recipe generation job", lockFailure);
+			return false;
+		}
+		job.requesters.add(player.getUUID());
+		if (existing != null) return true;
+
+		try {
+			JsonObject context = signature.toAiContext(definition, request.aiContext());
+			job.task = submitGeneration(job.promise, context, definition.workstation().recipeSystemPrompt(),
+					definition.workstation().recipeDataSchema().schema());
+		} catch (Throwable submissionFailure) {
+			removeWorkstationJob(job);
+			finishLoadedWorkstation(workstationKey, signature, false);
+			player.sendSystemMessage(error("Could not start the workstation recipe generation job."));
+			LittleChemistry.LOGGER.error("Could not submit a workstation recipe generation job", submissionFailure);
+			return false;
+		}
+		job.promise.whenComplete((generated, failure) -> {
+			if (!server.isRunning()) return;
+			server.execute(() -> completeWorkstation(job, generated, failure));
+		});
+		return true;
+	}
+
 	public void tableContentsChanged(SharedCraftingContainer table) {
 		if (!table.isPortable()) tablesDirty = true;
 		tableViewStateChanged(table);
@@ -516,17 +648,24 @@ public final class AiCraftingManager {
 		Map<SmeltingRecipeSignature, AiSmeltingRecipe> updatedSmelting = new LinkedHashMap<>(smeltingRecipes);
 		updatedSmelting.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
 				|| entry.getKey().referencesDynamicContent(outputNames));
-		if (updated.size() == recipes.size() && updatedSmelting.size() == smeltingRecipes.size()) return;
+		Map<WorkstationRecipeSignature, AiWorkstationRecipe> updatedWorkstations =
+				new LinkedHashMap<>(workstationRecipes);
+		updatedWorkstations.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
+				|| entry.getKey().referencesDynamicContent(outputNames));
+		if (updated.size() == recipes.size() && updatedSmelting.size() == smeltingRecipes.size()
+				&& updatedWorkstations.size() == workstationRecipes.size()) return;
 		List<RecipeDisplayId> removedDisplays = recipes.keySet().stream()
 				.filter(signature -> !updated.containsKey(signature))
 				.map(recipeDisplayIds::get)
 				.filter(java.util.Objects::nonNull)
 				.toList();
-		saveRecipes(updated, updatedSmelting);
+		saveRecipes(updated, updatedSmelting, updatedWorkstations);
 		recipes.clear();
 		recipes.putAll(updated);
 		smeltingRecipes.clear();
 		smeltingRecipes.putAll(updatedSmelting);
+		workstationRecipes.clear();
+		workstationRecipes.putAll(updatedWorkstations);
 		for (RecipeDisplayId displayId : removedDisplays) recipesByDisplayId.remove(displayId);
 		recipeDisplayIds.keySet().removeIf(signature -> !updated.containsKey(signature));
 		rebuildRecipeIndex();
@@ -550,6 +689,14 @@ public final class AiCraftingManager {
 			notifyRequesters(job.requesters,
 					error("Smelting recipe generation stopped because its ingredient was deleted."));
 			job.furnaces.forEach(furnace -> unlockFurnace(furnace, job.signature));
+		}
+		for (ActiveWorkstationJob job : new HashSet<>(workstationJobs.values())) {
+			if (!job.signature.referencesDynamicContent(deletedNames)
+					|| !removeWorkstationJob(job)) continue;
+			if (job.task != null) job.task.cancel(true);
+			notifyRequesters(job.requesters,
+					error("Workstation recipe generation stopped because the workstation or an ingredient was deleted."));
+			job.workstations.forEach(key -> finishLoadedWorkstation(key, job.signature, false));
 		}
 	}
 
@@ -728,6 +875,83 @@ public final class AiCraftingManager {
 		rebuildRecipeIndex();
 	}
 
+	private void completeWorkstation(ActiveWorkstationJob job,
+			RecipeGenerationAgent.GeneratedRecipe generated, Throwable failure) {
+		if (!isWorkstationJobActive(job)) return;
+		DynamicContentManager contentManager = null;
+		DynamicContentDefinition createdDefinition = null;
+		boolean recipeReady = false;
+		try {
+			if (failure != null) {
+				String message = safeMessage(failure);
+				notifyRequesters(job.requesters,
+						error("The AI could not make this workstation recipe: " + message));
+				LittleChemistry.LOGGER.warn("AI workstation recipe generation failed: {}", message);
+				return;
+			}
+			DynamicContentDefinition workstationDefinition = DynamicContentCatalog.find(job.signature.workstationName());
+			if (workstationDefinition == null || workstationDefinition.workstation() == null
+					|| job.signature.referencesUnavailableDynamicContent()) {
+				notifyRequesters(job.requesters,
+						error("The workstation or one of its ingredients was deleted while its recipe was being made."));
+				return;
+			}
+			int outputCapacity = workstationDefinition.workstation().slots().stream()
+					.filter(slot -> slot.role() == com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole.OUTPUT)
+					.findFirst().orElseThrow(() -> new IllegalStateException("Workstation has no primary output slot"))
+					.maxStack();
+			if (generated.outputCount() > outputCapacity) {
+				throw new IllegalArgumentException("Generated workstation output count exceeds the primary output capacity");
+			}
+			workstationDefinition.workstation().recipeDataSchema().validateValue(generated.recipeData());
+			contentManager = DynamicContentManager.active();
+			if (contentManager == null || !contentManager.belongsTo(server)) {
+				notifyRequesters(job.requesters, error("The server stopped before the workstation recipe could be added."));
+				return;
+			}
+			String displayName = uniqueDisplayName(contentManager, generated.displayName());
+			createdDefinition = generated.armorSlot() == null
+					? contentManager.createGenerated(generated.type(), displayName, generated.content())
+					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
+			installWorkstationRecipe(job.signature, createdDefinition.name(), generated.outputCount(), generated.recipeData());
+			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
+			notifyRequesters(job.requesters,
+					Component.literal("[Little Chemistry] Workstation recipe invented: " + quantity)
+							.withStyle(ChatFormatting.GREEN)
+							.append(DynamicContentObjects.displayName(createdDefinition))
+							.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
+			recipeReady = true;
+		} catch (Exception error) {
+			if (createdDefinition != null && contentManager != null) {
+				try {
+					contentManager.delete(List.of(createdDefinition.name()));
+				} catch (Exception rollbackFailure) {
+					error.addSuppressed(rollbackFailure);
+					LittleChemistry.LOGGER.error(
+							"Could not roll back dynamic content after workstation recipe persistence failed",
+							rollbackFailure);
+				}
+			}
+			String message = safeMessage(error);
+			notifyRequesters(job.requesters,
+					AiCraftingManager.error("Could not save the invented workstation recipe: " + message));
+			LittleChemistry.LOGGER.error("Could not commit an AI workstation recipe", error);
+		} finally {
+			removeWorkstationJob(job);
+			boolean succeeded = recipeReady;
+			job.workstations.forEach(key -> finishLoadedWorkstation(key, job.signature, succeeded));
+		}
+	}
+
+	private void installWorkstationRecipe(WorkstationRecipeSignature signature, String outputName,
+			int outputCount, JsonObject recipeData) throws IOException {
+		Map<WorkstationRecipeSignature, AiWorkstationRecipe> updated = new LinkedHashMap<>(workstationRecipes);
+		updated.put(signature, new AiWorkstationRecipe(signature, outputName, outputCount, recipeData));
+		saveRecipes(recipes, smeltingRecipes, updated);
+		workstationRecipes.clear();
+		workstationRecipes.putAll(updated);
+	}
+
 	private static String uniqueDisplayName(DynamicContentManager manager, String requested) {
 		String base = DynamicContentManager.normalizeDisplayName(requested);
 		if (!manager.containsName(base)) return base;
@@ -753,10 +977,16 @@ public final class AiCraftingManager {
 
 	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
 			JsonObject context) {
+		return submitGeneration(promise, context, null, null);
+	}
+
+	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
+			JsonObject context, String workstationPolicy, JsonObject recipeDataSchema) {
 		return GENERATION_EXECUTOR.submit(() -> {
 			try {
 				OpenAiClient client = new OpenAiClient(new AuthConfig(), GenerationModel.SOL.modelId(), REASONING_EFFORT);
-				promise.complete(new RecipeGenerationAgent(client).generate(context));
+				promise.complete(new RecipeGenerationAgent(client).generate(
+						context, workstationPolicy, recipeDataSchema));
 			} catch (InterruptedException interrupted) {
 				Thread.currentThread().interrupt();
 				promise.completeExceptionally(interrupted);
@@ -767,7 +997,49 @@ public final class AiCraftingManager {
 	}
 
 	private int activeJobCount() {
-		return jobs.size() + smeltingJobs.size();
+		return jobs.size() + smeltingJobs.size() + new HashSet<>(workstationJobs.values()).size();
+	}
+
+	private ActiveWorkstationJob workstationJob(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || level.getServer() != server) return null;
+		return workstationJobs.get(WorkstationKey.of(level, pos));
+	}
+
+	private ActiveWorkstationJob findWorkstationJob(WorkstationRecipeSignature signature) {
+		for (ActiveWorkstationJob job : workstationJobs.values()) {
+			if (job.signature.equals(signature)) return job;
+		}
+		return null;
+	}
+
+	private boolean isWorkstationJobActive(ActiveWorkstationJob job) {
+		for (WorkstationKey key : job.workstations) {
+			if (workstationJobs.get(key) == job) return true;
+		}
+		return false;
+	}
+
+	private boolean removeWorkstationJob(ActiveWorkstationJob job) {
+		boolean removed = false;
+		for (WorkstationKey key : job.workstations) {
+			if (workstationJobs.remove(key, job)) removed = true;
+		}
+		return removed;
+	}
+
+	private void finishLoadedWorkstation(WorkstationKey key, WorkstationRecipeSignature signature,
+			boolean succeeded) {
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level == null) return;
+		BlockPos pos = BlockPos.of(key.packedPos());
+		if (!level.isLoaded(pos)) return;
+		if (level.getBlockEntity(pos) instanceof DynamicBlockEntity workstation) {
+			Identifier contentId = workstation.contentId();
+			if (contentId != null && LittleChemistry.MOD_ID.equals(contentId.getNamespace())
+					&& signature.workstationName().equals(contentId.getPath())) {
+				workstation.finishWorkstationGeneration(signature, succeeded);
+			}
+		}
 	}
 
 	private void unlockFurnace(Container furnace, SmeltingRecipeSignature signature) {
@@ -823,7 +1095,17 @@ public final class AiCraftingManager {
 		boolean smeltingRemoved = smeltingRecipes.entrySet().removeIf(entry ->
 				DynamicContentCatalog.find(entry.getValue().outputName()) == null
 						|| entry.getKey().referencesUnavailableDynamicContent());
-		return craftingRemoved || smeltingRemoved;
+		boolean workstationRemoved = workstationRecipes.entrySet().removeIf(entry -> {
+			DynamicContentDefinition workstation = DynamicContentCatalog.find(entry.getKey().workstationName());
+			int capacity = workstation == null || workstation.workstation() == null ? 0
+					: workstation.workstation().slots().stream()
+					.filter(slot -> slot.role() == com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole.OUTPUT)
+					.mapToInt(com.yeyito.littlechemistry.content.DynamicWorkstationSlot::maxStack)
+					.findFirst().orElse(0);
+			return !entry.getValue().outputAvailable() || entry.getValue().outputCount() > capacity
+					|| entry.getKey().referencesUnavailableDynamicContent();
+		});
+		return craftingRemoved || smeltingRemoved || workstationRemoved;
 	}
 
 	private void loadTables() throws IOException {
@@ -856,6 +1138,7 @@ public final class AiCraftingManager {
 		if (!Files.isRegularFile(recipesFile)) return;
 		JsonObject root = parseObject(recipesFile);
 		int format = requireFormat(root, 1, RECIPES_FORMAT);
+		if (format < RECIPES_FORMAT) recipesNeedRewrite = true;
 		JsonArray encodedRecipes = root.getAsJsonArray("recipes");
 		if (encodedRecipes == null || encodedRecipes.size() > 100_000) throw new IOException("Invalid AI recipe list");
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
@@ -886,7 +1169,7 @@ public final class AiCraftingManager {
 					RecipeSignature signature = new RecipeSignature(width, height, ingredients);
 					recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount));
 				}
-				case "smelting" -> {
+					case "smelting" -> {
 					JsonElement encodedIngredient = encoded.get("ingredient");
 					if (encodedIngredient == null) throw new IOException("Invalid AI smelting recipe ingredient");
 					ItemStack ingredient = ItemStack.OPTIONAL_CODEC.parse(ops, encodedIngredient)
@@ -905,10 +1188,42 @@ public final class AiCraftingManager {
 					if (cookingTime < 1 || cookingTime > Short.MAX_VALUE) {
 						throw new IOException("Invalid AI smelting recipe cooking time");
 					}
-					smeltingRecipes.put(signature, new AiSmeltingRecipe(
-							recipeKey, signature, output, outputCount, experience, cookingTime));
-				}
-				default -> throw new IOException("Unknown AI recipe type: " + type);
+						smeltingRecipes.put(signature, new AiSmeltingRecipe(
+								recipeKey, signature, output, outputCount, experience, cookingTime));
+					}
+					case "workstation" -> {
+						String workstation = encoded.get("workstation").getAsString();
+						String process = encoded.get("process").getAsString();
+						String discriminator = encoded.has("discriminator")
+								? encoded.get("discriminator").getAsString() : "";
+						JsonArray encodedIngredients = encoded.getAsJsonArray("ingredients");
+						if (encodedIngredients == null || encodedIngredients.isEmpty()
+								|| encodedIngredients.size() > WorkstationRecipeRequest.MAX_INGREDIENTS) {
+							throw new IOException("Invalid AI workstation recipe ingredients");
+						}
+						List<WorkstationRecipeSignature.Ingredient> ingredients = new ArrayList<>();
+						for (JsonElement ingredientElement : encodedIngredients) {
+							JsonObject ingredient = ingredientElement.getAsJsonObject();
+							ItemStack stack = ItemStack.OPTIONAL_CODEC.parse(ops, ingredient.get("stack"))
+									.getOrThrow(IOException::new);
+							ingredients.add(new WorkstationRecipeSignature.Ingredient(
+									ingredient.get("slot").getAsString(), stack,
+									ingredient.get("count").getAsInt(),
+									WorkstationRecipeRequest.IngredientUse.valueOf(
+											ingredient.get("use").getAsString().toUpperCase(java.util.Locale.ROOT))));
+						}
+						WorkstationRecipeSignature signature = new WorkstationRecipeSignature(
+								workstation, process, discriminator, ingredients);
+						JsonObject recipeData = encoded.get("recipeData") instanceof JsonObject data
+								? data.deepCopy() : new JsonObject();
+						DynamicContentDefinition workstationDefinition = DynamicContentCatalog.find(workstation);
+						if (workstationDefinition != null && workstationDefinition.workstation() != null) {
+							workstationDefinition.workstation().recipeDataSchema().validateValue(recipeData);
+						}
+						workstationRecipes.put(signature,
+								new AiWorkstationRecipe(signature, output, outputCount, recipeData));
+					}
+					default -> throw new IOException("Unknown AI recipe type: " + type);
 			}
 		}
 	}
@@ -1114,6 +1429,12 @@ public final class AiCraftingManager {
 
 	private void saveRecipes(Map<RecipeSignature, AiCraftingRecipe> savedRecipes,
 			Map<SmeltingRecipeSignature, AiSmeltingRecipe> savedSmeltingRecipes) throws IOException {
+		saveRecipes(savedRecipes, savedSmeltingRecipes, workstationRecipes);
+	}
+
+	private void saveRecipes(Map<RecipeSignature, AiCraftingRecipe> savedRecipes,
+			Map<SmeltingRecipeSignature, AiSmeltingRecipe> savedSmeltingRecipes,
+			Map<WorkstationRecipeSignature, AiWorkstationRecipe> savedWorkstationRecipes) throws IOException {
 		JsonObject root = new JsonObject();
 		root.addProperty("format", RECIPES_FORMAT);
 		JsonArray encodedRecipes = new JsonArray();
@@ -1142,6 +1463,30 @@ public final class AiCraftingManager {
 			encoded.addProperty("outputCount", recipe.outputCount());
 			encoded.addProperty("experience", recipe.experience());
 			encoded.addProperty("cookingTime", recipe.cookingTime());
+			encodedRecipes.add(encoded);
+		}
+		for (AiWorkstationRecipe recipe : savedWorkstationRecipes.values()) {
+			JsonObject encoded = new JsonObject();
+			encoded.addProperty("type", "workstation");
+			encoded.addProperty("workstation", recipe.signature().workstationName());
+			encoded.addProperty("process", recipe.signature().processId());
+			if (!recipe.signature().discriminator().isEmpty()) {
+				encoded.addProperty("discriminator", recipe.signature().discriminator());
+			}
+			JsonArray ingredients = new JsonArray();
+			for (WorkstationRecipeSignature.Ingredient ingredient : recipe.signature().ingredients()) {
+				JsonObject value = new JsonObject();
+				value.addProperty("slot", ingredient.slotId());
+				value.add("stack", ItemStack.OPTIONAL_CODEC.encodeStart(ops, ingredient.stack())
+						.getOrThrow(IOException::new));
+				value.addProperty("count", ingredient.count());
+				value.addProperty("use", ingredient.use().name().toLowerCase(java.util.Locale.ROOT));
+				ingredients.add(value);
+			}
+			encoded.add("ingredients", ingredients);
+			encoded.addProperty("output", recipe.outputName());
+			encoded.addProperty("outputCount", recipe.outputCount());
+			encoded.add("recipeData", recipe.recipeData());
 			encodedRecipes.add(encoded);
 		}
 		root.add("recipes", encodedRecipes);
@@ -1199,6 +1544,12 @@ public final class AiCraftingManager {
 		}
 	}
 
+	private record WorkstationKey(ResourceKey<Level> dimension, long packedPos) {
+		private static WorkstationKey of(ServerLevel level, BlockPos pos) {
+			return new WorkstationKey(level.dimension(), pos.asLong());
+		}
+	}
+
 	private final class ActiveJob {
 		private final RecipeSignature signature;
 		private final Set<SharedCraftingContainer> tables = new HashSet<>();
@@ -1220,6 +1571,24 @@ public final class AiCraftingManager {
 
 		private ActiveSmeltingJob(SmeltingRecipeSignature signature) {
 			this.signature = signature;
+		}
+	}
+
+	private final class ActiveWorkstationJob {
+		private final WorkstationRecipeSignature signature;
+		private final Set<String> lockedSlotIds;
+		private final Set<WorkstationKey> workstations = new HashSet<>();
+		private final Set<UUID> requesters = new HashSet<>();
+		private final CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise = new CompletableFuture<>();
+		private Future<?> task;
+
+		private ActiveWorkstationJob(WorkstationRecipeSignature signature) {
+			this.signature = signature;
+			Set<String> lockedSlotIds = new HashSet<>();
+			for (WorkstationRecipeSignature.Ingredient ingredient : signature.ingredients()) {
+				lockedSlotIds.add(ingredient.slotId());
+			}
+			this.lockedSlotIds = Set.copyOf(lockedSlotIds);
 		}
 	}
 }

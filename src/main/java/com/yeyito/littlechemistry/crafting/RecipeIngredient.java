@@ -16,11 +16,11 @@ import java.util.Map;
 import java.util.Set;
 
 /** Exact-stack recipe ingredient helpers shared by crafting and smelting. */
-final class RecipeIngredient {
+public final class RecipeIngredient {
 	private RecipeIngredient() {
 	}
 
-	static ItemStack normalize(ItemStack stack) {
+	public static ItemStack normalize(ItemStack stack) {
 		if (stack.isEmpty()) return ItemStack.EMPTY;
 		ItemStack normalized = stack.copyWithCount(1);
 		if (normalized.has(DataComponents.DAMAGE)) normalized.setDamageValue(0);

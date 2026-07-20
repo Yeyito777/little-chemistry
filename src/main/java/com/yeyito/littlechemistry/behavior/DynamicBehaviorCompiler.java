@@ -38,6 +38,11 @@ public final class DynamicBehaviorCompiler {
 	private static void validateCapabilities(String source, Class<?> generated) {
 		Set<DynamicBehaviorCapability> declared = DynamicBehaviorSource.capabilities(source);
 		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
+			if (declared.contains(capability) && !declared.containsAll(capability.requiredCapabilities())) {
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must declare "
+						+ capability.requiredCapabilities().iterator().next().interfaceName() + " with "
+						+ capability.interfaceName());
+			}
 			boolean implemented = capability.interfaceClass().isAssignableFrom(generated);
 			if (implemented != declared.contains(capability)) {
 				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must declare "
@@ -51,6 +56,10 @@ public final class DynamicBehaviorCompiler {
 						+ capability.callbackName() + " but does not implement "
 						+ capability.interfaceName());
 			}
+		}
+		if (WorkstationBehavior.class.isAssignableFrom(generated) && generated.getDeclaredFields().length != 0) {
+			throw new IllegalArgumentException(GENERATED_CLASS_NAME
+					+ " must not declare fields when implementing workstation capabilities; use DynamicWorkstationContext state");
 		}
 	}
 

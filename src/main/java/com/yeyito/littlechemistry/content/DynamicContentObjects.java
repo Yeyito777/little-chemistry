@@ -1,6 +1,8 @@
 package com.yeyito.littlechemistry.content;
 
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.crafting.DynamicWorkstationMenu;
+import net.fabricmc.fabric.api.transfer.v1.item.ItemStorage;
 import net.minecraft.core.Registry;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
@@ -99,6 +101,10 @@ public final class DynamicContentObjects {
 				LittleChemistry.id("dynamic_block"),
 				new BlockEntityType<>(DynamicBlockEntity::new, Set.of(BLOCK))
 		);
+		DynamicWorkstationMenu.register();
+		ItemStorage.SIDED.registerForBlockEntity((blockEntity, side) ->
+				blockEntity.isWorkstation() ? new DynamicWorkstationItemStorage(blockEntity, side) : null,
+				BLOCK_ENTITY_TYPE);
 	}
 
 	public static ItemStack createStack(DynamicContentDefinition definition) {
