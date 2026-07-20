@@ -39,6 +39,9 @@ import com.yeyito.littlechemistry.content.DynamicRarity;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicTool;
+import com.yeyito.littlechemistry.content.DynamicWorkstationJson;
+import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSpec;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 import net.minecraft.resources.Identifier;
 import net.minecraft.core.Direction;
@@ -102,6 +105,11 @@ final class ContentGenerationDraft {
 	private DynamicArmorSlot armorSlot;
 	private String behaviorSource;
 	private boolean behaviorCompiled;
+	private Boolean workstationRole;
+	private String workstationProcessDescription;
+	private String workstationRecipeSystemPrompt;
+	private DynamicWorkstationRecipeDataSchema workstationRecipeDataSchema;
+	private JsonObject workstationLayout;
 
 	ContentGenerationDraft(DynamicContentType type, String requestedName) {
 		this(type, requestedName, null, 1);
@@ -133,13 +141,16 @@ final class ContentGenerationDraft {
 			if (arguments.has("_malformed")) {
 				throw new IllegalArgumentException("Tool arguments were not valid JSON");
 			}
-			return switch (tool) {
+				return switch (tool) {
 				case "set_metadata" -> setMetadata(arguments);
 				case "set_texture" -> setTexture(arguments);
 				case "set_block_model" -> requireBlock(() -> setBlockModel(arguments));
 				case "set_custom_particles" -> setCustomParticles(arguments);
 				case "set_armor_display_texture" -> requireArmor(() -> setArmorDisplayTexture(arguments));
-				case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
+					case "set_block_properties" -> requireBlock(() -> setBlockProperties(arguments));
+					case "set_block_role" -> requireBlock(() -> setBlockRole(arguments));
+					case "set_workstation_policy" -> requireBlock(() -> setWorkstationPolicy(arguments));
+					case "set_workstation_layout" -> requireBlock(() -> setWorkstationLayout(arguments));
 				case "set_block_redstone" -> requireBlock(() -> setBlockRedstone(arguments));
 				case "set_block_light" -> requireBlock(() -> setBlockLight(arguments));
 				case "set_block_particles" -> requireBlock(() -> setBlockParticles(arguments));
@@ -364,6 +375,102 @@ final class ContentGenerationDraft {
 				: "Block physical properties were accepted.");
 		details.addProperty("modelCleared", clearedModel);
 		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setBlockRole(JsonObject arguments) {
+		requireOnly(arguments, "workstation");
+		workstationRole = requiredBoolean(arguments, "workstation");
+		if (!workstationRole) {
+			workstationProcessDescription = null;
+			workstationRecipeSystemPrompt = null;
+			workstationRecipeDataSchema = null;
+			workstationLayout = null;
+		}
+		JsonObject details = message(workstationRole
+				? "The block was explicitly classified as a workstation. Define its policy, layout, and Java behavior."
+				: "The block was explicitly classified as an ordinary block.");
+		details.addProperty("workstation", workstationRole);
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setWorkstationPolicy(JsonObject arguments) {
+		if (!Boolean.TRUE.equals(workstationRole)) {
+			return ToolExecution.error("NOT_A_WORKSTATION",
+					"Call set_block_role with workstation=true before defining a workstation policy");
+		}
+		requireOnly(arguments, "processDescription", "recipeSystemPrompt", "recipeDataSchema");
+		String processDescription = requiredString(arguments, "processDescription");
+		String recipeSystemPrompt = requiredString(arguments, "recipeSystemPrompt");
+		if (!recipeSystemPrompt.toLowerCase(java.util.Locale.ROOT).matches("(?s).*\\bticks?\\b.*")) {
+			throw new IllegalArgumentException("recipeSystemPrompt must explicitly state workstation timing in Minecraft ticks");
+		}
+		DynamicWorkstationRecipeDataSchema recipeDataSchema =
+				new DynamicWorkstationRecipeDataSchema(requiredObject(arguments, "recipeDataSchema"));
+		if (workstationLayout != null) {
+			// Validate the complete replacement before publishing any of its fields to the draft. A rejected policy must
+			// leave the prior policy/layout pair available for repair or submission.
+			DynamicWorkstationSpec validated = workstationSpec(
+					processDescription, recipeSystemPrompt, recipeDataSchema, workstationLayout);
+			processDescription = validated.processDescription();
+			recipeSystemPrompt = validated.recipeSystemPrompt();
+			recipeDataSchema = validated.recipeDataSchema();
+		}
+		workstationProcessDescription = processDescription;
+		workstationRecipeSystemPrompt = recipeSystemPrompt;
+		workstationRecipeDataSchema = recipeDataSchema;
+		JsonObject details = message("The workstation process policy and recipeData schema were accepted.");
+		details.addProperty("recipeSystemPromptCharacters", recipeSystemPrompt.length());
+		details.addProperty("recipeDataSchemaBytes", recipeDataSchema.schema().toString()
+				.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+		return ToolExecution.success(details, null);
+	}
+
+	private ToolExecution setWorkstationLayout(JsonObject arguments) {
+		if (!Boolean.TRUE.equals(workstationRole)) {
+			return ToolExecution.error("NOT_A_WORKSTATION",
+					"Call set_block_role with workstation=true before defining a workstation layout");
+		}
+		if (workstationRecipeDataSchema == null) {
+			return ToolExecution.error("MISSING_WORKSTATION_POLICY",
+					"Call set_workstation_policy before defining the layout");
+		}
+		requireOnly(arguments, "slots", "ui");
+		JsonObject candidate = arguments.deepCopy();
+		JsonObject previous = workstationLayout;
+		workstationLayout = candidate;
+		DynamicWorkstationSpec specification;
+		try {
+			specification = workstationSpec();
+		} catch (RuntimeException invalid) {
+			workstationLayout = previous;
+			throw invalid;
+		}
+		JsonObject details = message("The workstation slot layout and declarative UI were accepted.");
+		details.addProperty("slotCount", specification.slots().size());
+		details.addProperty("labelCount", specification.ui().labels().size());
+		details.addProperty("gaugeCount", specification.ui().gauges().size());
+		details.addProperty("buttonCount", specification.ui().buttons().size());
+		details.addProperty("stateChannelCount", specification.ui().stateChannels().size());
+		return ToolExecution.success(details, null);
+	}
+
+	private DynamicWorkstationSpec workstationSpec() {
+		if (!Boolean.TRUE.equals(workstationRole) || workstationProcessDescription == null
+				|| workstationRecipeSystemPrompt == null || workstationRecipeDataSchema == null
+				|| workstationLayout == null) {
+			throw new IllegalStateException("Workstation definition is incomplete");
+		}
+		return workstationSpec(workstationProcessDescription, workstationRecipeSystemPrompt,
+				workstationRecipeDataSchema, workstationLayout);
+	}
+
+	private static DynamicWorkstationSpec workstationSpec(String processDescription, String recipeSystemPrompt,
+			DynamicWorkstationRecipeDataSchema recipeDataSchema, JsonObject layout) {
+		JsonObject encoded = layout.deepCopy();
+		encoded.addProperty("processDescription", processDescription);
+		encoded.addProperty("recipeSystemPrompt", recipeSystemPrompt);
+		encoded.add("recipeDataSchema", recipeDataSchema.schema());
+		return DynamicWorkstationJson.decode(encoded);
 	}
 
 	private ToolExecution setBlockRedstone(JsonObject arguments) {
@@ -700,6 +807,9 @@ final class ContentGenerationDraft {
 		details.addProperty("blockContext", "All air fields plus context.clickedPos(): BlockPos; context.clickedFace(): Direction; context.clickLocation(): Vec3; context.adjacentPos(): BlockPos");
 		details.addProperty("semantics", "Callbacks run only on the authoritative server. PASS continues normal placement, eating, equipping, or block-item behavior; SUCCESS or CONSUME handles an interaction, FAIL rejects it, and finishUsing must return an ItemStack.");
 		details.addProperty("customParticleApi", "Use only the budgeted com.yeyito.littlechemistry.particle.DynamicParticles.spawn(ServerLevel, DynamicContentDefinition, String particleId, double x, double y, double z, double velocityX, double velocityY, double velocityZ) API for one directionally moving particle. The burst overload adds int count, double spreadX, spreadY, spreadZ, and double speed, matching ServerLevel.sendParticles semantics. Pass a string-literal local ID declared by set_custom_particles; never construct particle options or use the particle registry directly.");
+		details.addProperty("workstationCore", "A workstation must implement WorkstationBehavior.createWorkstationRecipe(DynamicWorkstationContext). Keep this callback pure: inspect named slots and return a WorkstationRecipeRequest builder capturing required counts only with consume, keep, or damage. aiContext is bounded descriptive prompt material and is excluded from recipe-cache identity. If any contextual value may affect the selected output or recipeData, encode it deterministically in the canonical cacheDiscriminator too. Return null when the current layout cannot define a recipe.");
+		details.addProperty("workstationTick", "A workstation must implement WorkstationTickBehavior for processing. Inspect context.recipeStatus(), recipeOutput(), and recipeData(); store all placement state with persistentState/setPersistentState and declared synchronized gauges with uiState/setUiState. Measure durations in Minecraft ticks (20 ticks per second). Call context.tryCompleteRecipe() for one atomic input/output transaction only when your timing, fuel, redstone, environment, and output-capacity rules allow it. Its Map<String,ItemStack> overload atomically adds bounded existing-item outputs/byproducts to named output or byproduct slots.");
+		details.addProperty("workstationSafety", "Generated behavior instances are shared stateless singletons, and workstation-capable GeneratedBehaviorImpl classes are rejected if they declare any fields. Keep placement state only in DynamicWorkstationContext, never register menus/block entities/packets/recipes, and prefer the engine transaction over direct setStack mutations. Optional WorkstationSlotBehavior and WorkstationAutomationBehavior are read-only predicates; WorkstationButtonBehavior adds bounded custom actions.");
 		return ToolExecution.success(details, null);
 	}
 
@@ -759,6 +869,20 @@ final class ContentGenerationDraft {
 			return new ToolExecution(details, null);
 		}
 		validateBehaviorParticleReferences();
+		boolean behaviorIsWorkstation = DynamicBehaviorSource.supports(
+				behaviorSource, DynamicBehaviorCapability.WORKSTATION);
+		boolean behaviorTicksWorkstation = DynamicBehaviorSource.supports(
+				behaviorSource, DynamicBehaviorCapability.WORKSTATION_TICK);
+		if (Boolean.TRUE.equals(workstationRole) != behaviorIsWorkstation) {
+			return ToolExecution.error("WORKSTATION_BEHAVIOR_MISMATCH",
+					Boolean.TRUE.equals(workstationRole)
+							? "A workstation block must implement WorkstationBehavior"
+							: "An ordinary block must not implement WorkstationBehavior");
+		}
+		if (Boolean.TRUE.equals(workstationRole) && !behaviorTicksWorkstation) {
+			return ToolExecution.error("MISSING_WORKSTATION_TICK_BEHAVIOR",
+					"A workstation must implement WorkstationTickBehavior so cached recipes can process");
+		}
 		GeneratedContentSpec generated;
 		if (type == DynamicContentType.BLOCK) {
 			generated = new GeneratedContentSpec(
@@ -773,7 +897,8 @@ final class ContentGenerationDraft {
 					blockModel,
 					rarity,
 					description,
-					customParticles
+					customParticles,
+					Boolean.TRUE.equals(workstationRole) ? workstationSpec() : null
 			);
 		} else if (type == DynamicContentType.ITEM) {
 			DynamicItemProperties item = itemType == DynamicItemType.TOOL
@@ -830,6 +955,14 @@ final class ContentGenerationDraft {
 		result.addProperty("armorDisplayTextureSet", armorDisplayTexture != null);
 		if (armorDisplaySlot != null) result.addProperty("armorDisplayTextureSlot", armorDisplaySlot.serializedName());
 		result.addProperty("blockModelSet", blockModel != null);
+		if (type == DynamicContentType.BLOCK) {
+			result.addProperty("blockRoleSet", workstationRole != null);
+			if (workstationRole != null) result.addProperty("workstation", workstationRole);
+			result.addProperty("workstationPolicySet", workstationRecipeDataSchema != null);
+			result.addProperty("workstationLayoutSet", workstationLayout != null);
+			result.addProperty("workstationBehaviorImplemented", behaviorSource != null
+					&& DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.WORKSTATION));
+		}
 		result.addProperty("customParticleCount", customParticles.size());
 		JsonArray customParticleIds = new JsonArray();
 		customParticles.forEach(particle -> customParticleIds.add(particle.id()));
@@ -859,6 +992,23 @@ final class ContentGenerationDraft {
 		if (behaviorSource == null) missing.add("behaviorSource");
 		else if (!behaviorCompiled) missing.add("behaviorCompilation");
 		if (type == DynamicContentType.BLOCK) {
+			if (workstationRole == null) missing.add("blockRole");
+			if (Boolean.TRUE.equals(workstationRole)) {
+				if (workstationRecipeDataSchema == null || workstationProcessDescription == null
+						|| workstationRecipeSystemPrompt == null) missing.add("workstationPolicy");
+				if (workstationLayout == null) missing.add("workstationLayout");
+				if (behaviorSource != null && !DynamicBehaviorSource.supports(
+						behaviorSource, DynamicBehaviorCapability.WORKSTATION)) {
+					missing.add("workstationBehavior");
+				}
+					if (behaviorSource != null && !DynamicBehaviorSource.supports(
+							behaviorSource, DynamicBehaviorCapability.WORKSTATION_TICK)) {
+						missing.add("workstationTickBehavior");
+					}
+				} else if (Boolean.FALSE.equals(workstationRole) && behaviorSource != null
+						&& DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.WORKSTATION)) {
+					missing.add("ordinaryBlockWorkstationBehaviorMismatch");
+				}
 			if (material == null || hardness == null || preferredTool == null || requiresCorrectTool == null
 					|| blockShape == null || directional == null) {
 				missing.add("blockProperties");

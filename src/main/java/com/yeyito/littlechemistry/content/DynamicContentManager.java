@@ -176,7 +176,8 @@ public final class DynamicContentManager {
 				generated.armor(),
 				behaviorSource,
 				generated.blockModel(),
-				generated.customParticles()
+				generated.customParticles(),
+				generated.workstation()
 		);
 		return commit(definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
 	}
@@ -262,6 +263,7 @@ public final class DynamicContentManager {
 	}
 
 	private void purgeLoadedReferences(Set<String> names) {
+		DynamicBlockEntity.purgeLoadedInventoryReferences(server, names);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			for (var slot : player.containerMenu.slots) {
 				if (matchesDeleted(slot.getItem(), names)) slot.set(ItemStack.EMPTY);

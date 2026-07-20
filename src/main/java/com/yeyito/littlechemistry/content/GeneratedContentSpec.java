@@ -1,5 +1,8 @@
 package com.yeyito.littlechemistry.content;
 
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
+
 import java.util.List;
 
 public record GeneratedContentSpec(
@@ -12,19 +15,20 @@ public record GeneratedContentSpec(
 		DynamicBlockModel blockModel,
 		DynamicRarity rarityTier,
 		String description,
-		List<DynamicParticleDefinition> customParticles
+		List<DynamicParticleDefinition> customParticles,
+		DynamicWorkstationSpec workstation
 ) {
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
 		this(texture, block, item, null, null, behaviorSource, null,
-				DynamicRarity.fromProperties(block, item, null), "", List.of());
+				DynamicRarity.fromProperties(block, item, null), "", List.of(), null);
 	}
 
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor,
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, null,
-				DynamicRarity.fromProperties(block, item, armor), "", List.of());
+				DynamicRarity.fromProperties(block, item, armor), "", List.of(), null);
 	}
 
 	/** Compatibility constructor for callers predating generated descriptions. */
@@ -33,7 +37,7 @@ public record GeneratedContentSpec(
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
 			DynamicBlockModel blockModel) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				DynamicRarity.fromProperties(block, item, armor), "", List.of());
+				DynamicRarity.fromProperties(block, item, armor), "", List.of(), null);
 	}
 
 	/** Compatibility constructor for callers predating generated custom particles. */
@@ -42,7 +46,17 @@ public record GeneratedContentSpec(
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
 			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarityTier, description, List.of());
+				rarityTier, description, List.of(), null);
+	}
+
+	/** Compatibility constructor for callers predating optional workstation blocks. */
+	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor,
+			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
+			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description,
+			List<DynamicParticleDefinition> customParticles) {
+		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
+				rarityTier, description, customParticles, null);
 	}
 
 	public GeneratedContentSpec {
@@ -55,6 +69,9 @@ public record GeneratedContentSpec(
 		}
 		if (rarityTier == null) throw new IllegalArgumentException("Generated content requires a rarity");
 		customParticles = DynamicParticleDefinition.validateLibrary(customParticles);
+		if (workstation != null && block == null) {
+			throw new IllegalArgumentException("Only generated blocks may define a workstation");
+		}
 		if (block != null) {
 			if (blockModel == null) throw new IllegalArgumentException("Generated blocks require a visual model");
 			blockModel.validateFor(block.shape());
@@ -80,6 +97,17 @@ public record GeneratedContentSpec(
 		behaviorSource = behaviorSource.strip();
 		if (behaviorSource.length() > 65_536 || behaviorSource.indexOf('\0') >= 0) {
 			throw new IllegalArgumentException("Generated behavior source is invalid");
+		}
+		boolean workstationBehavior = DynamicBehaviorSource.supports(
+				behaviorSource, DynamicBehaviorCapability.WORKSTATION);
+		if ((workstation != null) != workstationBehavior) {
+			throw new IllegalArgumentException(workstation == null
+					? "Ordinary generated content must not implement WorkstationBehavior"
+					: "Generated workstations must implement WorkstationBehavior");
+		}
+		if (workstation != null && !DynamicBehaviorSource.supports(
+				behaviorSource, DynamicBehaviorCapability.WORKSTATION_TICK)) {
+			throw new IllegalArgumentException("Generated workstations must implement WorkstationTickBehavior");
 		}
 		DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
 	}

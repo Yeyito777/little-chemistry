@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 17;
+	public static final int CURRENT_FORMAT = 18;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -51,6 +51,9 @@ public final class DynamicContentJson {
 		}
 		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
 		entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
+		if (definition.workstation() != null) {
+			entry.add("workstation", DynamicWorkstationJson.encode(definition.workstation()));
+		}
 		switch (definition.type()) {
 			case BLOCK -> entry.add("block", encodeBlock(definition.block()));
 			case ITEM -> entry.add("item", encodeItem(definition.item()));
@@ -120,6 +123,8 @@ public final class DynamicContentJson {
 					? decodeBlockModel(entry.getAsJsonObject("blockModel")) : null;
 			List<DynamicParticleDefinition> customParticles = entry.has("customParticles")
 					? decodeCustomParticles(entry.getAsJsonArray("customParticles")) : List.of();
+			DynamicWorkstationSpec workstation = format >= 18 && entry.has("workstation")
+					? DynamicWorkstationJson.decode(entry.getAsJsonObject("workstation")) : null;
 			String behaviorSource;
 			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
@@ -140,7 +145,7 @@ public final class DynamicContentJson {
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
 					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-					customParticles
+					customParticles, workstation
 			));
 		}
 		validateUniqueNames(definitions);

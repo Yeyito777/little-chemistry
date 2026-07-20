@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.mixin;
 
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
+import com.yeyito.littlechemistry.content.DynamicBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
@@ -27,6 +28,8 @@ public abstract class BlockBehaviourMixin {
 				&& manager != null && manager.isLocked(serverLevel, pos)) {
 			result.setReturnValue(0.0F);
 		}
+		if (level.getBlockEntity(pos) instanceof DynamicBlockEntity workstation
+				&& workstation.isWorkstationLocked()) result.setReturnValue(0.0F);
 	}
 
 	@Inject(method = "onExplosionHit", at = @At("HEAD"), cancellable = true)
@@ -34,6 +37,8 @@ public abstract class BlockBehaviourMixin {
 			Explosion explosion, BiConsumer<ItemStack, BlockPos> onHit, CallbackInfo callback) {
 		AiCraftingManager manager = AiCraftingManager.active();
 		if (state.is(Blocks.CRAFTING_TABLE) && manager != null && manager.isLocked(level, pos)) callback.cancel();
+		if (level.getBlockEntity(pos) instanceof DynamicBlockEntity workstation
+				&& workstation.isWorkstationLocked()) callback.cancel();
 	}
 
 	@Inject(method = "affectNeighborsAfterRemoval", at = @At("HEAD"))

@@ -20,9 +20,16 @@ public final class ContentGenerationAgent {
 			relevant previously generated content and fetch similar vanilla content for reference. Inspect complete generated behavior
 			source and decompiled classpath Java method bodies when useful, but do not merely copy, reskin, or delegate to existing content
 			when the concept implies special functionality. Complete every applicable property and texture. When distinctive effects
-			improve the concept, author reusable custom particles and emit them from block ambience or GeneratedBehaviorImpl. Author and
-			compile GeneratedBehaviorImpl, inspect the finished draft, then submit. For blocks, use the declarative drop tool for ordinary
-			mining drops instead of spawning duplicate drops from Java callbacks.
+				improve the concept, author reusable custom particles and emit them from block ambience or GeneratedBehaviorImpl. Author and
+				compile GeneratedBehaviorImpl, inspect the finished draft, then submit. For blocks, use the declarative drop tool for ordinary
+				mining drops instead of spawning duplicate drops from Java callbacks. For every block, explicitly classify it by calling
+				set_block_role. A workstation is a placed block whose primary purpose is to transform inventory inputs into persistent,
+				server-cached AI-generated outputs. If workstation=true, define its complete policy and declarative UI, and implement both
+				WorkstationBehavior and WorkstationTickBehavior. The fixed engine owns block entities, menus, screens, packets, registries,
+				persistence, recipe transactions, and ticking; do not generate replacements for those classes. Generated behavior instances
+				are shared definition singletons and workstation-capable classes may not declare fields, so store placement state only through
+				DynamicWorkstationContext. WorkstationRecipeRequest aiContext is descriptive and excluded from cache identity; every contextual
+				value that may affect output or recipeData must also enter a deterministic canonical cacheDiscriminator.
 			""";
 
 	private final OpenAiClient openAi;
@@ -39,12 +46,25 @@ public final class ContentGenerationAgent {
 	public GeneratedContentSpec generateForRecipe(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
 			String requestedName, int requestedOutputCount, JsonObject recipeContext)
 			throws IOException, InterruptedException {
+		return generateForRecipe(type, requestedArmorSlot, requestedName, requestedOutputCount, recipeContext, null);
+	}
+
+	public GeneratedContentSpec generateForRecipe(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
+			String requestedName, int requestedOutputCount, JsonObject recipeContext, String workstationPolicy)
+			throws IOException, InterruptedException {
 		if (recipeContext == null) throw new IllegalArgumentException("recipeContext");
-		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, recipeContext);
+		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, recipeContext,
+				workstationPolicy);
 	}
 
 	private GeneratedContentSpec generate(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
 			String requestedName, int requestedOutputCount, JsonObject recipeContext)
+			throws IOException, InterruptedException {
+		return generate(type, requestedArmorSlot, requestedName, requestedOutputCount, recipeContext, null);
+	}
+
+	private GeneratedContentSpec generate(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
+			String requestedName, int requestedOutputCount, JsonObject recipeContext, String workstationPolicy)
 			throws IOException, InterruptedException {
 		ContentGenerationDraft draft = new ContentGenerationDraft(
 				type, requestedName, requestedArmorSlot, requestedOutputCount);
@@ -84,7 +104,12 @@ public final class ContentGenerationAgent {
 			if (Thread.currentThread().isInterrupted()) {
 				throw new InterruptedException("Content generation was interrupted");
 			}
-			OpenAiClient.ToolRound response = openAi.runToolRound(SYSTEM_PROMPT, tools, history);
+			String systemPrompt = workstationPolicy == null ? SYSTEM_PROMPT
+					: SYSTEM_PROMPT + "\nThis recipe is produced by an AI-defined workstation. Treat its persisted policy "
+					+ "as process design guidance and make the selected recipeData visible in the output's identity, artwork, "
+					+ "native properties, and Java behavior.\n<workstation_policy>\n" + workstationPolicy
+					+ "\n</workstation_policy>\n";
+			OpenAiClient.ToolRound response = openAi.runToolRound(systemPrompt, tools, history);
 			if (response.calls().isEmpty()) {
 				throw new IOException(openAi.model() + " did not call a content-generation tool");
 			}
@@ -143,6 +168,15 @@ public final class ContentGenerationAgent {
 				"Replace the content's reusable AI-authored particle library with zero to four definitions. Each definition has 1-4 square indexed frames, linear size/color transitions, animation, and bounded physics. Block ambient emitters reference custom:<id>. Server-side Java behavior must emit a declared string-literal local ID only through the budgeted com.yeyito.littlechemistry.particle.DynamicParticles.spawn API; never construct particle options or use the particle registry directly.",
 				customParticlesSchema()));
 		if (type == DynamicContentType.BLOCK) {
+			tools.add(tool("set_block_role",
+					"Required for every block: explicitly classify it as an ordinary block or an AI-defined workstation. Set workstation=true only when its primary purpose is repeatable inventory transformation.",
+					blockRoleSchema()));
+			tools.add(tool("set_workstation_policy",
+					"Required only after set_block_role(workstation=true). Write a complete self-contained system prompt governing every future recipe in this workstation. Explain the process, every input/catalyst/fuel role, valid combinations, counts and consume/keep/damage uses, timing and environmental rules, output identity/count themes, and how the process influences output visuals, native properties, and Java behavior. Explicitly express every duration in Minecraft ticks and state that 20 ticks equal one second. Also supply a closed bounded JSON Schema for per-recipe process data interpreted by the generated Java. The schema root must be type=object with properties, required, and additionalProperties=false. Nested object/array/string/integer/number/boolean nodes may use descriptions, scalar enums, numeric/string/array bounds, but not oneOf, references, patterns, or open objects.",
+					workstationPolicySchema()));
+			tools.add(tool("set_workstation_layout",
+					"Required only for workstations after their policy. Define stable named slots with exactly one primary role=output slot, title and player-inventory positions, colors, labels, gauges bound to signed-16-bit state channels, exactly one make_recipe button, and optional custom buttons whose visibility/enabled state may bind to channels. Generated Java controls mechanics; this declarative envelope lets every client safely render and interact with the runtime UI.",
+					workstationLayoutSchema()));
 			tools.add(tool("set_block_properties",
 					"Choose gameplay properties and the visual/physical model category. Presets are full_cube, slab, no_collision, star, fence, cross, and torch. Use custom for an AI-authored model made from axis-aligned cuboids. Set directional=true only when the block has a meaningful front: the authored north face becomes its front, and its model and collision rotate horizontally to face the placer.",
 					blockPropertiesSchema()));
@@ -186,10 +220,10 @@ public final class ContentGenerationAgent {
 					armorPropertiesSchema()));
 		}
 		tools.add(tool("inspect_behavior_api",
-				"Inspect the required server-side Java marker and optional callback capability interfaces. Implement only the capabilities this content actually needs.", emptySchema()));
+				"Inspect the required server-side Java marker and optional callback capability interfaces. A workstation must implement both WorkstationBehavior and WorkstationTickBehavior, plus only the optional slot/button/automation capabilities it needs.", emptySchema()));
 		GenerationInspectionTools.addTo(tools);
 		tools.add(tool("set_behavior_source",
-				"Required: set a complete server-side Java compilation unit with no package declaration. Declare public final class GeneratedBehaviorImpl with a public no-argument constructor. It must implement DynamicBehavior plus only the callback capability interfaces it actually uses; a passive class implements only DynamicBehavior. Capability methods have no defaults.",
+					"Required: set a complete server-side Java compilation unit with no package declaration. Declare public final class GeneratedBehaviorImpl with a public no-argument constructor. It must implement DynamicBehavior plus only the callback capability interfaces it actually uses; a passive class implements only DynamicBehavior. Capability methods have no defaults. A workstation-capable GeneratedBehaviorImpl must declare no fields.",
 				behaviorSourceSchema()));
 		tools.add(tool("compile_behavior",
 				"Compile the required Java class against the running Little Chemistry and Minecraft classes. Use diagnostics to revise it until compilation succeeds.", emptySchema()));
@@ -473,6 +507,116 @@ public final class ContentGenerationAgent {
 		properties.add("toughness", numberSchema(0, 100));
 		properties.add("knockbackResistance", numberSchema(0, 1));
 		properties.add("durability", integerSchema(1, 100000));
+		return schema;
+	}
+
+	private static JsonObject blockRoleSchema() {
+		JsonObject schema = objectSchema("workstation");
+		schema.getAsJsonObject("properties").add("workstation", typeSchema("boolean"));
+		return schema;
+	}
+
+	private static JsonObject workstationPolicySchema() {
+		JsonObject schema = objectSchema("processDescription", "recipeSystemPrompt", "recipeDataSchema");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		JsonObject description = typeSchema("string");
+		description.addProperty("minLength", 1);
+		description.addProperty("maxLength", 1024);
+		properties.add("processDescription", description);
+		JsonObject prompt = typeSchema("string");
+		prompt.addProperty("minLength", 1);
+		prompt.addProperty("maxLength", 16_384);
+		properties.add("recipeSystemPrompt", prompt);
+		JsonObject recipeSchema = typeSchema("object");
+		recipeSchema.addProperty("additionalProperties", true);
+		properties.add("recipeDataSchema", recipeSchema);
+		return schema;
+	}
+
+	private static JsonObject workstationLayoutSchema() {
+		JsonObject slot = objectSchema("id", "role", "x", "y", "maxStack",
+				"allowPlayerInsert", "allowPlayerExtract");
+		JsonObject slotProperties = slot.getAsJsonObject("properties");
+		slotProperties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		slotProperties.add("role", enumSchema("input", "catalyst", "fuel", "output", "byproduct", "storage", "custom"));
+		slotProperties.add("x", integerSchema(0, 319));
+		slotProperties.add("y", integerSchema(0, 255));
+		slotProperties.add("maxStack", integerSchema(1, 64));
+		slotProperties.add("allowPlayerInsert", typeSchema("boolean"));
+		slotProperties.add("allowPlayerExtract", typeSchema("boolean"));
+		slotProperties.add("emptySlotIcon", stringSchema("^[a-z0-9_.-]+:[a-z0-9_./-]+$"));
+		JsonObject optionalText = typeSchema("string");
+		optionalText.addProperty("maxLength", 256);
+		slotProperties.add("tooltip", optionalText);
+
+		JsonObject label = objectSchema("id", "text", "x", "y", "color", "shadow");
+		JsonObject labelProperties = label.getAsJsonObject("properties");
+		labelProperties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		JsonObject labelText = typeSchema("string"); labelText.addProperty("maxLength", 256);
+		labelProperties.add("text", labelText);
+		labelProperties.add("x", integerSchema(0, 319));
+		labelProperties.add("y", integerSchema(0, 255));
+		labelProperties.add("color", stringSchema("^[0-9A-Fa-f]{8}$"));
+		labelProperties.add("shadow", typeSchema("boolean"));
+		labelProperties.add("tooltip", optionalText.deepCopy());
+
+		JsonObject gauge = objectSchema("id", "channel", "x", "y", "width", "height", "direction",
+				"fillColor", "backgroundColor");
+		JsonObject gaugeProperties = gauge.getAsJsonObject("properties");
+		gaugeProperties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		gaugeProperties.add("channel", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		gaugeProperties.add("x", integerSchema(0, 319));
+		gaugeProperties.add("y", integerSchema(0, 255));
+		gaugeProperties.add("width", integerSchema(1, 256));
+		gaugeProperties.add("height", integerSchema(1, 256));
+		gaugeProperties.add("direction", enumSchema("left_to_right", "right_to_left", "top_to_bottom", "bottom_to_top"));
+		gaugeProperties.add("fillColor", stringSchema("^[0-9A-Fa-f]{8}$"));
+		gaugeProperties.add("backgroundColor", stringSchema("^[0-9A-Fa-f]{8}$"));
+		gaugeProperties.add("tooltip", optionalText.deepCopy());
+
+		JsonObject button = objectSchema("id", "role", "label", "x", "y", "width", "height");
+		JsonObject buttonProperties = button.getAsJsonObject("properties");
+		buttonProperties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		buttonProperties.add("role", enumSchema("make_recipe", "custom"));
+		JsonObject buttonLabel = typeSchema("string"); buttonLabel.addProperty("maxLength", 64);
+		buttonProperties.add("label", buttonLabel);
+		buttonProperties.add("x", integerSchema(0, 319));
+		buttonProperties.add("y", integerSchema(0, 255));
+		buttonProperties.add("width", integerSchema(20, 256));
+		buttonProperties.add("height", integerSchema(12, 40));
+		buttonProperties.add("tooltip", optionalText.deepCopy());
+		buttonProperties.add("visibleChannel", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		buttonProperties.add("enabledChannel", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+
+		JsonObject channel = objectSchema("id", "minimum", "maximum", "initialValue");
+		JsonObject channelProperties = channel.getAsJsonObject("properties");
+		channelProperties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
+		channelProperties.add("minimum", integerSchema(Short.MIN_VALUE, Short.MAX_VALUE));
+		channelProperties.add("maximum", integerSchema(Short.MIN_VALUE, Short.MAX_VALUE));
+		channelProperties.add("initialValue", integerSchema(Short.MIN_VALUE, Short.MAX_VALUE));
+
+		JsonObject ui = objectSchema("width", "height", "playerInventoryX", "playerInventoryY", "titleX", "titleY",
+				"playerInventoryLabelX", "playerInventoryLabelY", "backgroundColor",
+				"labels", "gauges", "buttons", "stateChannels");
+		JsonObject uiProperties = ui.getAsJsonObject("properties");
+		uiProperties.add("width", integerSchema(176, 320));
+		uiProperties.add("height", integerSchema(120, 256));
+		uiProperties.add("playerInventoryX", integerSchema(0, 319));
+		uiProperties.add("playerInventoryY", integerSchema(0, 255));
+		uiProperties.add("titleX", integerSchema(0, 319));
+		uiProperties.add("titleY", integerSchema(0, 255));
+		uiProperties.add("playerInventoryLabelX", integerSchema(0, 319));
+		uiProperties.add("playerInventoryLabelY", integerSchema(0, 255));
+		uiProperties.add("backgroundColor", stringSchema("^[0-9A-Fa-f]{8}$"));
+		uiProperties.add("labels", arraySchema(label, 0, 32));
+		uiProperties.add("gauges", arraySchema(gauge, 0, 16));
+		uiProperties.add("buttons", arraySchema(button, 1, 16));
+		uiProperties.add("stateChannels", arraySchema(channel, 0, 32));
+
+		JsonObject schema = objectSchema("slots", "ui");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("slots", arraySchema(slot, 2, 54));
+		properties.add("ui", ui);
 		return schema;
 	}
 

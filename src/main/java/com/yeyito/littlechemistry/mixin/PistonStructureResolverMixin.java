@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.mixin;
 
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
+import com.yeyito.littlechemistry.content.DynamicBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -26,5 +27,7 @@ public abstract class PistonStructureResolverMixin {
 		if (manager != null && toPush.stream().anyMatch(pos -> manager.isLocked(serverLevel, pos))) {
 			result.setReturnValue(false);
 		}
+		if (toPush.stream().anyMatch(pos -> serverLevel.getBlockEntity(pos) instanceof DynamicBlockEntity workstation
+				&& workstation.isWorkstation())) result.setReturnValue(false);
 	}
 }

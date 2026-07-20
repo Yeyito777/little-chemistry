@@ -15,6 +15,7 @@ import com.yeyito.littlechemistry.content.DynamicItemProperties;
 import com.yeyito.littlechemistry.content.DynamicItemType;
 import com.yeyito.littlechemistry.content.DynamicParticleEmitter;
 import com.yeyito.littlechemistry.content.DynamicPlacementProperties;
+import com.yeyito.littlechemistry.content.DynamicWorkstationJson;
 
 /** Produces complete and summary views of generated content for the AI agents. */
 public final class DynamicContentAiDescription {
@@ -24,6 +25,9 @@ public final class DynamicContentAiDescription {
 	public static JsonObject describe(DynamicContentDefinition definition) {
 		JsonObject result = summarize(definition);
 		result.getAsJsonObject("behavior").addProperty("javaSource", definition.behaviorSource());
+		if (definition.workstation() != null) {
+			result.add("workstation", DynamicWorkstationJson.encode(definition.workstation()));
+		}
 		return result;
 	}
 
@@ -79,6 +83,27 @@ public final class DynamicContentAiDescription {
 			customParticles.add(encoded);
 		}
 		result.add("customParticles", customParticles);
+		result.addProperty("isWorkstation", definition.workstation() != null);
+		if (definition.workstation() != null) {
+			JsonObject workstation = new JsonObject();
+			workstation.addProperty("processDescription", definition.workstation().processDescription());
+			workstation.addProperty("slotCount", definition.workstation().slots().size());
+			JsonArray slots = new JsonArray();
+			for (var slot : definition.workstation().slots()) {
+				JsonObject encoded = new JsonObject();
+				encoded.addProperty("id", slot.id());
+				encoded.addProperty("role", slot.role().serializedName());
+				slots.add(encoded);
+			}
+			workstation.add("slots", slots);
+			workstation.addProperty("labelCount", definition.workstation().ui().labels().size());
+			workstation.addProperty("gaugeCount", definition.workstation().ui().gauges().size());
+			workstation.addProperty("buttonCount", definition.workstation().ui().buttons().size());
+			JsonArray channels = new JsonArray();
+			definition.workstation().ui().stateChannels().forEach(channel -> channels.add(channel.id()));
+			workstation.add("stateChannels", channels);
+			result.add("workstation", workstation);
+		}
 		result.add("behavior", summarizeBehavior(definition.behaviorSource()));
 		return result;
 	}

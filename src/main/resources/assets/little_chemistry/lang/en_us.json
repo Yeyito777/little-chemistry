@@ -4,6 +4,7 @@
   "button.little_chemistry.make_smelting_recipe": "Make Smelting Recipe",
   "button.little_chemistry.making_smelting_recipe": "Making Smelting Recipe…",
   "container.little_chemistry.crafting_table_on_a_stick": "Crafting Table on a Stick",
+  "container.little_chemistry.workstation": "Little Chemistry Workstation",
   "item.little_chemistry.crafting_table_on_a_stick": "Crafting Table on a Stick",
   "tooltip.little_chemistry.crafting_table_on_a_stick.generating": "Inventing a recipe…",
   "tooltip.little_chemistry.crafting_table_on_a_stick.ready": "Recipe ready — use to collect it",
@@ -40,5 +41,6 @@
   "tooltip.little_chemistry.block_drop.fortune": " (Fortune)",
   "tooltip.little_chemistry.block_drop.silk_touch": "Silk Touch: drops itself",
   "tooltip.little_chemistry.block_drop.explosion_decay": "Explosion damage may reduce drops",
-  "tooltip.little_chemistry.furnace_fuel": "Furnace fuel: %s s (%s smelts)"
+  "tooltip.little_chemistry.furnace_fuel": "Furnace fuel: %s s (%s smelts)",
+  "tooltip.little_chemistry.workstation": "AI Workstation"
 }
