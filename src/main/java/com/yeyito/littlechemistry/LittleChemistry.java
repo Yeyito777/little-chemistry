@@ -5,6 +5,7 @@ import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.content.DynamicEntityObjects;
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.item.WandOfCreationItem;
 import com.yeyito.littlechemistry.item.WandOfDeletionItem;
@@ -69,6 +70,7 @@ public final class LittleChemistry implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		DynamicContentObjects.register();
+		DynamicEntityObjects.register();
 		LittleChemistryCommands.register();
 		PayloadTypeRegistry.clientboundPlay().registerLarge(
 				DynamicContentPayload.TYPE,

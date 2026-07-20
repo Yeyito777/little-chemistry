@@ -81,6 +81,15 @@ public final class RecipeSignature {
 		return ingredients.stream().map(ItemStack::copy).toList();
 	}
 
+	public boolean referencesDynamicContent(java.util.Set<String> names) {
+		for (ItemStack ingredient : ingredients) {
+			var id = ingredient.get(DynamicContentObjects.CONTENT_ID);
+			if (id != null && id.getNamespace().equals(com.yeyito.littlechemistry.LittleChemistry.MOD_ID)
+					&& names.contains(id.getPath())) return true;
+		}
+		return false;
+	}
+
 	public JsonObject toAiContext() {
 		JsonObject context = new JsonObject();
 		context.addProperty("width", width);

@@ -3,7 +3,8 @@ package com.yeyito.littlechemistry.content;
 public enum DynamicContentType {
 	ITEM("item"),
 	BLOCK("block"),
-	ARMOR("armor");
+	ARMOR("armor"),
+	ENTITY("entity");
 
 	private final String serializedName;
 

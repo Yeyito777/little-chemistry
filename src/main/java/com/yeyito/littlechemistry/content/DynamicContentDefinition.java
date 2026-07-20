@@ -17,14 +17,16 @@ public record DynamicContentDefinition(
 		DynamicItemProperties item,
 		DynamicArmorProperties armor,
 		String behaviorSource,
-		DynamicBlockModel blockModel
+		DynamicBlockModel blockModel,
+		DynamicEntityProperties entity,
+		DynamicEntityModel entityModel
 ) {
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, null),
 				textureSeed, textureHash, texture, null, null,
-				block, item, null, behaviorSource, null);
+				block, item, null, behaviorSource, null, null, null);
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
@@ -32,7 +34,7 @@ public record DynamicContentDefinition(
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
 				textureSeed, textureHash, texture, null, null,
-				block, item, armor, behaviorSource, null);
+				block, item, armor, behaviorSource, null, null, null);
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
@@ -41,7 +43,7 @@ public record DynamicContentDefinition(
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
 				textureSeed, textureHash, texture, armorDisplayTextureHash,
-				armorDisplayTexture, block, item, armor, behaviorSource, null);
+				armorDisplayTexture, block, item, armor, behaviorSource, null, null, null);
 	}
 
 	/** Compatibility constructor for callers predating generated descriptions. */
@@ -52,7 +54,17 @@ public record DynamicContentDefinition(
 			DynamicBlockModel blockModel) {
 		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
 				textureSeed, textureHash, texture, armorDisplayTextureHash,
-				armorDisplayTexture, block, item, armor, behaviorSource, blockModel);
+				armorDisplayTexture, block, item, armor, behaviorSource, blockModel, null, null);
+	}
+
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, String description,
+			DynamicRarity rarityTier, long textureSeed, String textureHash, DynamicTextureSpec texture,
+			String armorDisplayTextureHash, DynamicArmorDisplayTextureSpec armorDisplayTexture,
+			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
+			String behaviorSource, DynamicBlockModel blockModel) {
+		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+				null, null);
 	}
 
 	public DynamicContentDefinition {
@@ -83,7 +95,8 @@ public record DynamicContentDefinition(
 		}
 		switch (type) {
 			case BLOCK -> {
-				if (block == null || item != null || armor != null || armorDisplayTexture != null) {
+				if (block == null || item != null || armor != null || entity != null
+						|| armorDisplayTexture != null || entityModel != null) {
 					throw new IllegalArgumentException("Block content must have block properties only");
 				}
 				if (blockModel != null) {
@@ -101,7 +114,8 @@ public record DynamicContentDefinition(
 				}
 			}
 			case ITEM -> {
-				if (item == null || block != null || armor != null || armorDisplayTexture != null || blockModel != null) {
+				if (item == null || block != null || armor != null || entity != null
+						|| armorDisplayTexture != null || blockModel != null || entityModel != null) {
 					throw new IllegalArgumentException("Item content must have item properties only");
 				}
 				if (texture != null) {
@@ -110,7 +124,8 @@ public record DynamicContentDefinition(
 				}
 			}
 			case ARMOR -> {
-				if (armor == null || block != null || item != null || blockModel != null) {
+				if (armor == null || block != null || item != null || entity != null
+						|| blockModel != null || entityModel != null) {
 					throw new IllegalArgumentException("Armor content must have armor properties only");
 				}
 				if (texture != null) {
@@ -118,8 +133,17 @@ public record DynamicContentDefinition(
 					texture.requireBinaryAlpha();
 				}
 			}
+			case ENTITY -> {
+				if (entity == null || block != null || item != null || armor != null
+						|| armorDisplayTexture != null || blockModel != null || entityModel == null) {
+					throw new IllegalArgumentException("Entity content must have entity properties and a visual model only");
+				}
+				if (texture == null) throw new IllegalArgumentException("Entity content requires a spawner icon texture");
+				texture.requireDimensions(DynamicTextureAsset.WIDTH, DynamicTextureAsset.HEIGHT);
+				texture.requireBinaryAlpha();
+			}
 		}
-		if (DynamicRarity.fromProperties(block, item, armor).vanillaRarity() != rarityTier.vanillaRarity()) {
+		if (entity == null && DynamicRarity.fromProperties(block, item, armor).vanillaRarity() != rarityTier.vanillaRarity()) {
 			throw new IllegalArgumentException("Dynamic rarity does not match the content's vanilla rarity component");
 		}
 	}
@@ -153,6 +177,10 @@ public record DynamicContentDefinition(
 
 	/** All ordinary textures needed to render this definition, excluding the separate worn-armor sheet. */
 	public java.util.Set<String> renderTextureHashes() {
-		return blockModel == null ? java.util.Set.of(textureHash) : blockModel.textureHashes();
+		if (blockModel != null) return blockModel.textureHashes();
+		if (entityModel == null) return java.util.Set.of(textureHash);
+		java.util.Set<String> hashes = new java.util.HashSet<>(entityModel.textureHashes());
+		hashes.add(textureHash);
+		return java.util.Set.copyOf(hashes);
 	}
 }

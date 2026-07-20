@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
+import com.yeyito.littlechemistry.content.DynamicEntityVisualProfile;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
@@ -16,6 +17,7 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.world.entity.EquipmentSlotGroup;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.attributes.DefaultAttributes;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -46,12 +48,33 @@ final class MinecraftContentFetcher {
 	private static final String BLOCK_PREFIX = "assets/minecraft/textures/block/";
 	private static final String ITEM_PREFIX = "assets/minecraft/textures/item/";
 	private static final String ARMOR_DISPLAY_PREFIX = "assets/minecraft/textures/entity/equipment/";
+	private static final String ENTITY_TEXTURE_PREFIX = "assets/minecraft/textures/entity/";
 	private static final int RETURNED_REFERENCES = 6;
 	private static final List<String> BLOCK_TEXTURE_SUFFIXES = List.of(
 			"_front_on", "_side_on", "_top_on", "_bottom_on", "_front", "_side", "_top", "_bottom", "_back", "_on"
 	);
 	private static volatile List<TextureEntry> textureIndex;
 	private static volatile List<ArmorDisplayTextureEntry> armorDisplayTextureIndex;
+	private static final List<EntityVisualReference> ENTITY_VISUAL_REFERENCES = List.of(
+			visual("zombie", "minecraft:zombie", DynamicEntityVisualProfile.ZOMBIE, "zombie/zombie"),
+			visual("husk", "minecraft:husk", DynamicEntityVisualProfile.ZOMBIE, "zombie/husk"),
+			visual("drowned", "minecraft:drowned", DynamicEntityVisualProfile.ZOMBIE, "zombie/drowned"),
+			visual("giant zombie", "minecraft:giant", DynamicEntityVisualProfile.ZOMBIE, "zombie/zombie"),
+			visual("skeleton", "minecraft:skeleton", DynamicEntityVisualProfile.SKELETON, "skeleton/skeleton"),
+			visual("stray", "minecraft:stray", DynamicEntityVisualProfile.SKELETON, "skeleton/stray"),
+			visual("bogged", "minecraft:bogged", DynamicEntityVisualProfile.SKELETON, "skeleton/bogged"),
+			visual("wither skeleton", "minecraft:wither_skeleton", DynamicEntityVisualProfile.SKELETON, "skeleton/wither_skeleton"),
+			visual("enderman", "minecraft:enderman", DynamicEntityVisualProfile.ENDERMAN, "enderman/enderman"),
+			visual("temperate cow", "minecraft:cow", DynamicEntityVisualProfile.COW, "cow/cow_temperate"),
+			visual("red mooshroom", "minecraft:mooshroom", DynamicEntityVisualProfile.COW, "cow/mooshroom_red"),
+			visual("brown mooshroom", "minecraft:mooshroom", DynamicEntityVisualProfile.COW, "cow/mooshroom_brown"),
+			visual("temperate pig", "minecraft:pig", DynamicEntityVisualProfile.PIG, "pig/pig_temperate"),
+			visual("spider", "minecraft:spider", DynamicEntityVisualProfile.SPIDER, "spider/spider"),
+			visual("cave spider", "minecraft:cave_spider", DynamicEntityVisualProfile.SPIDER, "spider/cave_spider"),
+			visual("creeper", "minecraft:creeper", DynamicEntityVisualProfile.CREEPER, "creeper/creeper"),
+			visual("blaze", "minecraft:blaze", DynamicEntityVisualProfile.BLAZE, "blaze/blaze"),
+			visual("cod", "minecraft:cod", DynamicEntityVisualProfile.COD, "fish/cod")
+	);
 
 	private MinecraftContentFetcher() {
 	}
@@ -123,6 +146,180 @@ final class MinecraftContentFetcher {
 		} catch (Exception error) {
 			return ContentGenerationDraft.ToolExecution.error("TOOL_FAILURE", safeMessage(error));
 		}
+	}
+
+	static ContentGenerationDraft.ToolExecution fetchEntity(JsonObject arguments) {
+		try {
+			if (arguments.has("_malformed")) throw new IllegalArgumentException("Tool arguments were not valid JSON");
+			requireOnly(arguments, "query");
+			String query = requiredString(arguments, "query").trim().toLowerCase(Locale.ROOT);
+			if (query.isEmpty() || query.length() > 80) {
+				throw new IllegalArgumentException("query must contain between 1 and 80 characters");
+			}
+			String normalizedQuery = normalize(query);
+			String[] queryParts = normalizedQuery.split("_+");
+			record Match(Identifier id, net.minecraft.world.entity.EntityType<?> type, int score) {}
+			List<Match> matches = new ArrayList<>();
+			for (Identifier id : BuiltInRegistries.ENTITY_TYPE.keySet()) {
+				if (!id.getNamespace().equals("minecraft")) continue;
+				int score = score(normalize(id.getPath()), normalizedQuery, queryParts);
+				if (score > 0) matches.add(new Match(id, BuiltInRegistries.ENTITY_TYPE.getValue(id), score));
+			}
+			matches.sort(Comparator.comparingInt(Match::score).reversed().thenComparing(match -> match.id().toString()));
+			if (matches.size() > RETURNED_REFERENCES) matches = new ArrayList<>(matches.subList(0, RETURNED_REFERENCES));
+			if (matches.isEmpty()) {
+				return ContentGenerationDraft.ToolExecution.error("NO_ENTITY_MATCH",
+						"No registered vanilla entity matched '" + query + "'. Try a shorter creature name.");
+			}
+			JsonArray references = new JsonArray();
+			for (Match match : matches) {
+				JsonObject encoded = new JsonObject();
+				encoded.addProperty("id", match.id().toString());
+				encoded.addProperty("category", match.type().getCategory().getName());
+				encoded.addProperty("width", match.type().getWidth());
+				encoded.addProperty("height", match.type().getHeight());
+				encoded.addProperty("fireImmune", match.type().fireImmune());
+				encoded.addProperty("allowedInPeaceful", match.type().isAllowedInPeaceful());
+				if (DefaultAttributes.hasSupplier(match.type())) {
+					@SuppressWarnings("unchecked")
+					var livingType = (net.minecraft.world.entity.EntityType<? extends net.minecraft.world.entity.LivingEntity>) match.type();
+					var attributes = DefaultAttributes.getSupplier(livingType);
+					JsonObject values = new JsonObject();
+					addAttribute(values, attributes, "maxHealth", Attributes.MAX_HEALTH);
+					addAttribute(values, attributes, "movementSpeed", Attributes.MOVEMENT_SPEED);
+					addAttribute(values, attributes, "flyingSpeed", Attributes.FLYING_SPEED);
+					addAttribute(values, attributes, "attackDamage", Attributes.ATTACK_DAMAGE);
+					addAttribute(values, attributes, "armor", Attributes.ARMOR);
+					addAttribute(values, attributes, "knockbackResistance", Attributes.KNOCKBACK_RESISTANCE);
+					addAttribute(values, attributes, "followRange", Attributes.FOLLOW_RANGE);
+					encoded.add("attributes", values);
+				}
+				references.add(encoded);
+			}
+			JsonObject result = new JsonObject();
+			result.addProperty("query", query);
+			result.add("references", references);
+			return ContentGenerationDraft.ToolExecution.success(result, null);
+		} catch (IllegalArgumentException error) {
+			return ContentGenerationDraft.ToolExecution.error("INVALID_ARGUMENT", safeMessage(error));
+		} catch (Exception error) {
+			return ContentGenerationDraft.ToolExecution.error("TOOL_FAILURE", safeMessage(error));
+		}
+	}
+
+	static ContentGenerationDraft.ToolExecution fetchEntityVisual(JsonObject arguments) {
+		try {
+			if (arguments.has("_malformed")) throw new IllegalArgumentException("Tool arguments were not valid JSON");
+			requireOnly(arguments, "query");
+			String query = requiredString(arguments, "query").trim().toLowerCase(Locale.ROOT);
+			if (query.isEmpty() || query.length() > 80) {
+				throw new IllegalArgumentException("query must contain between 1 and 80 characters");
+			}
+			String normalizedQuery = normalize(query);
+			String[] queryParts = normalizedQuery.split("_+");
+			List<ScoredEntityVisual> matches = new ArrayList<>();
+			for (EntityVisualReference reference : ENTITY_VISUAL_REFERENCES) {
+				int referenceScore = score(normalize(reference.name()), normalizedQuery, queryParts);
+				int entityScore = score(normalize(reference.sourceEntity()), normalizedQuery, queryParts);
+				int profileScore = score(reference.profile().serializedName(), normalizedQuery, queryParts);
+				int textureScore = score(normalize(reference.texture()), normalizedQuery, queryParts);
+				int best = Math.max(Math.max(referenceScore, entityScore), Math.max(profileScore, textureScore));
+				if (best > 0) matches.add(new ScoredEntityVisual(reference, best));
+			}
+			matches.sort(Comparator.comparingInt(ScoredEntityVisual::score).reversed()
+					.thenComparing(match -> match.reference().name()));
+			if (matches.size() > RETURNED_REFERENCES) matches = new ArrayList<>(matches.subList(0, RETURNED_REFERENCES));
+			if (matches.isEmpty()) {
+				return ContentGenerationDraft.ToolExecution.error("NO_ENTITY_VISUAL_MATCH",
+						"No supported animated vanilla entity model matched '" + query
+								+ "'. Try zombie, skeleton, enderman, cow, pig, spider, creeper, blaze, or cod; otherwise author cuboids.");
+			}
+
+			JsonArray references = new JsonArray();
+			List<String> failures = new ArrayList<>();
+			for (ScoredEntityVisual match : matches) {
+				try {
+					references.add(entityVisualPreview(match.reference()));
+				} catch (Exception error) {
+					failures.add(match.reference().name() + ": " + safeMessage(error));
+				}
+			}
+			if (references.isEmpty()) {
+				return ContentGenerationDraft.ToolExecution.error("ENTITY_VISUAL_READ_FAILED",
+						"Compatible vanilla entity textures were found but could not be read: " + String.join("; ", failures));
+			}
+			JsonObject result = new JsonObject();
+			result.addProperty("query", query);
+			result.addProperty("setEntityVanillaModelCompatible", true);
+			result.add("authoringInstructions", entityVisualInstructions());
+			result.add("references", references);
+			if (!failures.isEmpty()) {
+				JsonArray warnings = new JsonArray();
+				failures.forEach(warnings::add);
+				result.add("warnings", warnings);
+			}
+			LittleChemistry.LOGGER.info("Fetched vanilla Minecraft entity visual references for '{}': {}", query,
+					matches.stream().map(match -> match.reference().name()).toList());
+			return ContentGenerationDraft.ToolExecution.success(result, null);
+		} catch (IllegalArgumentException error) {
+			return ContentGenerationDraft.ToolExecution.error("INVALID_ARGUMENT", safeMessage(error));
+		} catch (Exception error) {
+			return ContentGenerationDraft.ToolExecution.error("TOOL_FAILURE", safeMessage(error));
+		}
+	}
+
+	private static void addAttribute(JsonObject destination,
+			net.minecraft.world.entity.ai.attributes.AttributeSupplier supplier, String name,
+			net.minecraft.core.Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute) {
+		if (supplier.hasAttribute(attribute)) destination.addProperty(name, supplier.getBaseValue(attribute));
+	}
+
+	private static JsonObject entityVisualPreview(EntityVisualReference reference) throws IOException {
+		BufferedImage image = readMinecraftTexture(ENTITY_TEXTURE_PREFIX + reference.texture() + ".png");
+		DynamicEntityVisualProfile profile = reference.profile();
+		if (image.getWidth() != profile.textureWidth() || image.getHeight() != profile.textureHeight()) {
+			throw new IOException("The installed texture dimensions do not match the "
+					+ profile.serializedName() + " model profile");
+		}
+		DynamicTextureSpec encoded = encodeIndexedTexture(image);
+		JsonArray palette = new JsonArray();
+		encoded.palette().forEach(palette::add);
+		JsonArray rows = new JsonArray();
+		encoded.rows().forEach(rows::add);
+		JsonObject result = new JsonObject();
+		result.addProperty("name", reference.name());
+		result.addProperty("sourceEntity", reference.sourceEntity());
+		result.addProperty("modelProfile", profile.serializedName());
+		result.addProperty("sourceTexture", "minecraft:entity/" + reference.texture());
+		result.addProperty("width", image.getWidth());
+		result.addProperty("height", image.getHeight());
+		result.addProperty("animated", true);
+		result.add("palette", palette);
+		result.add("rows", rows);
+		return result;
+	}
+
+	private static JsonArray entityVisualInstructions() {
+		JsonArray instructions = new JsonArray();
+		instructions.add("Choose one reference and pass its modelProfile, width, height, palette, and every row to set_entity_vanilla_model.");
+		instructions.add("You may recolor or carefully edit the indexed sheet, but preserve its dimensions and UV islands; moving an island paints the wrong articulated body part.");
+		instructions.add("The profile supplies Minecraft's baked geometry plus walk and look animation. It does not inherit the source entity's AI, attacks, drops, sounds, overlays, held items, or other gameplay.");
+		instructions.add("Palette entries are RRGGBBAA and each row character 0-F indexes that palette. Keep transparent UV space transparent.");
+		return instructions;
+	}
+
+	private static BufferedImage readMinecraftTexture(String relativePath) throws IOException {
+		ModContainer minecraft = FabricLoader.getInstance().getModContainer("minecraft")
+				.orElseThrow(() -> new IOException("Minecraft's installed resources are unavailable"));
+		for (Path root : minecraft.getRootPaths()) {
+			Path texture = root.resolve(relativePath);
+			if (!Files.isRegularFile(texture)) continue;
+			try (InputStream input = Files.newInputStream(texture)) {
+				BufferedImage image = ImageIO.read(input);
+				if (image != null && image.getWidth() > 0 && image.getHeight() > 0) return image;
+			}
+		}
+		throw new IOException("Minecraft texture is unavailable: " + relativePath);
 	}
 
 	private static ContentGenerationDraft.ToolExecution fetch(JsonObject arguments, boolean textures) {
@@ -574,6 +771,38 @@ final class MinecraftContentFetcher {
 		return new DynamicArmorDisplayTextureSpec(encodedPalette, rows);
 	}
 
+	private static DynamicTextureSpec encodeIndexedTexture(BufferedImage image) {
+		if (image.getWidth() < 1 || image.getWidth() > 64 || image.getHeight() < 1 || image.getHeight() > 64) {
+			throw new IllegalArgumentException("Entity texture dimensions must be between 1 and 64 pixels");
+		}
+		int width = image.getWidth();
+		int height = image.getHeight();
+		int[] pixels = new int[width * height];
+		Map<Integer, Integer> counts = new HashMap<>();
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int argb = normalizeAlpha(image.getRGB(x, y));
+				pixels[y * width + x] = argb;
+				counts.merge(argb, 1, Integer::sum);
+			}
+		}
+		List<Integer> palette = counts.entrySet().stream()
+				.sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed()
+						.thenComparing(entry -> Integer.toUnsignedLong(entry.getKey())))
+				.map(Map.Entry::getKey).limit(16).toList();
+		List<String> encodedPalette = palette.stream().map(MinecraftContentFetcher::rgba).toList();
+		String keys = "0123456789ABCDEF";
+		List<String> rows = new ArrayList<>(height);
+		for (int y = 0; y < height; y++) {
+			StringBuilder row = new StringBuilder(width);
+			for (int x = 0; x < width; x++) {
+				row.append(keys.charAt(nearestPaletteIndex(pixels[y * width + x], palette)));
+			}
+			rows.add(row.toString());
+		}
+		return new DynamicTextureSpec(encodedPalette, rows);
+	}
+
 	private static JsonArray armorDisplayTextureInstructions(String layer) {
 		JsonArray instructions = new JsonArray();
 		instructions.add("Choose a reference below and pass the top-level slot plus that reference's palette and all 32 rows to set_armor_display_texture; recolor or edit it while keeping every row exactly 64 palette keys long.");
@@ -669,6 +898,11 @@ final class MinecraftContentFetcher {
 		return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "");
 	}
 
+	private static EntityVisualReference visual(String name, String sourceEntity,
+			DynamicEntityVisualProfile profile, String texture) {
+		return new EntityVisualReference(name, sourceEntity, profile, texture);
+	}
+
 	private static void requireOnly(JsonObject object, String... allowed) {
 		Set<String> names = Set.of(allowed);
 		for (String key : object.keySet()) if (!names.contains(key)) throw new IllegalArgumentException("Unknown field: " + key);
@@ -699,5 +933,12 @@ final class MinecraftContentFetcher {
 	}
 
 	private record ScoredArmorDisplayTexture(ArmorDisplayTextureEntry texture, int score) {
+	}
+
+	private record EntityVisualReference(String name, String sourceEntity,
+			DynamicEntityVisualProfile profile, String texture) {
+	}
+
+	private record ScoredEntityVisual(EntityVisualReference reference, int score) {
 	}
 }

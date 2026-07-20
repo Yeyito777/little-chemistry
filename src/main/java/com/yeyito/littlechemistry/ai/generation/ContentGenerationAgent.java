@@ -14,10 +14,12 @@ import java.io.IOException;
 public final class ContentGenerationAgent {
 	private static final Gson GSON = new Gson();
 	private static final String SYSTEM_PROMPT = """
-			Create the requested Minecraft item, block, or armor piece with the tools. For crafting requests, derive a cohesive result
+			Create the requested Minecraft item, block, armor piece, or entity with the tools. For crafting requests, derive a cohesive result
 			from the grid, reflecting significant ingredients in its appearance, properties, and behavior. Fetch similar vanilla content
-			for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. Complete every
-			applicable property and texture, author and compile GeneratedBehaviorImpl, inspect the finished draft, then submit.
+			for reference, but do not merely reskin or delegate to vanilla when the concept implies special functionality. For an entity whose
+			anatomy fits a supported animated vanilla model, you may adapt its fetched compatible UV sheet; use authored cuboids for original
+			anatomy. Complete every applicable property and texture, author and compile GeneratedBehaviorImpl, inspect the finished draft,
+			then submit.
 			""";
 
 	private final OpenAiClient openAi;
@@ -63,6 +65,9 @@ public final class ContentGenerationAgent {
 			requestData.addProperty("armorDisplayTextureWidth", 64);
 			requestData.addProperty("armorDisplayTextureHeight", 32);
 		}
+		if (type == DynamicContentType.ENTITY) {
+			requestData.addProperty("entityVisualChoices", "Either author a rigid cuboid model with 1-64-pixel textures or reuse a supported animated vanilla profile with its exact fetched 32x32, 64x32, or 64x64 UV sheet");
+		}
 		JsonObject message = new JsonObject();
 		message.addProperty("type", "message");
 		message.addProperty("role", "user");
@@ -97,6 +102,8 @@ public final class ContentGenerationAgent {
 					case "fetch" -> MinecraftContentFetcher.fetch(call.arguments());
 					case "fetch_texture" -> MinecraftContentFetcher.fetchTexture(call.arguments());
 					case "fetch_armor_display_texture" -> MinecraftContentFetcher.fetchArmorDisplayTexture(call.arguments());
+					case "fetch_entity" -> MinecraftContentFetcher.fetchEntity(call.arguments());
+					case "fetch_entity_visual" -> MinecraftContentFetcher.fetchEntityVisual(call.arguments());
 					case "search_java_classes" -> JavaCodeInspector.search(call.arguments());
 					case "inspect_java_class" -> JavaCodeInspector.inspect(call.arguments());
 					default -> draft.execute(call.name(), call.arguments());
@@ -156,7 +163,7 @@ public final class ContentGenerationAgent {
 			tools.add(tool("set_placement_properties",
 					"Required only when itemType=item and placeable=true. Set cross-plant or upright-torch geometry and placed light. Use supportProfile=overworld_vegetation for ordinary overworld plants, saplings, bushes, and flowers; the tool then guarantees grass-like substrates via #minecraft:supports_vegetation and adds the supplied special supports. Use explicit for special substrates or torches. Supports may use any_solid, block tags, or block IDs.",
 					placementPropertiesSchema()));
-		} else {
+		} else if (type == DynamicContentType.ARMOR) {
 			tools.add(tool("set_texture",
 					"Set the complete indexed 16x16 inventory icon. This does not control how the armor looks while equipped.",
 					textureSchema()));
@@ -171,6 +178,25 @@ public final class ContentGenerationAgent {
 							? "Infer the armor slot from the requested name, then set its native foil, enchantability, defense, toughness, knockback resistance, and durability."
 							: "Set the required requested armor slot and its native foil, enchantability, defense, toughness, knockback resistance, and durability.",
 					armorPropertiesSchema()));
+		} else {
+			tools.add(tool("set_texture",
+					"Set the complete indexed 16x16 inventory icon for the consumable entity spawner item.",
+					textureSchema()));
+			tools.add(tool("fetch_entity",
+					"Fetch dimensions, category, and native attributes of similar registered vanilla entities for gameplay reference.",
+					entityFetchSchema()));
+			tools.add(tool("fetch_entity_visual",
+					"Fetch supported animated vanilla entity-model profiles with complete compatible indexed UV sheets. Choose a returned model and copy or recolor its palette/rows without moving UV islands, then pass it to set_entity_vanilla_model. Use set_entity_model instead when no existing anatomy fits.",
+					entityFetchSchema()));
+			tools.add(tool("set_entity_properties",
+					"Set the generated mob's native movement carrier, disposition, dimensions, combat attributes, persistence-safe drops, and registered vanilla sounds. Ground and flying carriers navigate natively. Passive mobs never attack; neutral mobs retaliate; hostile mobs acquire players and attack.",
+					entityPropertiesSchema()));
+			tools.add(tool("set_entity_model",
+					"Choose this instead of set_entity_vanilla_model when the entity needs original anatomy. Define a complete rigid model made from 1-24 axis-aligned cuboids in normalized 0-16 model coordinates and 1-12 named indexed textures. The renderer scales the complete 0-16 model volume to the entity width and height. Map every default face, use per-element face overrides when useful, and choose a particleTexture as the model's primary texture ID.",
+					entityModelSchema()));
+			tools.add(tool("set_entity_vanilla_model",
+					"Choose one animated profile returned by fetch_entity_visual and set its complete compatible skin. Copy or recolor a returned indexed sheet while preserving every UV island, row width, and row count. This reuses Minecraft's articulated model and walk/look animation; it does not copy that vanilla mob's gameplay or special render layers.",
+					entityVanillaModelSchema()));
 		}
 		tools.add(tool("inspect_behavior_api",
 				"Inspect the required server-side Java marker and optional callback capability interfaces. Implement only the capabilities this content actually needs.", emptySchema()));
@@ -264,6 +290,26 @@ public final class ContentGenerationAgent {
 	}
 
 	private static JsonObject blockModelSchema() {
+		return cuboidModelSchema(true);
+	}
+
+	private static JsonObject entityModelSchema() {
+		return cuboidModelSchema(false);
+	}
+
+	private static JsonObject entityVanillaModelSchema() {
+		JsonObject schema = objectSchema("profile", "width", "height", "palette", "rows");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("profile", enumSchema("zombie", "skeleton", "enderman", "cow", "pig", "spider",
+				"creeper", "blaze", "cod"));
+		properties.add("width", integerSchema(32, 64));
+		properties.add("height", integerSchema(32, 64));
+		properties.add("palette", arraySchema(stringSchema("^[0-9A-Fa-f]{8}$"), 1, 16));
+		properties.add("rows", arraySchema(stringSchema("^[0-9A-Fa-f]{32}$|^[0-9A-Fa-f]{64}$"), 32, 64));
+		return schema;
+	}
+
+	private static JsonObject cuboidModelSchema(boolean includeCollision) {
 		JsonObject texture = objectSchema("id", "width", "height", "palette", "rows");
 		JsonObject textureProperties = texture.getAsJsonObject("properties");
 		textureProperties.add("id", stringSchema("^[a-z][a-z0-9_]{0,31}$"));
@@ -274,11 +320,13 @@ public final class ContentGenerationAgent {
 
 		JsonObject defaultFaces = blockFacesSchema(true);
 		JsonObject elementFaces = blockFacesSchema(false);
-		JsonObject element = objectSchema("from", "to", "collision", "faces");
+		JsonObject element = includeCollision
+				? objectSchema("from", "to", "collision", "faces")
+				: objectSchema("from", "to", "faces");
 		JsonObject elementProperties = element.getAsJsonObject("properties");
 		elementProperties.add("from", coordinateArraySchema(3));
 		elementProperties.add("to", coordinateArraySchema(3));
-		elementProperties.add("collision", typeSchema("boolean"));
+		if (includeCollision) elementProperties.add("collision", typeSchema("boolean"));
 		elementProperties.add("faces", elementFaces);
 
 		JsonObject schema = objectSchema("textures", "particleTexture", "faces", "elements");
@@ -414,6 +462,49 @@ public final class ContentGenerationAgent {
 		properties.add("toughness", numberSchema(0, 100));
 		properties.add("knockbackResistance", numberSchema(0, 1));
 		properties.add("durability", integerSchema(1, 100000));
+		return schema;
+	}
+
+	private static JsonObject entityFetchSchema() {
+		JsonObject schema = objectSchema("query");
+		JsonObject query = typeSchema("string");
+		query.addProperty("minLength", 1);
+		query.addProperty("maxLength", 80);
+		schema.getAsJsonObject("properties").add("query", query);
+		return schema;
+	}
+
+	private static JsonObject entityPropertiesSchema() {
+		JsonObject drop = objectSchema("item", "minimum", "maximum", "chance");
+		JsonObject dropProperties = drop.getAsJsonObject("properties");
+		dropProperties.add("item", stringSchema("^[a-z0-9_.-]+:[a-z0-9_./-]+$"));
+		dropProperties.add("minimum", integerSchema(0, 64));
+		dropProperties.add("maximum", integerSchema(0, 64));
+		dropProperties.add("chance", numberSchema(0, 1));
+
+		JsonObject schema = objectSchema("movement", "disposition", "width", "height", "eyeHeight",
+				"maxHealth", "movementSpeed", "attackDamage", "armor", "knockbackResistance",
+				"followRange", "experienceReward", "fireImmune", "ambientSound", "hurtSound",
+				"deathSound", "drops");
+		JsonObject properties = schema.getAsJsonObject("properties");
+		properties.add("movement", enumSchema("ground", "flying"));
+		properties.add("disposition", enumSchema("passive", "neutral", "hostile"));
+		properties.add("width", numberSchema(0.1, 8));
+		properties.add("height", numberSchema(0.1, 8));
+		properties.add("eyeHeight", numberSchema(0, 8));
+		properties.add("maxHealth", numberSchema(1, 1024));
+		properties.add("movementSpeed", numberSchema(0, 2));
+		properties.add("attackDamage", numberSchema(0, 2048));
+		properties.add("armor", numberSchema(0, 30));
+		properties.add("knockbackResistance", numberSchema(0, 1));
+		properties.add("followRange", numberSchema(1, 128));
+		properties.add("experienceReward", integerSchema(0, 10_000));
+		properties.add("fireImmune", typeSchema("boolean"));
+		JsonObject sound = stringSchema("^[a-z0-9_.-]+:[a-z0-9_./-]+$");
+		properties.add("ambientSound", sound.deepCopy());
+		properties.add("hurtSound", sound.deepCopy());
+		properties.add("deathSound", sound.deepCopy());
+		properties.add("drops", arraySchema(drop, 0, 16));
 		return schema;
 	}
 

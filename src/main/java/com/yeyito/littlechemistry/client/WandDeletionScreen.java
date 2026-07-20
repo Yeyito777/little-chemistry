@@ -86,6 +86,7 @@ public final class WandDeletionScreen extends Screen {
 			case ITEM -> "Item: ";
 			case BLOCK -> "Block: ";
 			case ARMOR -> "Armor (" + definition.armor().slot().serializedName() + "): ";
+			case ENTITY -> "Entity: ";
 		};
 		return Component.literal(check + kind)
 				.append(Component.literal(definition.displayName()).withStyle(definition.rarityTier().color()));

@@ -518,6 +518,11 @@ public final class RuntimeTextureStore {
 					if (hash.equals(texture.hash())) return texture.texture().renderPng();
 				}
 			}
+			if (definition.entityModel() != null) {
+				for (var texture : definition.entityModel().textures()) {
+					if (hash.equals(texture.hash())) return texture.texture().renderPng();
+				}
+			}
 			if (hash.equals(definition.armorDisplayTextureHash()) && definition.armorDisplayTexture() != null) {
 				return definition.armorDisplayTexture().renderPng();
 			}

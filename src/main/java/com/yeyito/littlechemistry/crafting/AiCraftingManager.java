@@ -232,7 +232,8 @@ public final class AiCraftingManager {
 
 	public void removeRecipesFor(Set<String> outputNames) throws IOException {
 		Map<RecipeSignature, AiCraftingRecipe> updated = new LinkedHashMap<>(recipes);
-		updated.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName()));
+		updated.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
+				|| entry.getKey().referencesDynamicContent(outputNames));
 		if (updated.size() == recipes.size()) return;
 		saveRecipes(updated);
 		recipes.clear();

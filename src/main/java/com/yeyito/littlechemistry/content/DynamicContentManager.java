@@ -118,7 +118,8 @@ public final class DynamicContentManager {
 		if ((type == DynamicContentType.BLOCK && generated.block() == null)
 				|| (type == DynamicContentType.ITEM && generated.item() == null)
 				|| (type == DynamicContentType.ARMOR && (generated.armor() == null
-						|| generated.armor().slot() != requireArmorSlot(requestedArmorSlot)))) {
+						|| generated.armor().slot() != requireArmorSlot(requestedArmorSlot)))
+				|| (type == DynamicContentType.ENTITY && generated.entity() == null)) {
 			throw new IllegalArgumentException("Generated properties do not match the requested content type");
 		}
 		Map<String, byte[]> textureAssets = new HashMap<>();
@@ -136,6 +137,16 @@ public final class DynamicContentManager {
 			}
 			DynamicBlockTexture primary = generated.blockModel().particleTextureAsset();
 			textureHash = primary.hash();
+		}
+		if (generated.entityModel() != null) {
+			for (DynamicBlockTexture modelTexture : generated.entityModel().textures()) {
+				byte[] bytes = modelTexture.texture().renderPng();
+				String actualHash = DynamicTextureAsset.sha256(bytes);
+				if (!actualHash.equals(modelTexture.hash())) {
+					throw new IOException("Generated entity model texture hash mismatch for " + modelTexture.id());
+				}
+				textureAssets.put(actualHash, bytes);
+			}
 		}
 		byte[] armorDisplayTextureBytes = generated.armorDisplayTexture() == null
 				? null : generated.armorDisplayTexture().renderPng();
@@ -159,7 +170,9 @@ public final class DynamicContentManager {
 				generated.item(),
 				generated.armor(),
 				behaviorSource,
-				generated.blockModel()
+				generated.blockModel(),
+				generated.entity(),
+				generated.entityModel()
 		);
 		return commit(definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
 	}
@@ -246,6 +259,11 @@ public final class DynamicContentManager {
 		}
 		for (var level : server.getAllLevels()) {
 			for (var entity : level.getAllEntities()) {
+				if (entity instanceof DynamicCarrierEntity dynamicEntity
+						&& names.contains(dynamicEntity.contentName())) {
+					dynamicEntity.discard();
+					continue;
+				}
 				if (entity instanceof ItemEntity itemEntity && matchesDeleted(itemEntity.getItem(), names)) {
 					itemEntity.discard();
 				}
@@ -350,6 +368,13 @@ public final class DynamicContentManager {
 				if (texture.hash().equals(definition.textureHash())) continue;
 				ensureAsset(texture.hash(), texture.texture().renderPng(),
 						definition.name() + " block model texture " + texture.id());
+			}
+		}
+		if (definition.entityModel() != null) {
+			for (DynamicBlockTexture texture : definition.entityModel().textures()) {
+				if (texture.hash().equals(definition.textureHash())) continue;
+				ensureAsset(texture.hash(), texture.texture().renderPng(),
+						definition.name() + " entity model texture " + texture.id());
 			}
 		}
 		if (definition.armorDisplayTexture() != null) {

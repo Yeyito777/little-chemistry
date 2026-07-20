@@ -20,7 +20,13 @@ public enum DynamicBehaviorCapability {
 	RANDOM_TICK_BLOCK("randomTickBlock", RandomTickBlockBehavior.class),
 	SCHEDULED_TICK_BLOCK("scheduledTickBlock", ScheduledTickBlockBehavior.class),
 	NEIGHBOR_CHANGED_BLOCK("neighborChangedBlock", NeighborChangedBlockBehavior.class),
-	PROJECTILE_HIT_BLOCK("projectileHitBlock", ProjectileHitBlockBehavior.class);
+	PROJECTILE_HIT_BLOCK("projectileHitBlock", ProjectileHitBlockBehavior.class),
+	ENTITY_SPAWNED("entitySpawned", EntitySpawnedBehavior.class),
+	ENTITY_TICK("entityTick", EntityTickBehavior.class),
+	ENTITY_INTERACT("entityInteract", EntityInteractBehavior.class),
+	ENTITY_HURT("entityHurt", EntityHurtBehavior.class),
+	ENTITY_ATTACK("entityAttack", EntityAttackBehavior.class),
+	ENTITY_DEATH("entityDeath", EntityDeathBehavior.class);
 
 	private static final String PACKAGE_PREFIX = "com.yeyito.littlechemistry.behavior.";
 	private final String callbackName;

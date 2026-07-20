@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 13;
+	public static final int CURRENT_FORMAT = 15;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -46,10 +46,12 @@ public final class DynamicContentJson {
 				entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
 			}
 			if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
+			if (definition.entityModel() != null) entry.add("entityModel", encodeEntityModel(definition.entityModel()));
 			switch (definition.type()) {
 				case BLOCK -> entry.add("block", encodeBlock(definition.block()));
 				case ITEM -> entry.add("item", encodeItem(definition.item()));
 				case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
+				case ENTITY -> entry.add("entity", encodeEntity(definition.entity()));
 			}
 			entry.addProperty("behaviorSource", definition.behaviorSource());
 			entries.add(entry);
@@ -111,11 +113,19 @@ public final class DynamicContentJson {
 			DynamicArmorProperties armor = type == DynamicContentType.ARMOR
 					? format >= 6 && entry.has("armor") ? decodeArmor(entry.getAsJsonObject("armor")) : null
 					: null;
+			DynamicEntityProperties entity = type == DynamicContentType.ENTITY
+					? format >= 14 && entry.has("entity") ? decodeEntity(entry.getAsJsonObject("entity")) : null
+					: null;
 			DynamicRarity rarityTier = format >= 12 && entry.has("rarity")
 					? DynamicRarity.parse(entry.get("rarity").getAsString())
 					: DynamicRarity.fromProperties(block, item, armor);
 			DynamicBlockModel blockModel = type == DynamicContentType.BLOCK && format >= 10 && entry.has("blockModel")
 					? decodeBlockModel(entry.getAsJsonObject("blockModel")) : null;
+			DynamicEntityModel entityModel = type == DynamicContentType.ENTITY && format >= 14 && entry.has("entityModel")
+					? format >= 15
+							? decodeEntityModel(entry.getAsJsonObject("entityModel"))
+							: new DynamicEntityModel(decodeBlockModel(entry.getAsJsonObject("entityModel")))
+					: null;
 			String behaviorSource;
 			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
@@ -135,7 +145,8 @@ public final class DynamicContentJson {
 			}
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
-					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+					entity, entityModel
 			));
 		}
 		validateUniqueNames(definitions);
@@ -185,6 +196,44 @@ public final class DynamicContentJson {
 		}
 		encoded.add("elements", elements);
 		return encoded;
+	}
+
+	private static JsonObject encodeEntityModel(DynamicEntityModel model) {
+		JsonObject encoded = new JsonObject();
+		encoded.addProperty("profile", model.profile().serializedName());
+		if (model.usesVanillaModel()) {
+			encoded.add("texture", encodeBlockTexture(model.vanillaTexture()));
+		} else {
+			encoded.add("geometry", encodeBlockModel(model.geometry()));
+		}
+		return encoded;
+	}
+
+	private static DynamicEntityModel decodeEntityModel(JsonObject encoded) {
+		DynamicEntityVisualProfile profile = DynamicEntityVisualProfile.parse(encoded.get("profile").getAsString());
+		if (profile == DynamicEntityVisualProfile.CUSTOM) {
+			if (!encoded.has("geometry") || encoded.has("texture")) {
+				throw new IllegalArgumentException("Custom entity model data is malformed");
+			}
+			return new DynamicEntityModel(decodeBlockModel(encoded.getAsJsonObject("geometry")));
+		}
+		if (!encoded.has("texture") || encoded.has("geometry")) {
+			throw new IllegalArgumentException("Vanilla-profile entity model data is malformed");
+		}
+		return DynamicEntityModel.vanilla(profile, decodeBlockTexture(encoded.getAsJsonObject("texture")));
+	}
+
+	private static JsonObject encodeBlockTexture(DynamicBlockTexture texture) {
+		JsonObject encoded = new JsonObject();
+		encoded.addProperty("id", texture.id());
+		encoded.addProperty("hash", texture.hash());
+		encoded.add("texture", encodeTexture(texture.texture()));
+		return encoded;
+	}
+
+	private static DynamicBlockTexture decodeBlockTexture(JsonObject encoded) {
+		return new DynamicBlockTexture(encoded.get("id").getAsString(), encoded.get("hash").getAsString(),
+				decodeTexture(encoded.getAsJsonObject("texture")));
 	}
 
 	private static DynamicBlockModel decodeBlockModel(JsonObject encoded) {
@@ -482,6 +531,67 @@ public final class DynamicContentJson {
 				encoded.get("knockbackResistance").getAsDouble(),
 				encoded.get("durability").getAsInt()
 		);
+	}
+
+	private static JsonObject encodeEntity(DynamicEntityProperties entity) {
+		JsonObject encoded = new JsonObject();
+		encoded.addProperty("movement", entity.movement().serializedName());
+		encoded.addProperty("disposition", entity.disposition().serializedName());
+		encoded.addProperty("width", entity.width());
+		encoded.addProperty("height", entity.height());
+		encoded.addProperty("eyeHeight", entity.eyeHeight());
+		encoded.addProperty("maxHealth", entity.maxHealth());
+		encoded.addProperty("movementSpeed", entity.movementSpeed());
+		encoded.addProperty("attackDamage", entity.attackDamage());
+		encoded.addProperty("armor", entity.armor());
+		encoded.addProperty("knockbackResistance", entity.knockbackResistance());
+		encoded.addProperty("followRange", entity.followRange());
+		encoded.addProperty("experienceReward", entity.experienceReward());
+		encoded.addProperty("fireImmune", entity.fireImmune());
+		encoded.addProperty("ambientSound", entity.ambientSound().toString());
+		encoded.addProperty("hurtSound", entity.hurtSound().toString());
+		encoded.addProperty("deathSound", entity.deathSound().toString());
+		JsonArray drops = new JsonArray();
+		for (DynamicEntityDrop drop : entity.drops()) {
+			JsonObject value = new JsonObject();
+			value.addProperty("item", drop.item().toString());
+			value.addProperty("minimum", drop.minimum());
+			value.addProperty("maximum", drop.maximum());
+			value.addProperty("chance", drop.chance());
+			drops.add(value);
+		}
+		encoded.add("drops", drops);
+		return encoded;
+	}
+
+	private static DynamicEntityProperties decodeEntity(JsonObject encoded) {
+		List<DynamicEntityDrop> drops = new ArrayList<>();
+		for (JsonElement element : encoded.getAsJsonArray("drops")) {
+			JsonObject value = element.getAsJsonObject();
+			drops.add(new DynamicEntityDrop(
+					Identifier.parse(value.get("item").getAsString()),
+					value.get("minimum").getAsInt(),
+					value.get("maximum").getAsInt(),
+					value.get("chance").getAsDouble()));
+		}
+		return new DynamicEntityProperties(
+				DynamicEntityMovement.parse(encoded.get("movement").getAsString()),
+				DynamicEntityDisposition.parse(encoded.get("disposition").getAsString()),
+				encoded.get("width").getAsFloat(),
+				encoded.get("height").getAsFloat(),
+				encoded.get("eyeHeight").getAsFloat(),
+				encoded.get("maxHealth").getAsDouble(),
+				encoded.get("movementSpeed").getAsDouble(),
+				encoded.get("attackDamage").getAsDouble(),
+				encoded.get("armor").getAsDouble(),
+				encoded.get("knockbackResistance").getAsDouble(),
+				encoded.get("followRange").getAsDouble(),
+				encoded.get("experienceReward").getAsInt(),
+				encoded.get("fireImmune").getAsBoolean(),
+				Identifier.parse(encoded.get("ambientSound").getAsString()),
+				Identifier.parse(encoded.get("hurtSound").getAsString()),
+				Identifier.parse(encoded.get("deathSound").getAsString()),
+				drops);
 	}
 
 	private static void validateUniqueNames(List<DynamicContentDefinition> definitions) {

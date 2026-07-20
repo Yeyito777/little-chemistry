@@ -12,10 +12,10 @@ import java.io.IOException;
 /** Lets the AI choose an output and then author that output from a crafting grid. */
 public final class RecipeGenerationAgent {
 	private static final String CHOICE_PROMPT = """
-			You invent sensible, surprising Minecraft crafting results. Inspect the exact shaped crafting grid and choose one
-			coherent output whose identity and quantity follow from those ingredients. Choose an item, block, or one armor piece,
-			a short printable display name, and an output count from 1 to 64 that fits one resulting stack. Armor and other
-			non-stackable results must use count 1. A grid cell's dynamicContentId references its authoritative entry in
+				You invent sensible, surprising Minecraft crafting results. Inspect the exact shaped crafting grid and choose one
+				coherent output whose identity and quantity follow from those ingredients. Choose an item, block, one armor piece, or
+				a generated entity represented by its stackable spawner item, plus a short printable display name and an output count
+				from 1 to 64 that fits one resulting stack. Armor must use count 1. A grid cell's dynamicContentId references its authoritative entry in
 			dynamicIngredients; use that entry's gameplayProperties and behavior when reasoning about generated Little Chemistry
 			ingredients rather than treating the shared carrier itemId as their identity. Do not choose existing vanilla content merely
 			to duplicate a normal recipe. Call choose_output.
@@ -54,7 +54,7 @@ public final class RecipeGenerationAgent {
 		JsonObject kind = new JsonObject();
 		kind.addProperty("type", "string");
 		JsonArray kinds = new JsonArray();
-		for (String value : new String[]{"item", "block", "helmet", "chestplate", "leggings", "boots"}) kinds.add(value);
+		for (String value : new String[]{"item", "block", "helmet", "chestplate", "leggings", "boots", "entity"}) kinds.add(value);
 		kind.add("enum", kinds);
 		properties.add("kind", kind);
 		JsonObject name = new JsonObject();
@@ -117,6 +117,7 @@ public final class RecipeGenerationAgent {
 			case "chestplate" -> new Choice(DynamicContentType.ARMOR, DynamicArmorSlot.CHEST, chosenName, outputCount);
 			case "leggings" -> new Choice(DynamicContentType.ARMOR, DynamicArmorSlot.LEGGINGS, chosenName, outputCount);
 			case "boots" -> new Choice(DynamicContentType.ARMOR, DynamicArmorSlot.BOOTS, chosenName, outputCount);
+			case "entity" -> new Choice(DynamicContentType.ENTITY, null, chosenName, outputCount);
 			default -> throw new IOException(model + " returned an unknown recipe output kind");
 		};
 		if (choice.type() == DynamicContentType.ARMOR && outputCount != 1) {
@@ -130,6 +131,7 @@ public final class RecipeGenerationAgent {
 			case ITEM -> content.item().maxStack();
 			case BLOCK -> 64;
 			case ARMOR -> 1;
+			case ENTITY -> 64;
 		};
 		if (choice.outputCount() > maximum) {
 			throw new IOException("Recipe output count " + choice.outputCount()

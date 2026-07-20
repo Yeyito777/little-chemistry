@@ -4,6 +4,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentJson;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.content.DynamicEntityObjects;
 import com.yeyito.littlechemistry.mixin.CreativeModeTabsAccessor;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
@@ -18,6 +19,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
 import net.minecraft.client.renderer.special.SpecialModelRenderers;
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
@@ -40,6 +42,10 @@ public final class LittleChemistryClient implements ClientModInitializer {
 				DynamicContentObjects.BLOCK_ENTITY_TYPE,
 				context -> new DynamicBlockEntityRenderer()
 		);
+		EntityRendererRegistry.register(DynamicEntityObjects.GROUND_CREATURE, DynamicEntityRenderer::new);
+		EntityRendererRegistry.register(DynamicEntityObjects.GROUND_MONSTER, DynamicEntityRenderer::new);
+		EntityRendererRegistry.register(DynamicEntityObjects.FLYING_CREATURE, DynamicEntityRenderer::new);
+		EntityRendererRegistry.register(DynamicEntityObjects.FLYING_MONSTER, DynamicEntityRenderer::new);
 		ClientPlayNetworking.registerGlobalReceiver(DynamicContentPayload.TYPE,
 				(payload, context) -> apply(context.client(), payload));
 		ClientPlayNetworking.registerGlobalReceiver(DynamicAssetPayload.TYPE,
@@ -91,6 +97,13 @@ public final class LittleChemistryClient implements ClientModInitializer {
 							return;
 						}
 						DynamicContentCatalog.replace(decoded.definitions());
+						if (client.level != null) {
+							for (var entity : client.level.entitiesForRendering()) {
+								if (entity instanceof com.yeyito.littlechemistry.content.DynamicCarrierEntity dynamic) {
+									dynamic.refreshDimensions();
+								}
+							}
+						}
 						refreshCreativeTabs(client);
 						for (int start = 0; start < missing.size(); start += DynamicAssetRequestPayload.MAX_HASHES) {
 							int end = Math.min(missing.size(), start + DynamicAssetRequestPayload.MAX_HASHES);

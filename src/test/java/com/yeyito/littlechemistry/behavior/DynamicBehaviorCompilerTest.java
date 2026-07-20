@@ -17,6 +17,8 @@ final class DynamicBehaviorCompilerTest {
 			import net.minecraft.server.level.ServerPlayer;
 			import net.minecraft.util.RandomSource;
 			import net.minecraft.world.InteractionResult;
+			import net.minecraft.world.InteractionHand;
+			import net.minecraft.world.damagesource.DamageSource;
 			import net.minecraft.world.entity.*;
 			import net.minecraft.world.entity.projectile.Projectile;
 			import net.minecraft.world.item.ItemStack;
@@ -30,7 +32,9 @@ final class DynamicBehaviorCompilerTest {
 			        PostHurtEnemyBehavior, MineBlockBehavior, FinishUsingBehavior, CraftedBehavior,
 			        UsePlacedBlockBehavior, AttackPlacedBlockBehavior, PlacedBlockBehavior, BrokenBlockBehavior,
 			        StepOnBlockBehavior, FallOnBlockBehavior, EntityInsideBlockBehavior, RandomTickBlockBehavior,
-			        ScheduledTickBlockBehavior, NeighborChangedBlockBehavior, ProjectileHitBlockBehavior {
+			        ScheduledTickBlockBehavior, NeighborChangedBlockBehavior, ProjectileHitBlockBehavior,
+			        EntitySpawnedBehavior, EntityTickBehavior, EntityInteractBehavior, EntityHurtBehavior,
+			        EntityAttackBehavior, EntityDeathBehavior {
 			    public GeneratedBehaviorImpl() {}
 			    @Override public InteractionResult useAir(DynamicItemUseContext c) { return InteractionResult.SUCCESS; }
 			    @Override public InteractionResult useOnBlock(DynamicBlockUseContext c) { return InteractionResult.PASS; }
@@ -51,6 +55,12 @@ final class DynamicBehaviorCompilerTest {
 			    @Override public void scheduledTickBlock(ServerLevel l, BlockPos p, BlockState s, RandomSource r, DynamicContentDefinition d) {}
 			    @Override public void neighborChangedBlock(ServerLevel l, BlockPos p, BlockState s, Block b, Orientation o, boolean m, DynamicContentDefinition d) {}
 			    @Override public void projectileHitBlock(ServerLevel l, BlockPos p, BlockState s, BlockHitResult h, Projectile r, DynamicContentDefinition d) {}
+			    @Override public void entitySpawned(DynamicGeneratedEntityContext c) {}
+			    @Override public void entityTick(DynamicGeneratedEntityContext c) {}
+			    @Override public InteractionResult entityInteract(DynamicGeneratedEntityContext c, ServerPlayer p, InteractionHand h, ItemStack i) { return InteractionResult.SUCCESS; }
+			    @Override public void entityHurt(DynamicGeneratedEntityContext c, DamageSource s, float a) {}
+			    @Override public void entityAttack(DynamicGeneratedEntityContext c, Entity t) {}
+			    @Override public void entityDeath(DynamicGeneratedEntityContext c, DamageSource s) {}
 			}
 			""";
 

@@ -34,6 +34,7 @@ public final class DynamicContentAiDescription {
 			case BLOCK -> describeBlock(definition.block());
 			case ITEM -> describeItem(definition.item());
 			case ARMOR -> describeArmor(definition.armor());
+			case ENTITY -> describeEntity(definition.entity());
 		});
 		if (definition.blockModel() != null) {
 			JsonObject model = new JsonObject();
@@ -42,6 +43,23 @@ public final class DynamicContentAiDescription {
 			model.addProperty("particleTexture", definition.blockModel().particleTexture());
 			JsonArray textures = new JsonArray();
 			for (var texture : definition.blockModel().textures()) {
+				JsonObject encoded = new JsonObject();
+				encoded.addProperty("id", texture.id());
+				encoded.addProperty("width", texture.texture().width());
+				encoded.addProperty("height", texture.texture().height());
+				textures.add(encoded);
+			}
+			model.add("textures", textures);
+			result.add("visualModel", model);
+		}
+		if (definition.entityModel() != null) {
+			JsonObject model = new JsonObject();
+			model.addProperty("profile", definition.entityModel().profile().serializedName());
+			model.addProperty("animatedVanillaModel", definition.entityModel().usesVanillaModel());
+			model.addProperty("textureCount", definition.entityModel().textures().size());
+			model.addProperty("cuboidCount", definition.entityModel().elements().size());
+			JsonArray textures = new JsonArray();
+			for (var texture : definition.entityModel().textures()) {
 				JsonObject encoded = new JsonObject();
 				encoded.addProperty("id", texture.id());
 				encoded.addProperty("width", texture.texture().width());
@@ -148,6 +166,34 @@ public final class DynamicContentAiDescription {
 		result.addProperty("toughness", armor.toughness());
 		result.addProperty("knockbackResistance", armor.knockbackResistance());
 		result.addProperty("durability", armor.durability());
+		return result;
+	}
+
+	private static JsonObject describeEntity(com.yeyito.littlechemistry.content.DynamicEntityProperties entity) {
+		JsonObject result = new JsonObject();
+		result.addProperty("movement", entity.movement().serializedName());
+		result.addProperty("disposition", entity.disposition().serializedName());
+		result.addProperty("width", entity.width());
+		result.addProperty("height", entity.height());
+		result.addProperty("eyeHeight", entity.eyeHeight());
+		result.addProperty("maxHealth", entity.maxHealth());
+		result.addProperty("movementSpeed", entity.movementSpeed());
+		result.addProperty("attackDamage", entity.attackDamage());
+		result.addProperty("armor", entity.armor());
+		result.addProperty("knockbackResistance", entity.knockbackResistance());
+		result.addProperty("followRange", entity.followRange());
+		result.addProperty("experienceReward", entity.experienceReward());
+		result.addProperty("fireImmune", entity.fireImmune());
+		JsonArray drops = new JsonArray();
+		for (var drop : entity.drops()) {
+			JsonObject encoded = new JsonObject();
+			encoded.addProperty("item", drop.item().toString());
+			encoded.addProperty("minimum", drop.minimum());
+			encoded.addProperty("maximum", drop.maximum());
+			encoded.addProperty("chance", drop.chance());
+			drops.add(encoded);
+		}
+		result.add("drops", drops);
 		return result;
 	}
 

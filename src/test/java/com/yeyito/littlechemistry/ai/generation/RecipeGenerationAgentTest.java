@@ -41,6 +41,16 @@ class RecipeGenerationAgentTest {
 		assertEquals(1, choice.outputCount());
 	}
 
+	@Test
+	void parsesEntitySpawnerOutput() throws IOException {
+		RecipeGenerationAgent.Choice choice = RecipeGenerationAgent.parseChoice(
+				choice("entity", "Crystal Wisp", 2), "test-model");
+
+		assertEquals(DynamicContentType.ENTITY, choice.type());
+		assertEquals("Crystal Wisp", choice.displayName());
+		assertEquals(2, choice.outputCount());
+	}
+
 	private static JsonObject choice(String kind, String name, Number count) {
 		JsonObject arguments = new JsonObject();
 		arguments.addProperty("kind", kind);

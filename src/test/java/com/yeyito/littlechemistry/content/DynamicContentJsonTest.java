@@ -7,6 +7,7 @@ import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.core.Direction;
+import net.minecraft.resources.Identifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
 import net.minecraft.SharedConstants;
@@ -18,6 +19,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DynamicContentJsonTest {
 	private static final String TEXTURE_HASH = "0".repeat(64);
@@ -234,6 +236,78 @@ class DynamicContentJsonTest {
 		assertEquals("glow", decoded.blockModel().faces().get(Direction.UP).texture());
 		assertEquals(1, decoded.blockModel().elements().size());
 		assertEquals(14.0F, decoded.blockModel().elements().getFirst().toX());
+	}
+
+	@Test
+	void roundTripPreservesGeneratedEntityPropertiesAndModel() {
+		DynamicTextureSpec icon = rectangularTexture(16, 16, "00000000", "80D0FFFF");
+		DynamicTextureSpec skin = rectangularTexture(16, 16, "204060FF", "A0E0FFFF");
+		java.util.EnumMap<Direction, DynamicBlockModelFace> faces = new java.util.EnumMap<>(Direction.class);
+		for (Direction direction : Direction.values()) faces.put(direction, new DynamicBlockModelFace("skin", null));
+		DynamicBlockModel model = new DynamicBlockModel(
+				List.of(new DynamicBlockTexture("skin", "2".repeat(64), skin)), "skin", faces,
+				List.of(new DynamicBlockModelElement(2, 0, 2, 14, 16, 14, false, faces)));
+		DynamicEntityProperties entity = new DynamicEntityProperties(
+				DynamicEntityMovement.FLYING, DynamicEntityDisposition.HOSTILE,
+				1.4F, 2.0F, 1.6F, 40.0, 0.35, 7.0, 4.0, 0.25, 48.0, 12, true,
+				Identifier.parse("minecraft:entity.allay.ambient_with_item"),
+				Identifier.parse("minecraft:entity.allay.hurt"),
+				Identifier.parse("minecraft:entity.allay.death"),
+				List.of(new DynamicEntityDrop(Identifier.parse("minecraft:amethyst_shard"), 1, 3, 0.75)));
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ENTITY, "sky_crystal", "Sky Crystal", "A hostile living crystal.",
+				DynamicRarity.RARE, 0L, TEXTURE_HASH, icon, null, null,
+				null, null, null, DynamicBehaviorSource.completeLegacySource(null), null, entity,
+				new DynamicEntityModel(model));
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 3, List.of(definition))).definitions().getFirst();
+
+		assertEquals(DynamicContentType.ENTITY, decoded.type());
+		assertEquals(DynamicEntityMovement.FLYING, decoded.entity().movement());
+		assertEquals(DynamicEntityDisposition.HOSTILE, decoded.entity().disposition());
+		assertEquals(40.0, decoded.entity().maxHealth());
+		assertEquals(Identifier.parse("minecraft:amethyst_shard"), decoded.entity().drops().getFirst().item());
+		assertEquals(DynamicEntityVisualProfile.CUSTOM, decoded.entityModel().profile());
+		assertEquals(1, decoded.entityModel().elements().size());
+		assertEquals("skin", decoded.entityModel().particleTexture());
+
+		JsonObject legacyRoot = JsonParser.parseString(new String(
+				DynamicContentJson.encode(UUID.randomUUID(), 3, List.of(definition)), StandardCharsets.UTF_8)).getAsJsonObject();
+		legacyRoot.addProperty("format", 14);
+		JsonObject legacyEntry = legacyRoot.getAsJsonArray("definitions").get(0).getAsJsonObject();
+		legacyEntry.add("entityModel", legacyEntry.getAsJsonObject("entityModel").getAsJsonObject("geometry").deepCopy());
+		DynamicContentDefinition migrated = DynamicContentJson.decode(
+				legacyRoot.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+		assertEquals(DynamicEntityVisualProfile.CUSTOM, migrated.entityModel().profile());
+		assertEquals(1, migrated.entityModel().elements().size());
+	}
+
+	@Test
+	void roundTripPreservesAnimatedVanillaEntityProfileAndSkin() {
+		DynamicTextureSpec icon = rectangularTexture(16, 16, "00000000", "80D0FFFF");
+		DynamicTextureSpec skin = rectangularTexture(64, 64, "203010FF", "C09060FF");
+		DynamicEntityProperties entity = new DynamicEntityProperties(
+				DynamicEntityMovement.GROUND, DynamicEntityDisposition.PASSIVE,
+				0.9F, 1.4F, 1.2F, 20.0, 0.2, 0.0, 0.0, 0.0, 16.0, 2, false,
+				Identifier.parse("minecraft:entity.cow.ambient"),
+				Identifier.parse("minecraft:entity.cow.hurt"),
+				Identifier.parse("minecraft:entity.cow.death"), List.of());
+		DynamicEntityModel visual = DynamicEntityModel.vanilla(DynamicEntityVisualProfile.COW,
+				new DynamicBlockTexture("skin", "3".repeat(64), skin));
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ENTITY, "amber_cow", "Amber Cow", "A cow made of amber.",
+				DynamicRarity.UNCOMMON, 0L, TEXTURE_HASH, icon, null, null,
+				null, null, null, DynamicBehaviorSource.completeLegacySource(null), null, entity, visual);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 4, List.of(definition))).definitions().getFirst();
+
+		assertEquals(DynamicEntityVisualProfile.COW, decoded.entityModel().profile());
+		assertTrue(decoded.entityModel().usesVanillaModel());
+		assertNull(decoded.entityModel().geometry());
+		assertEquals(64, decoded.entityModel().primaryTexture().texture().width());
+		assertEquals("3".repeat(64), decoded.entityModel().primaryTexture().hash());
 	}
 
 	private static DynamicContentDefinition definition(String name, DynamicItemProperties item) {
