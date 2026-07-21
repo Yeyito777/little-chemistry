@@ -97,6 +97,7 @@ public final class ContentGenerationService {
 
 		job.promise.whenComplete((generated, failure) -> {
 			if (!server.isRunning()) {
+				if (generated != null) GenerationWorkspace.discardPending(generated);
 				ACTIVE.remove(generationKey, job);
 				return;
 			}
@@ -160,6 +161,8 @@ public final class ContentGenerationService {
 		} catch (Exception error) {
 			if (recipient != null) recipient.sendSystemMessage(ContentGenerationService.error(safeMessage(error)));
 			LittleChemistry.LOGGER.error("Could not commit generated Little Chemistry content", error);
+		} finally {
+			if (generated != null) GenerationWorkspace.discardPending(generated);
 		}
 	}
 

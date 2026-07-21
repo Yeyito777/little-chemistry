@@ -1,74 +1,49 @@
 package com.yeyito.littlechemistry.ai.generation;
 
-import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class JavaCodeInspectorTest {
+	@TempDir
+	Path temporaryDirectory;
+
 	@Test
-	void inspectsGeneratedBehaviorCapabilityWithoutInitializingTarget() {
-		JsonObject input = new JsonObject();
-		input.addProperty("className", "com.yeyito.littlechemistry.behavior.UseAirBehavior");
-		input.addProperty("memberQuery", "use");
-		input.addProperty("includeInherited", false);
-		ContentGenerationDraft.ToolExecution result = JavaCodeInspector.inspect(input);
-		assertTrue(result.output().get("ok").getAsBoolean());
-		assertEquals("interface", result.output().get("kind").getAsString());
-		assertFalse(result.output().getAsJsonArray("methods").isEmpty());
-		assertTrue(result.output().getAsJsonArray("methods").toString().contains("useAir"));
+	void writesARealSearchableRuntimeClassIndex() throws Exception {
+		Path index = temporaryDirectory.resolve("INDEX.txt");
+
+		JavaCodeInspector.writeIndex(index);
+
+		String content = Files.readString(index);
+		assertTrue(content.contains("com.yeyito.littlechemistry.behavior.DynamicBehavior"));
+		assertTrue(content.contains("net.minecraft.world.item.Item"));
 	}
 
 	@Test
-	void reportsMissingClassesAsToolFeedback() {
-		JsonObject input = new JsonObject();
-		input.addProperty("className", "not.a.real.MinecraftClass");
-		ContentGenerationDraft.ToolExecution result = JavaCodeInspector.inspect(input);
-		assertFalse(result.output().get("ok").getAsBoolean());
-		assertEquals("JAVA_CLASS_NOT_FOUND", result.output().get("code").getAsString());
+	void decompilesCompleteLoadedMethodBodies() throws Exception {
+		String source = JavaCodeInspector.decompile(JavaSourceInspectionFixture.class.getName());
+
+		assertTrue(source.contains("return value * 2"));
 	}
 
 	@Test
-	void decompilesCompleteLoadedMethodBodies() {
-		JsonObject input = new JsonObject();
-		input.addProperty("className", JavaSourceInspectionFixture.class.getName());
+	void decompilesVanillaMinecraftClassFamilies() throws Exception {
+		String source = JavaCodeInspector.decompile("net.minecraft.world.item.Item$Properties");
 
-		ContentGenerationDraft.ToolExecution result = JavaCodeInspector.inspectSource(input);
-
-		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
-		assertEquals("vineflower_decompiled_classpath_bytecode", result.output().get("sourceKind").getAsString());
-		assertFalse(result.output().get("truncated").getAsBoolean());
-		assertTrue(result.output().get("javaSource").getAsString().contains("return value * 2"));
-	}
-
-	@Test
-	void decompilesVanillaMinecraftMethodBodies() {
-		JsonObject input = new JsonObject();
-		input.addProperty("className", "net.minecraft.world.item.Item");
-
-		ContentGenerationDraft.ToolExecution result = JavaCodeInspector.inspectSource(input);
-
-		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
-		assertTrue(result.output().get("classFileCount").getAsInt() > 1);
-		String source = result.output().get("javaSource").getAsString();
 		assertTrue(source.contains("package net.minecraft.world.item;"));
+		assertTrue(source.contains("class Properties"));
 		assertTrue(source.contains("InteractionResult use("));
-		assertTrue(source.contains("return InteractionResult.PASS;"));
 	}
 
 	@Test
-	void includesTheCompleteClassFamilyForNestedMinecraftClasses() {
-		JsonObject input = new JsonObject();
-		input.addProperty("className", "net.minecraft.world.item.Item$Properties");
-
-		ContentGenerationDraft.ToolExecution result = JavaCodeInspector.inspectSource(input);
-
-		assertTrue(result.output().get("ok").getAsBoolean(), result.output().toString());
-		assertEquals("net.minecraft.world.item.Item", result.output().get("decompiledClassName").getAsString());
-		assertTrue(result.output().get("classFileCount").getAsInt() > 1);
-		assertTrue(result.output().get("javaSource").getAsString().contains("class Properties"));
+	void rejectsUnknownVirtualClassPaths() {
+		assertThrows(IOException.class, () -> JavaCodeInspector.decompile("not.a.real.MinecraftClass"));
 	}
 }
 

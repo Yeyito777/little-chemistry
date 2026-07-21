@@ -98,6 +98,10 @@ public final class OpenAiClient {
 		return model;
 	}
 
+	public String reasoningEffort() {
+		return reasoningEffort;
+	}
+
 	public String ask(String question) throws IOException, InterruptedException {
 		return sendWithRetries(credentials -> buildRequest(credentials, question), lines -> {
 			String answer = readServerSentEvents(lines);
@@ -270,6 +274,7 @@ public final class OpenAiClient {
 		Map<Integer, JsonObject> outputItems = new HashMap<>();
 		Map<Integer, StringBuilder> argumentDeltas = new HashMap<>();
 		List<String> observedEventTypes = new ArrayList<>();
+		JsonObject responseMetadata = new JsonObject();
 		boolean responseCompleted = false;
 		for (String line : (Iterable<String>) lines::iterator) {
 			throwIfInterrupted();
@@ -314,9 +319,10 @@ public final class OpenAiClient {
 					completed.addProperty("arguments", arguments.toString());
 				}
 				outputItems.put(outputIndex, completed);
-			} else if ("response.completed".equals(type) && event.get("response") instanceof JsonObject completedResponse) {
+			} else if ("response.completed".equals(type) && event.get("response") instanceof JsonObject completed) {
 				responseCompleted = true;
-				JsonArray canonicalOutput = array(completedResponse, "output");
+				responseMetadata = completed.deepCopy();
+				JsonArray canonicalOutput = array(completed, "output");
 				// The Codex SSE backend may leave response.completed.output empty after
 				// already delivering canonical response.output_item.done events.
 				if (canonicalOutput != null && !canonicalOutput.isEmpty()) {
@@ -355,8 +361,8 @@ public final class OpenAiClient {
 			if (rawArguments == null) {
 				rawArguments = "{}";
 			}
-			if (rawArguments.length() > 65_536) {
-				throw new OpenAiRequestException("OpenAI tool arguments exceeded the safety limit", false);
+			if (rawArguments.length() > 1_048_576) {
+				throw new OpenAiRequestException("OpenAI tool arguments exceeded the 1 MiB safety limit", false);
 			}
 			JsonObject arguments;
 			try {
@@ -374,7 +380,7 @@ public final class OpenAiClient {
 			LOGGER.warn("OpenAI tool round completed without function calls; events: {}; output items: {}",
 					observedEventTypes, replayItems);
 		}
-		return new ToolRound(List.copyOf(calls), replayItems);
+		return new ToolRound(List.copyOf(calls), replayItems, responseMetadata);
 	}
 
 	private static String requestBody(String question, AuthMode authMode, String model, String reasoningEffort) {
@@ -621,6 +627,14 @@ public final class OpenAiClient {
 	public record ToolCall(String callId, String name, JsonObject arguments) {
 	}
 
-	public record ToolRound(List<ToolCall> calls, JsonArray outputItems) {
+	public record ToolRound(List<ToolCall> calls, JsonArray outputItems, JsonObject response) {
+		public ToolRound {
+			calls = List.copyOf(calls);
+			outputItems = outputItems.deepCopy();
+			response = response.deepCopy();
+		}
+
+		@Override public JsonArray outputItems() { return outputItems.deepCopy(); }
+		@Override public JsonObject response() { return response.deepCopy(); }
 	}
 }

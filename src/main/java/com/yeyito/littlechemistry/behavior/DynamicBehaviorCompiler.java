@@ -95,7 +95,7 @@ public final class DynamicBehaviorCompiler {
 		}
 	}
 
-	private static void configureClassPath(StandardJavaFileManager files) throws IOException {
+	static void configureClassPath(StandardJavaFileManager files) throws IOException {
 		LinkedHashSet<Path> classPath = new LinkedHashSet<>();
 		String configured = System.getProperty("java.class.path", "");
 		if (!configured.isBlank()) {

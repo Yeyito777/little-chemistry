@@ -1,0 +1,98 @@
+{
+  "format": 1,
+  "name": "V4 manual crafting run",
+  "recipes": [
+    {
+      "label": "Phantom boat",
+      "width": 3,
+      "height": 3,
+      "ingredients": [
+        "minecraft:phantom_membrane", "minecraft:phantom_membrane", "minecraft:phantom_membrane",
+        "minecraft:phantom_membrane", "minecraft:oak_boat", "minecraft:phantom_membrane",
+        "minecraft:phantom_membrane", "minecraft:phantom_membrane", "minecraft:phantom_membrane"
+      ]
+    },
+    {
+      "label": "Wildflower crown",
+      "width": 3,
+      "height": 2,
+      "ingredients": [
+        null, "minecraft:sunflower", null,
+        "minecraft:wildflowers", "minecraft:leather_helmet", "minecraft:wildflowers"
+      ]
+    },
+    {
+      "label": "Dark oak door barricade",
+      "width": 2,
+      "height": 1,
+      "ingredients": ["minecraft:dark_oak_door", "minecraft:dark_oak_door"]
+    },
+    {
+      "label": "Wildflower bow",
+      "width": 3,
+      "height": 3,
+      "ingredients": [
+        "minecraft:wildflowers", "minecraft:wildflowers", "minecraft:wildflowers",
+        "minecraft:wildflowers", "minecraft:bow", "minecraft:wildflowers",
+        "minecraft:wildflowers", "minecraft:wildflowers", "minecraft:wildflowers"
+      ]
+    },
+    {
+      "label": "Blast crossbow",
+      "width": 2,
+      "height": 2,
+      "ingredients": [
+        "minecraft:crossbow", "minecraft:gunpowder",
+        null, "minecraft:flint_and_steel"
+      ]
+    },
+    {
+      "label": "Firework crossbow",
+      "width": 2,
+      "height": 1,
+      "ingredients": ["minecraft:crossbow", "minecraft:firework_rocket"]
+    },
+    {
+      "label": "Lapis crafting table",
+      "width": 3,
+      "height": 3,
+      "ingredients": [
+        null, "minecraft:lapis_lazuli", null,
+        "minecraft:lapis_lazuli", "minecraft:crafting_table", "minecraft:lapis_lazuli",
+        null, "minecraft:lapis_lazuli", null
+      ]
+    },
+    {
+      "label": "Twin furnace",
+      "width": 2,
+      "height": 1,
+      "ingredients": ["minecraft:furnace", "minecraft:furnace"]
+    },
+    {
+      "label": "Magma furnace",
+      "width": 1,
+      "height": 2,
+      "ingredients": ["minecraft:furnace", "minecraft:magma_block"]
+    },
+    {
+      "label": "Gilded nautilus armor",
+      "width": 3,
+      "height": 3,
+      "ingredients": [
+        null, "minecraft:gold_block", null,
+        "minecraft:golden_nautilus_armor", "minecraft:gold_block", "minecraft:golden_nautilus_armor",
+        "minecraft:gold_block", "minecraft:gold_block", "minecraft:gold_block"
+      ]
+    },
+    {
+      "label": "Leather backpack",
+      "width": 3,
+      "height": 3,
+      "ingredients": [
+        "minecraft:leather", "minecraft:string", "minecraft:leather",
+        "minecraft:leather", "minecraft:chest", "minecraft:leather",
+        "minecraft:leather", "minecraft:leather", "minecraft:leather"
+      ]
+    }
+  ]
+}

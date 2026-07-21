@@ -9,6 +9,8 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.GenerationModel;
+import com.yeyito.littlechemistry.ai.generation.GenerationWorkspace;
+import com.yeyito.littlechemistry.ai.generation.ExocortexConversationExporter;
 import com.yeyito.littlechemistry.ai.generation.RecipeGenerationAgent;
 import com.yeyito.littlechemistry.behavior.WorkstationRecipeRequest;
 import com.yeyito.littlechemistry.content.DynamicBlockEntity;
@@ -94,6 +96,7 @@ public final class AiCraftingManager {
 	private final MinecraftServer server;
 	private final Path tablesFile;
 	private final Path recipesFile;
+	private final Path recipeTransactionsDirectory;
 	private final Map<TableKey, SharedCraftingContainer> tables = new HashMap<>();
 	private final Map<UUID, SharedCraftingContainer> portableTables = new HashMap<>();
 	private final Map<RecipeSignature, AiCraftingRecipe> recipes = new LinkedHashMap<>();
@@ -119,10 +122,12 @@ public final class AiCraftingManager {
 		Path directory = server.getWorldPath(LevelResource.ROOT).resolve("little-chemistry");
 		this.tablesFile = directory.resolve("crafting-tables.json");
 		this.recipesFile = directory.resolve("ai-recipes.json");
+		this.recipeTransactionsDirectory = directory.resolve("recipe-transactions");
 		loadTables();
 		loadRecipes();
 		if (pruneUnavailableRecipes()) recipesNeedRewrite = true;
 		if (recipesNeedRewrite) saveRecipes(recipes, smeltingRecipes);
+		recoverRecipeTransactions();
 		rebuildRecipeIndex();
 		for (Map.Entry<RecipeSignature, AiCraftingRecipe> entry : recipes.entrySet()) {
 			assignRecipeDisplay(entry.getKey(), entry.getValue());
@@ -412,6 +417,12 @@ public final class AiCraftingManager {
 	}
 
 	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table) {
+		return requestRecipe(player, table, null);
+	}
+
+	/** Starts a normal recipe job with an optional terminal-conversation export used only by explicit test suites. */
+	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table,
+			ExocortexConversationExporter conversationExporter) {
 		if (table.isLocked()) {
 			player.sendSystemMessage(error("This crafting grid is already waiting for the AI."));
 			return false;
@@ -445,7 +456,7 @@ public final class AiCraftingManager {
 		jobs.put(signature, job);
 		JsonObject context = signature.toAiContext();
 		try {
-			job.task = submitGeneration(job.promise, context);
+			job.task = submitGeneration(job.promise, context, conversationExporter);
 		} catch (Throwable submissionFailure) {
 			jobs.remove(signature);
 			table.unlock(signature);
@@ -455,7 +466,10 @@ public final class AiCraftingManager {
 		}
 
 		job.promise.whenComplete((generated, failure) -> {
-			if (!server.isRunning()) return;
+			if (!server.isRunning()) {
+				discardPendingSource(generated);
+				return;
+			}
 			server.execute(() -> complete(job, generated, failure));
 		});
 		return true;
@@ -514,7 +528,10 @@ public final class AiCraftingManager {
 		}
 
 		job.promise.whenComplete((generated, failure) -> {
-			if (!server.isRunning()) return;
+			if (!server.isRunning()) {
+				discardPendingSource(generated);
+				return;
+			}
 			server.execute(() -> completeSmelting(job, generated, failure));
 		});
 		return true;
@@ -587,7 +604,10 @@ public final class AiCraftingManager {
 			return false;
 		}
 		job.promise.whenComplete((generated, failure) -> {
-			if (!server.isRunning()) return;
+			if (!server.isRunning()) {
+				discardPendingSource(generated);
+				return;
+			}
 			server.execute(() -> completeWorkstation(job, generated, failure));
 		});
 		return true;
@@ -702,9 +722,13 @@ public final class AiCraftingManager {
 	}
 
 	private void complete(ActiveJob job, RecipeGenerationAgent.GeneratedRecipe generated, Throwable failure) {
-		if (jobs.get(job.signature) != job) return;
+		if (jobs.get(job.signature) != job) {
+			discardPendingSource(generated);
+			return;
+		}
 		DynamicContentManager contentManager = null;
 		DynamicContentDefinition createdDefinition = null;
+		Path recipeTransaction = null;
 		boolean recipeReady = false;
 		try {
 			if (failure != null) {
@@ -730,10 +754,13 @@ public final class AiCraftingManager {
 				return;
 			}
 			String displayName = uniqueDisplayName(contentManager, generated.displayName());
+			recipeTransaction = beginRecipeTransaction(displayName);
 			createdDefinition = generated.armorSlot() == null
 					? contentManager.createGenerated(generated.type(), displayName, generated.content())
 					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
 			installRecipe(job.signature, createdDefinition.name(), generated.outputCount());
+			finishRecipeTransactionQuietly(recipeTransaction);
+			recipeTransaction = null;
 			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
 			notifyRequesters(job, Component.literal("[Little Chemistry] Recipe invented: " + quantity)
 					.withStyle(ChatFormatting.GREEN)
@@ -741,18 +768,22 @@ public final class AiCraftingManager {
 					.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
 			recipeReady = true;
 		} catch (Exception error) {
+			boolean rolledBack = createdDefinition == null;
 			if (createdDefinition != null && contentManager != null) {
 				try {
 					contentManager.delete(List.of(createdDefinition.name()));
+					rolledBack = true;
 				} catch (Exception rollbackFailure) {
 					error.addSuppressed(rollbackFailure);
 					LittleChemistry.LOGGER.error("Could not roll back dynamic content after recipe persistence failed", rollbackFailure);
 				}
 			}
+			if (rolledBack) finishRecipeTransactionQuietly(recipeTransaction);
 			String message = safeMessage(error);
 			notifyRequesters(job, AiCraftingManager.error("Could not save the invented recipe: " + message));
 			LittleChemistry.LOGGER.error("Could not commit an AI crafting recipe", error);
 		} finally {
+			discardPendingSource(generated);
 			jobs.remove(job.signature, job);
 			boolean succeeded = recipeReady;
 			job.tables.forEach(table -> table.finishGeneration(job.signature, succeeded));
@@ -809,9 +840,13 @@ public final class AiCraftingManager {
 
 	private void completeSmelting(ActiveSmeltingJob job, RecipeGenerationAgent.GeneratedRecipe generated,
 			Throwable failure) {
-		if (smeltingJobs.get(job.signature) != job) return;
+		if (smeltingJobs.get(job.signature) != job) {
+			discardPendingSource(generated);
+			return;
+		}
 		DynamicContentManager contentManager = null;
 		DynamicContentDefinition createdDefinition = null;
+		Path recipeTransaction = null;
 		try {
 			if (failure != null) {
 				String message = safeMessage(failure);
@@ -834,30 +869,37 @@ public final class AiCraftingManager {
 				return;
 			}
 			String displayName = uniqueDisplayName(contentManager, generated.displayName());
+			recipeTransaction = beginRecipeTransaction(displayName);
 			createdDefinition = generated.armorSlot() == null
 					? contentManager.createGenerated(generated.type(), displayName, generated.content())
 					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
 			installSmeltingRecipe(job.signature, createdDefinition.name(), generated.outputCount());
+			finishRecipeTransactionQuietly(recipeTransaction);
+			recipeTransaction = null;
 			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
 			notifyRequesters(job.requesters, Component.literal("[Little Chemistry] Smelting recipe invented: " + quantity)
 					.withStyle(ChatFormatting.GREEN)
 					.append(DynamicContentObjects.displayName(createdDefinition))
 					.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
 		} catch (Exception error) {
+			boolean rolledBack = createdDefinition == null;
 			if (createdDefinition != null && contentManager != null) {
 				try {
 					contentManager.delete(List.of(createdDefinition.name()));
+					rolledBack = true;
 				} catch (Exception rollbackFailure) {
 					error.addSuppressed(rollbackFailure);
 					LittleChemistry.LOGGER.error("Could not roll back dynamic content after smelting recipe persistence failed",
 							rollbackFailure);
 				}
 			}
+			if (rolledBack) finishRecipeTransactionQuietly(recipeTransaction);
 			String message = safeMessage(error);
 			notifyRequesters(job.requesters, AiCraftingManager.error(
 					"Could not save the invented smelting recipe: " + message));
 			LittleChemistry.LOGGER.error("Could not commit an AI smelting recipe", error);
 		} finally {
+			discardPendingSource(generated);
 			smeltingJobs.remove(job.signature, job);
 			job.furnaces.forEach(furnace -> unlockFurnace(furnace, job.signature));
 		}
@@ -878,9 +920,13 @@ public final class AiCraftingManager {
 
 	private void completeWorkstation(ActiveWorkstationJob job,
 			RecipeGenerationAgent.GeneratedRecipe generated, Throwable failure) {
-		if (!isWorkstationJobActive(job)) return;
+		if (!isWorkstationJobActive(job)) {
+			discardPendingSource(generated);
+			return;
+		}
 		DynamicContentManager contentManager = null;
 		DynamicContentDefinition createdDefinition = null;
+		Path recipeTransaction = null;
 		boolean recipeReady = false;
 		try {
 			if (failure != null) {
@@ -911,10 +957,13 @@ public final class AiCraftingManager {
 				return;
 			}
 			String displayName = uniqueDisplayName(contentManager, generated.displayName());
+			recipeTransaction = beginRecipeTransaction(displayName);
 			createdDefinition = generated.armorSlot() == null
 					? contentManager.createGenerated(generated.type(), displayName, generated.content())
 					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
 			installWorkstationRecipe(job.signature, createdDefinition.name(), generated.outputCount(), generated.recipeData());
+			finishRecipeTransactionQuietly(recipeTransaction);
+			recipeTransaction = null;
 			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
 			notifyRequesters(job.requesters,
 					Component.literal("[Little Chemistry] Workstation recipe invented: " + quantity)
@@ -923,9 +972,11 @@ public final class AiCraftingManager {
 							.append(Component.literal(".").withStyle(ChatFormatting.GREEN)));
 			recipeReady = true;
 		} catch (Exception error) {
+			boolean rolledBack = createdDefinition == null;
 			if (createdDefinition != null && contentManager != null) {
 				try {
 					contentManager.delete(List.of(createdDefinition.name()));
+					rolledBack = true;
 				} catch (Exception rollbackFailure) {
 					error.addSuppressed(rollbackFailure);
 					LittleChemistry.LOGGER.error(
@@ -933,11 +984,13 @@ public final class AiCraftingManager {
 							rollbackFailure);
 				}
 			}
+			if (rolledBack) finishRecipeTransactionQuietly(recipeTransaction);
 			String message = safeMessage(error);
 			notifyRequesters(job.requesters,
 					AiCraftingManager.error("Could not save the invented workstation recipe: " + message));
 			LittleChemistry.LOGGER.error("Could not commit an AI workstation recipe", error);
 		} finally {
+			discardPendingSource(generated);
 			removeWorkstationJob(job);
 			boolean succeeded = recipeReady;
 			job.workstations.forEach(key -> finishLoadedWorkstation(key, job.signature, succeeded));
@@ -951,6 +1004,73 @@ public final class AiCraftingManager {
 		saveRecipes(recipes, smeltingRecipes, updated);
 		workstationRecipes.clear();
 		workstationRecipes.putAll(updated);
+	}
+
+	private static void discardPendingSource(RecipeGenerationAgent.GeneratedRecipe generated) {
+		if (generated != null) GenerationWorkspace.discardPending(generated.content());
+	}
+
+	private Path beginRecipeTransaction(String displayName) throws IOException {
+		String identifier = DynamicContentManager.normalizeIdentifier(
+				DynamicContentManager.normalizeDisplayName(displayName));
+		Files.createDirectories(recipeTransactionsDirectory);
+		Path transaction = recipeTransactionsDirectory.resolve(UUID.randomUUID() + ".json");
+		JsonObject manifest = new JsonObject();
+		manifest.addProperty("contentId", identifier);
+		writeAtomically(transaction, manifest);
+		return transaction;
+	}
+
+	private void finishRecipeTransaction(Path transaction) throws IOException {
+		if (transaction == null) return;
+		Files.deleteIfExists(transaction);
+		try {
+			Files.deleteIfExists(recipeTransactionsDirectory);
+		} catch (java.nio.file.DirectoryNotEmptyException ignored) {
+		}
+	}
+
+	private void finishRecipeTransactionQuietly(Path transaction) {
+		try {
+			finishRecipeTransaction(transaction);
+		} catch (IOException cleanupFailure) {
+			LittleChemistry.LOGGER.warn("Could not clear a completed AI recipe transaction journal", cleanupFailure);
+		}
+	}
+
+	private void recoverRecipeTransactions() throws IOException {
+		if (!Files.isDirectory(recipeTransactionsDirectory)) return;
+		DynamicContentManager contentManager = DynamicContentManager.active();
+		try (var paths = Files.list(recipeTransactionsDirectory)) {
+			for (Path transaction : paths.filter(Files::isRegularFile).toList()) {
+				String contentId;
+				try {
+					JsonObject manifest = JsonParser.parseString(Files.readString(
+							transaction, java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+					contentId = manifest.get("contentId").getAsString();
+					if (!contentId.matches("[a-z0-9_]{1,64}")) throw new IllegalArgumentException("invalid content ID");
+				} catch (RuntimeException malformed) {
+					Files.deleteIfExists(transaction);
+					continue;
+				}
+				boolean recipeCommitted = recipes.values().stream().anyMatch(recipe -> recipe.outputName().equals(contentId))
+						|| smeltingRecipes.values().stream().anyMatch(recipe -> recipe.outputName().equals(contentId))
+						|| workstationRecipes.values().stream().anyMatch(recipe -> recipe.outputName().equals(contentId));
+				if (!recipeCommitted && contentManager != null && contentManager.containsName(contentId)) {
+					try {
+						contentManager.delete(List.of(contentId));
+					} catch (RuntimeException rollbackFailure) {
+						throw new IOException("Could not roll back interrupted AI recipe content '" + contentId + "'",
+								rollbackFailure);
+					}
+				}
+				Files.deleteIfExists(transaction);
+			}
+		}
+		try {
+			Files.deleteIfExists(recipeTransactionsDirectory);
+		} catch (java.nio.file.DirectoryNotEmptyException ignored) {
+		}
 	}
 
 	private static String uniqueDisplayName(DynamicContentManager manager, String requested) {
@@ -978,16 +1098,27 @@ public final class AiCraftingManager {
 
 	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
 			JsonObject context) {
-		return submitGeneration(promise, context, null, null);
+		return submitGeneration(promise, context, null, null, null);
+	}
+
+	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
+			JsonObject context, ExocortexConversationExporter conversationExporter) {
+		return submitGeneration(promise, context, null, null, conversationExporter);
 	}
 
 	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
 			JsonObject context, String workstationPolicy, JsonObject recipeDataSchema) {
+		return submitGeneration(promise, context, workstationPolicy, recipeDataSchema, null);
+	}
+
+	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
+			JsonObject context, String workstationPolicy, JsonObject recipeDataSchema,
+			ExocortexConversationExporter conversationExporter) {
 		return GENERATION_EXECUTOR.submit(() -> {
 			try {
 				OpenAiClient client = new OpenAiClient(new AuthConfig(), GenerationModel.SOL.modelId(), REASONING_EFFORT);
 				promise.complete(new RecipeGenerationAgent(client).generate(
-						context, workstationPolicy, recipeDataSchema));
+						context, workstationPolicy, recipeDataSchema, conversationExporter));
 			} catch (InterruptedException interrupted) {
 				Thread.currentThread().interrupt();
 				promise.completeExceptionally(interrupted);

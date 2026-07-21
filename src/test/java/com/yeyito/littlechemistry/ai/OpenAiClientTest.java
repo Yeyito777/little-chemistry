@@ -168,6 +168,8 @@ class OpenAiClientTest {
 		assertEquals(1, round.calls().size());
 		assertEquals("submit", round.calls().getFirst().name());
 		assertEquals("ok", round.calls().getFirst().arguments().get("value").getAsString());
+		assertEquals("response-tool-1", round.response().get("id").getAsString());
+		assertEquals(7, round.response().getAsJsonObject("usage").get("output_tokens").getAsInt());
 	}
 
 	@Test
@@ -345,7 +347,8 @@ class OpenAiClientTest {
 		String item = "{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"submit\"," +
 				"\"arguments\":\"{\\\"value\\\":\\\"ok\\\"}\"}";
 		return "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":" + item + "}\n\n"
-				+ "data: {\"type\":\"response.completed\",\"response\":{\"output\":[" + item + "]}}\n\n"
+				+ "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-tool-1\","
+				+ "\"usage\":{\"output_tokens\":7},\"output\":[" + item + "]}}\n\n"
 				+ "data: [DONE]\n\n";
 	}
 }

@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.command;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.yeyito.littlechemistry.LittleChemistry;
@@ -12,6 +13,7 @@ import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicEntitySpawner;
+import com.yeyito.littlechemistry.crafting.CraftingGenerationTestHarness;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.permission.v1.PermissionNode;
 import net.fabricmc.fabric.api.permission.v1.PermissionPredicates;
@@ -87,7 +89,7 @@ public final class LittleChemistryCommands {
 									.then(literal("spawn")
 											.then(argument("name", StringArgumentType.word())
 													.executes(LittleChemistryCommands::spawnDynamicEntity))))
-							.then(literal("armor")
+						.then(literal("armor")
 									.requires(CREATE_PREDICATE)
 									.then(literal("head").then(literal("create")
 											.then(argument("name", StringArgumentType.greedyString())
@@ -100,7 +102,11 @@ public final class LittleChemistryCommands {
 													.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.LEGGINGS)))))
 									.then(literal("boots").then(literal("create")
 											.then(argument("name", StringArgumentType.greedyString())
-													.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.BOOTS))))))
+												.executes(context -> createDynamicContent(context, DynamicContentType.ARMOR, DynamicArmorSlot.BOOTS))))))
+						.then(literal("test")
+								.requires(CREATE_PREDICATE)
+								.then(argument("suite", IntegerArgumentType.integer(1))
+										.executes(LittleChemistryCommands::runGenerationTest)))
 		));
 	}
 
@@ -177,6 +183,28 @@ public final class LittleChemistryCommands {
 		context.getSource().sendSuccess(() -> Component.literal("Spawned ")
 				.append(spawned.getDisplayName()).withStyle(ChatFormatting.GREEN), false);
 		return 1;
+	}
+
+	private static int runGenerationTest(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+		ServerPlayer player = context.getSource().getPlayerOrException();
+		int suite = IntegerArgumentType.getInteger(context, "suite");
+		try {
+			CraftingGenerationTestHarness.RunResult result = CraftingGenerationTestHarness.run(player, suite);
+			long started = result.startedCount();
+			int skipped = result.placedCount() - (int) started;
+			context.getSource().sendSuccess(() -> Component.literal("Little Chemistry test " + result.suiteNumber()
+					+ " placed " + result.placedCount() + " crafting tables and started " + started
+					+ " invention jobs" + (skipped == 0 ? "." : "; " + skipped
+					+ " grids were left populated but already had a recipe or could not start.")
+					+ (result.exocortexExportEnabled()
+					? " Completed job logs will appear in the exact Exocortex folder littlechemistry/logs."
+					: " The exact Exocortex folder littlechemistry/logs was not found; logs will remain world-only."))
+					.withStyle(started > 0 ? ChatFormatting.GREEN : ChatFormatting.YELLOW), false);
+			return (int) started;
+		} catch (IOException | IllegalArgumentException error) {
+			context.getSource().sendFailure(error(rootMessage(error)));
+			return 0;
+		}
 	}
 
 	private static int askLlm(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {

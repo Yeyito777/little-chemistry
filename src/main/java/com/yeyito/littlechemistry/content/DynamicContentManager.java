@@ -4,6 +4,7 @@ import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.behavior.DynamicBehavior;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
+import com.yeyito.littlechemistry.ai.generation.GenerationWorkspace;
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
@@ -83,6 +84,11 @@ public final class DynamicContentManager {
 			active = manager;
 			DynamicContentCatalog.replace(manager.definitions);
 			DynamicBehaviorRegistry.replace(manager.definitions);
+			try {
+				GenerationWorkspace.initialize(manager.generationWorkspaceRoot(), manager.definitions);
+			} catch (IOException sourceFailure) {
+				LittleChemistry.LOGGER.warn("Could not initialize this world's generation source workspace", sourceFailure);
+			}
 			LittleChemistry.LOGGER.info("Loaded {} dynamic Little Chemistry entries", manager.definitions.size());
 		} catch (Exception error) {
 			throw new IllegalStateException("Could not load Little Chemistry dynamic content", error);
@@ -92,6 +98,7 @@ public final class DynamicContentManager {
 	public static void stop(MinecraftServer server) {
 		DynamicContentManager manager = active;
 		if (manager != null && manager.server == server) {
+			GenerationWorkspace.discardPendingForWorld(manager.generationWorkspaceRoot());
 			active = null;
 			DynamicContentCatalog.clear();
 			DynamicBehaviorRegistry.clear();
@@ -106,9 +113,23 @@ public final class DynamicContentManager {
 		return server == candidate;
 	}
 
+	/** Persistent real source tree used by the generalist coding agent for this world. */
+	public Path generationWorkspaceRoot() {
+		return dataFile.getParent().resolve("generation-workspace");
+	}
+
 	public DynamicContentDefinition createGenerated(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
-			String requestedName, GeneratedContentSpec generated)
-			throws IOException {
+			String requestedName, GeneratedContentSpec generated) throws IOException {
+		try {
+			return createGeneratedChecked(type, requestedArmorSlot, requestedName, generated);
+		} catch (IOException | RuntimeException failure) {
+			GenerationWorkspace.discardPending(generated);
+			throw failure;
+		}
+	}
+
+	private DynamicContentDefinition createGeneratedChecked(DynamicContentType type, DynamicArmorSlot requestedArmorSlot,
+			String requestedName, GeneratedContentSpec generated) throws IOException {
 		validateArmorSlot(type, requestedArmorSlot);
 		String displayName = normalizeDisplayName(requestedName);
 		String name = normalizeIdentifier(displayName);
@@ -168,7 +189,12 @@ public final class DynamicContentManager {
 				? null : generated.armorDisplayTexture().renderPng();
 		String armorDisplayTextureHash = armorDisplayTextureBytes == null
 				? null : DynamicTextureAsset.sha256(armorDisplayTextureBytes);
-		DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
+		// Verification already compiled this exact source on the generation worker. Reusing that artifact avoids a
+		// multi-second ECJ/classpath scan on the Minecraft server thread when an AI job completes.
+		DynamicBehaviorCompiler.Compiled compiledBehavior = GenerationWorkspace.preparedBehavior(generated);
+		if (compiledBehavior == null) {
+			compiledBehavior = DynamicBehaviorRegistry.compile(generated.behaviorSource());
+		}
 		DynamicBehavior behavior = compiledBehavior.instantiate();
 		String behaviorSource = compiledBehavior.source();
 		DynamicContentDefinition definition = new DynamicContentDefinition(
@@ -192,7 +218,15 @@ public final class DynamicContentManager {
 				generated.entity(),
 				generated.entityModel()
 		);
-		return commit(definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
+		GenerationWorkspace.bindPending(generated, definition);
+		DynamicContentDefinition committed = commit(
+				definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
+		try {
+			GenerationWorkspace.commitPending(generated, committed);
+		} catch (IOException sourceFailure) {
+			LittleChemistry.LOGGER.warn("Could not publish verified world source for {}", committed.name(), sourceFailure);
+		}
+		return committed;
 	}
 
 	public DynamicContentDefinition createGenerated(DynamicContentType type, String requestedName,
@@ -219,6 +253,11 @@ public final class DynamicContentManager {
 		DynamicContentCatalog.replace(definitions);
 		DynamicBehaviorRegistry.install(definition.name(), compiledBehavior, behavior);
 		broadcast();
+		try {
+			GenerationWorkspace.exportDefinition(generationWorkspaceRoot(), definition);
+		} catch (IOException sourceFailure) {
+			LittleChemistry.LOGGER.warn("Could not update world generation source for {}", definition.name(), sourceFailure);
+		}
 		return definition;
 	}
 
@@ -272,6 +311,7 @@ public final class DynamicContentManager {
 		purgeLoadedReferences(names);
 		removeUnusedAssets();
 		broadcast();
+		GenerationWorkspace.removeDefinitions(generationWorkspaceRoot(), names);
 		return deleted;
 	}
 
