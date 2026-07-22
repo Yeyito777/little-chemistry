@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSourceBundle;
 import com.yeyito.littlechemistry.behavior.WorkspaceJavaCompiler;
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
@@ -21,6 +22,7 @@ import com.yeyito.littlechemistry.content.DynamicParticleFrame;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSpec;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import net.minecraft.core.Direction;
@@ -32,13 +34,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
 /** The single build boundary: compile ordinary world source and validate the returned runtime definition. */
 final class WorkspaceGenerationVerifier {
 	private static final long MAX_SOURCE_BYTES = 4L * 1024L * 1024L;
+	private static final Pattern WORKSTATION_POLICY_DIRECTIVE = Pattern.compile(
+			"(?i)(?:^|[.!?]\\s+)(?:you\\b|act\\b|create\\b|generate\\b|return\\b|set\\b|write\\b|"
+					+ "reject\\b|ensure\\b|prefer\\b|preserve\\b|produce\\b|do not\\b)");
+	private static final List<String> WORKSTATION_POLICY_META_LANGUAGE = List.of(
+			"recipedata", "recipe data", "schema", "system prompt", "user prompt", "assistant", "tool call",
+			"verification", "verify");
 
 	private WorkspaceGenerationVerifier() {
 	}
@@ -71,16 +81,18 @@ final class WorkspaceGenerationVerifier {
 			}
 
 			String digestBeforeCompilation = GenerationWorkspace.sourceDigest(snapshot);
-			String behaviorSource = Files.readString(behaviorSourceFile, StandardCharsets.UTF_8);
-			DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorCompiler.compile(behaviorSource);
+			BehaviorSourceModule behaviorModule = behaviorSourceModule(
+					snapshot, contentDirectory, behaviorSourceFile, simpleClassName, identifier);
+			DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorCompiler.compile(behaviorModule.bundle());
+			String behaviorSource = compiledBehavior.source();
 			validateCapabilities(selection.type(), compiledBehavior.source());
-			validateFactorySourcePolicy(snapshot, behaviorSourceFile);
+			validateFactorySourcePolicy(snapshot, behaviorModule.files());
 
 			List<Path> moduleSources;
 			try (var paths = Files.walk(snapshot)) {
 				moduleSources = paths.filter(Files::isRegularFile)
 						.filter(path -> path.toString().endsWith(".java"))
-						.filter(path -> !path.equals(behaviorSourceFile)).toList();
+						.filter(path -> !behaviorModule.files().contains(path.toAbsolutePath().normalize())).toList();
 			}
 			WorkspaceJavaCompiler.Compiled<GeneratedContentFactory> compiledFactory = WorkspaceJavaCompiler.compile(
 					snapshot, workspace.existingRoot(), moduleSources, qualifiedClassName, GeneratedContentFactory.class);
@@ -91,7 +103,7 @@ final class WorkspaceGenerationVerifier {
 				throw new IllegalArgumentException("Generated factory failed while constructing content: "
 						+ safeMessage(error), error);
 			}
-			validateResult(selection, generated, compiledBehavior.source());
+			validateResult(selection, generated, compiledBehavior.sourceBundle());
 			String digestAfterCompilation = GenerationWorkspace.sourceDigest(snapshot);
 			if (!digestBeforeCompilation.equals(digestAfterCompilation)) {
 				throw new IllegalArgumentException("Generated source changed while verification was running");
@@ -199,9 +211,11 @@ final class WorkspaceGenerationVerifier {
 		throw new IllegalArgumentException("Workstation request has an invalid primary output capacity");
 	}
 
-	private static void validateResult(Selection selection, GeneratedContentSpec generated, String behaviorSource)
+	private static void validateResult(Selection selection, GeneratedContentSpec generated,
+			DynamicBehaviorSourceBundle behaviorSourceBundle)
 			throws IOException {
 		if (generated == null) throw new IllegalArgumentException("Generated factory returned null");
+		String behaviorSource = behaviorSourceBundle.entrySource();
 		if (!generated.behaviorSource().equals(behaviorSource)) {
 			throw new IllegalArgumentException(
 					"Factory must pass the supplied compiled behaviorSource unchanged into GeneratedContentSpec");
@@ -233,6 +247,13 @@ final class WorkspaceGenerationVerifier {
 			validateBlockVisuals(generated.blockModel(), generated.block().shape());
 		}
 		if (generated.entityModel() != null) validateModelTextures(generated.entityModel().textures());
+		for (com.yeyito.littlechemistry.content.DynamicItemTexture state : generated.itemVisuals().states()) {
+			validateIcon(state.texture());
+			String actual = DynamicTextureAsset.sha256(state.texture().renderPng());
+			if (!actual.equals(state.hash())) {
+				throw new IllegalArgumentException("Item visual state '" + state.id() + "' has a stale texture hash");
+			}
+		}
 		if (generated.entity() != null) validateEntityRegistries(generated);
 		for (DynamicParticleDefinition particle : generated.customParticles()) {
 			for (DynamicParticleFrame frame : particle.frames()) {
@@ -244,14 +265,24 @@ final class WorkspaceGenerationVerifier {
 		}
 		Set<String> particles = new HashSet<>();
 		for (DynamicParticleDefinition particle : generated.customParticles()) particles.add(particle.id());
-		for (String referenced : DynamicBehaviorSource.referencedCustomParticleIds(behaviorSource)) {
+		for (String referenced : DynamicBehaviorSource.referencedCustomParticleIds(behaviorSourceBundle)) {
 			if (!particles.contains(referenced)) {
 				throw new IllegalArgumentException("Behavior references undefined custom particle: " + referenced);
 			}
 		}
-		if (generated.workstation() != null
-				&& !generated.workstation().recipeSystemPrompt().toLowerCase(java.util.Locale.ROOT).contains("tick")) {
-			throw new IllegalArgumentException("Workstation policy must express timing in Minecraft ticks");
+		if (generated.workstation() != null) validateWorkstationDesign(generated.workstation());
+	}
+
+	static void validateWorkstationDesign(DynamicWorkstationSpec workstation) {
+		if (!workstation.processDescription().toLowerCase(java.util.Locale.ROOT).contains("tick")) {
+			throw new IllegalArgumentException("Workstation process description must express timing in Minecraft ticks");
+		}
+		String policy = workstation.recipePolicy();
+		String normalized = policy.toLowerCase(java.util.Locale.ROOT);
+		if (WORKSTATION_POLICY_DIRECTIVE.matcher(policy).find()
+				|| WORKSTATION_POLICY_META_LANGUAGE.stream().anyMatch(normalized::contains)) {
+			throw new IllegalArgumentException("Workstation recipePolicy must be concise third-person output-design data, "
+					+ "not model, workflow, verification, recipeData, or schema instructions");
 		}
 	}
 
@@ -288,22 +319,22 @@ final class WorkspaceGenerationVerifier {
 
 	private static boolean allows(DynamicContentType type, DynamicBehaviorCapability capability) {
 		boolean entity = switch (capability) {
-			case ENTITY_SPAWNED, ENTITY_TICK, ENTITY_INTERACT, ENTITY_HURT, ENTITY_ATTACK, ENTITY_DEATH -> true;
+			case ENTITY_SPAWNED, ENTITY_TICK, ENTITY_INTERACT, ENTITY_PRE_HURT, ENTITY_HURT,
+					ENTITY_PRE_ATTACK, ENTITY_ATTACK, ENTITY_DEATH -> true;
 			default -> false;
 		};
 		if (type == DynamicContentType.ENTITY) return entity;
 		if (entity) return false;
 		if (type == DynamicContentType.BLOCK) return true;
 		return switch (capability) {
-			case USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, INVENTORY_TICK, POST_HURT_ENEMY,
-					MINE_BLOCK, FINISH_USING, CRAFTED -> true;
+			case USE_AIR, BEGIN_USING, USING_TICK, RELEASE_USING, USE_ON_BLOCK, INTERACT_LIVING_ENTITY,
+					INVENTORY_TICK, POST_HURT_ENEMY, MINE_BLOCK, FINISH_USING, CRAFTED -> true;
 			default -> false;
 		};
 	}
 
 	private static void validateIcon(DynamicTextureSpec texture) {
 		texture.requireDimensions(16, 16);
-		texture.requireBinaryAlpha();
 		int visible = 0;
 		Set<Integer> colors = new HashSet<>();
 		for (String row : texture.rows()) {
@@ -382,6 +413,7 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	private static void validateBlockAlpha(DynamicTextureSpec texture, DynamicBlockShape shape) {
+		if (shape == DynamicBlockShape.TRANSLUCENT_CUBE || shape == DynamicBlockShape.NO_COLLISION) return;
 		if (shape != DynamicBlockShape.STAR && shape != DynamicBlockShape.CROSS
 				&& shape != DynamicBlockShape.TORCH && shape != DynamicBlockShape.CUSTOM) {
 			texture.requireOpaque();
@@ -467,7 +499,7 @@ final class WorkspaceGenerationVerifier {
 		return count;
 	}
 
-	private static void validateFactorySourcePolicy(Path root, Path behaviorSource) throws IOException {
+	private static void validateFactorySourcePolicy(Path root, Set<Path> behaviorSources) throws IOException {
 		Pattern forbidden = Pattern.compile("(?s)\\b(?:System|Runtime|ProcessBuilder|Thread|ThreadGroup|ClassLoader|"
 				+ "SecurityManager|Executors|ExecutorService|ForkJoinPool|CompletableFuture|Unsafe|MethodHandles|"
 				+ "VarHandle|DynamicContentCatalog|DynamicContentManager|DynamicBehaviorRegistry)\\b"
@@ -477,7 +509,7 @@ final class WorkspaceGenerationVerifier {
 		try (var paths = Files.walk(root)) {
 			for (Path file : paths.filter(Files::isRegularFile)
 					.filter(path -> path.toString().endsWith(".java"))
-					.filter(path -> !path.equals(behaviorSource)).toList()) {
+					.filter(path -> !behaviorSources.contains(path.toAbsolutePath().normalize())).toList()) {
 				String masked = maskNonCode(Files.readString(file, StandardCharsets.UTF_8));
 				var match = forbidden.matcher(masked);
 				if (match.find()) {
@@ -487,6 +519,45 @@ final class WorkspaceGenerationVerifier {
 				}
 			}
 		}
+	}
+
+	private static BehaviorSourceModule behaviorSourceModule(Path snapshot, Path contentDirectory,
+			Path entrySource, String factoryClassName, String identifier) throws IOException {
+		Map<String, String> sources = new LinkedHashMap<>();
+		Set<Path> files = new HashSet<>();
+		try (var paths = Files.walk(contentDirectory)) {
+			for (Path source : paths.filter(Files::isRegularFile)
+					.filter(path -> path.toString().endsWith(".java"))
+					.filter(path -> !path.getFileName().toString().equals(factoryClassName + ".java")).toList()) {
+				Path relative = contentDirectory.relativize(source);
+				sources.put("entry/" + portablePath(relative), Files.readString(source, StandardCharsets.UTF_8));
+				files.add(source.toAbsolutePath().normalize());
+			}
+		}
+		Path helpers = snapshot.resolve("helpers").resolve(identifier);
+		if (Files.isDirectory(helpers)) {
+			try (var paths = Files.walk(helpers)) {
+				for (Path source : paths.filter(Files::isRegularFile)
+						.filter(path -> path.toString().endsWith(".java")).toList()) {
+					Path relative = helpers.relativize(source);
+					sources.put("helpers/" + portablePath(relative), Files.readString(source, StandardCharsets.UTF_8));
+					files.add(source.toAbsolutePath().normalize());
+				}
+			}
+		}
+		Path entryRelative = contentDirectory.relativize(entrySource);
+		String entryPath = "entry/" + portablePath(entryRelative);
+		String entryText = sources.get(entryPath);
+		if (entryText == null) throw new IllegalArgumentException("Behavior entry source was not included in its module");
+		String fileName = entrySource.getFileName().toString();
+		String simpleName = fileName.substring(0, fileName.length() - ".java".length());
+		String entryClass = DynamicBehaviorSource.declaredEntryClass(entryText, simpleName);
+		return new BehaviorSourceModule(
+				new DynamicBehaviorSourceBundle(entryClass, entryPath, sources), Set.copyOf(files));
+	}
+
+	private static String portablePath(Path path) {
+		return path.toString().replace('\\', '/');
 	}
 
 	private static String maskNonCode(String source) {
@@ -581,6 +652,9 @@ final class WorkspaceGenerationVerifier {
 		}
 
 		@Override public JsonObject recipeData() { return recipeData.deepCopy(); }
+	}
+
+	private record BehaviorSourceModule(DynamicBehaviorSourceBundle bundle, Set<Path> files) {
 	}
 
 	record VerifiedGeneration(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,

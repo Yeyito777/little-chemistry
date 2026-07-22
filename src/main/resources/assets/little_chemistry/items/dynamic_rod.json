@@ -1,9 +1,22 @@
 {
   "model": {
-    "type": "minecraft:special",
-    "base": "minecraft:item/fishing_rod",
-    "model": {
-      "type": "little_chemistry:dynamic"
+    "type": "minecraft:condition",
+    "property": "minecraft:fishing_rod/cast",
+    "on_false": {
+      "type": "minecraft:special",
+      "base": "minecraft:item/fishing_rod",
+      "model": {
+        "type": "little_chemistry:dynamic",
+        "state": "runtime"
+      }
+    },
+    "on_true": {
+      "type": "minecraft:special",
+      "base": "minecraft:item/fishing_rod_cast",
+      "model": {
+        "type": "little_chemistry:dynamic",
+        "state": "cast"
+      }
     }
   }
 }

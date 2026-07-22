@@ -80,10 +80,10 @@ public final class DynamicContentManager {
 				manager = new DynamicContentManager(server, dataFile, UUID.randomUUID(), 0, List.of());
 			}
 			manager.save(); // Also upgrades legacy slot-based catalogs to the virtual format.
-			manager.rebuildPayload();
-			active = manager;
-			DynamicContentCatalog.replace(manager.definitions);
-			DynamicBehaviorRegistry.replace(manager.definitions);
+				manager.rebuildPayload();
+				active = manager;
+				DynamicContentCatalog.replace(manager.definitions);
+				loadServerBehaviors(manager.definitions);
 			try {
 				GenerationWorkspace.initialize(manager.generationWorkspaceRoot(), manager.definitions);
 			} catch (IOException sourceFailure) {
@@ -92,6 +92,20 @@ public final class DynamicContentManager {
 			LittleChemistry.LOGGER.info("Loaded {} dynamic Little Chemistry entries", manager.definitions.size());
 		} catch (Exception error) {
 			throw new IllegalStateException("Could not load Little Chemistry dynamic content", error);
+		}
+	}
+
+	/** Reconstructs persisted behavior modules only from the authoritative server lifecycle. */
+	private static void loadServerBehaviors(List<DynamicContentDefinition> definitions) {
+		DynamicBehaviorRegistry.clear();
+		for (DynamicContentDefinition definition : definitions) {
+			try {
+				DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(
+						definition.behaviorSourceBundle());
+				DynamicBehaviorRegistry.install(definition.name(), compiled, compiled.instantiate());
+			} catch (RuntimeException error) {
+				LittleChemistry.LOGGER.error("Could not load generated behavior for {}", definition.name(), error);
+			}
 		}
 	}
 
@@ -174,6 +188,14 @@ public final class DynamicContentManager {
 				textureAssets.put(actualHash, bytes);
 			}
 		}
+		for (DynamicItemTexture itemTexture : generated.itemVisuals().states()) {
+			byte[] bytes = itemTexture.texture().renderPng();
+			String actualHash = DynamicTextureAsset.sha256(bytes);
+			if (!actualHash.equals(itemTexture.hash())) {
+				throw new IOException("Generated item visual texture hash mismatch for " + itemTexture.id());
+			}
+			textureAssets.put(actualHash, bytes);
+		}
 		for (DynamicParticleDefinition particle : generated.customParticles()) {
 			for (DynamicParticleFrame frame : particle.frames()) {
 				byte[] bytes = frame.texture().renderPng();
@@ -216,7 +238,9 @@ public final class DynamicContentManager {
 				generated.customParticles(),
 				generated.workstation(),
 				generated.entity(),
-				generated.entityModel()
+				generated.entityModel(),
+				generated.itemVisuals(),
+				compiledBehavior.sourceBundle()
 		);
 		GenerationWorkspace.bindPending(generated, definition);
 		DynamicContentDefinition committed = commit(
@@ -439,6 +463,10 @@ public final class DynamicContentManager {
 				ensureAsset(texture.hash(), texture.texture().renderPng(),
 						definition.name() + " block model texture " + texture.id());
 			}
+		}
+		for (DynamicItemTexture texture : definition.itemVisuals().states()) {
+			ensureAsset(texture.hash(), texture.texture().renderPng(),
+					definition.name() + " item visual state " + texture.id());
 		}
 		if (definition.entityModel() != null) {
 			for (DynamicBlockTexture texture : definition.entityModel().textures()) {

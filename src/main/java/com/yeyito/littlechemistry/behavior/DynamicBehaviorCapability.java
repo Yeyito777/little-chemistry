@@ -7,6 +7,9 @@ import java.util.Set;
 /** The callback interfaces a generated behavior class may explicitly opt into. */
 public enum DynamicBehaviorCapability {
 	USE_AIR("useAir", UseAirBehavior.class),
+	BEGIN_USING("beginUsing", BeginUsingBehavior.class),
+	USING_TICK("usingTick", UsingTickBehavior.class),
+	RELEASE_USING("releaseUsing", ReleaseUsingBehavior.class),
 	USE_ON_BLOCK("useOnBlock", UseOnBlockBehavior.class),
 	INTERACT_LIVING_ENTITY("interactLivingEntity", InteractLivingEntityBehavior.class),
 	INVENTORY_TICK("inventoryTick", InventoryTickBehavior.class),
@@ -28,7 +31,9 @@ public enum DynamicBehaviorCapability {
 	ENTITY_SPAWNED("entitySpawned", EntitySpawnedBehavior.class),
 	ENTITY_TICK("entityTick", EntityTickBehavior.class),
 	ENTITY_INTERACT("entityInteract", EntityInteractBehavior.class),
+	ENTITY_PRE_HURT("entityPreHurt", EntityPreHurtBehavior.class),
 	ENTITY_HURT("entityHurt", EntityHurtBehavior.class),
+	ENTITY_PRE_ATTACK("entityPreAttack", EntityPreAttackBehavior.class),
 	ENTITY_ATTACK("entityAttack", EntityAttackBehavior.class),
 	ENTITY_DEATH("entityDeath", EntityDeathBehavior.class),
 	WORKSTATION("createWorkstationRecipe", WorkstationBehavior.class),

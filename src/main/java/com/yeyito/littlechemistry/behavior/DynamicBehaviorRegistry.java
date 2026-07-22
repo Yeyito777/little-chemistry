@@ -41,7 +41,7 @@ public final class DynamicBehaviorRegistry {
 		Map<String, Loaded> replacement = new HashMap<>();
 		for (DynamicContentDefinition definition : definitions) {
 			try {
-				replacement.put(definition.name(), load(definition.behaviorSource()));
+				replacement.put(definition.name(), load(definition.behaviorSourceBundle()));
 			} catch (RuntimeException error) {
 				LittleChemistry.LOGGER.error("Could not load generated behavior for {}", definition.name(), error);
 			}
@@ -52,6 +52,10 @@ public final class DynamicBehaviorRegistry {
 
 	public static synchronized DynamicBehaviorCompiler.Compiled compile(String source) {
 		return DynamicBehaviorCompiler.compile(source);
+	}
+
+	public static synchronized DynamicBehaviorCompiler.Compiled compile(DynamicBehaviorSourceBundle bundle) {
+		return DynamicBehaviorCompiler.compile(bundle);
 	}
 
 	public static synchronized void install(String name, DynamicBehaviorCompiler.Compiled compiled,
@@ -81,6 +85,25 @@ public final class DynamicBehaviorRegistry {
 			ServerPlayer player, InteractionHand hand, ItemStack stack) {
 		return interaction(definition, player, UseAirBehavior.class, behavior -> behavior.useAir(
 				new DynamicItemUseContext(level, player, hand, stack, definition)));
+	}
+
+	public static InteractionResult beginUsing(DynamicContentDefinition definition, ServerLevel level,
+			ServerPlayer player, InteractionHand hand, ItemStack stack) {
+		return interaction(definition, player, BeginUsingBehavior.class, behavior -> behavior.beginUsing(
+				new DynamicItemUseContext(level, player, hand, stack, definition)));
+	}
+
+	public static void usingTick(DynamicContentDefinition definition, DynamicItemUsingContext context) {
+		invoke(definition, context.player(), UsingTickBehavior.class, null, null, behavior -> {
+			behavior.usingTick(context);
+			return null;
+		});
+	}
+
+	public static boolean releaseUsing(DynamicContentDefinition definition, DynamicItemUsingContext context) {
+		Boolean accepted = invoke(definition, context.player(), ReleaseUsingBehavior.class,
+				false, false, behavior -> behavior.releaseUsing(context));
+		return Boolean.TRUE.equals(accepted);
 	}
 
 	public static InteractionResult useOnBlock(DynamicContentDefinition definition, UseOnContext context,
@@ -318,6 +341,15 @@ public final class DynamicBehaviorRegistry {
 						player, hand, heldStack));
 	}
 
+	public static float entityPreHurt(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state, DamageSource source, float amount) {
+		Float result = invoke(definition, source.getEntity() instanceof ServerPlayer player ? player : null,
+				EntityPreHurtBehavior.class, amount, amount,
+				behavior -> behavior.entityPreHurt(
+						entityContext(definition, level, entity, state), source, amount));
+		return result == null || !Float.isFinite(result) ? amount : Math.clamp(result, 0.0F, 65_536.0F);
+	}
+
 	public static void entityHurt(DynamicContentDefinition definition, ServerLevel level,
 			DynamicCarrierEntity entity, DynamicEntityState state, DamageSource source, float amount) {
 		invoke(definition, source.getEntity() instanceof ServerPlayer player ? player : null,
@@ -334,6 +366,15 @@ public final class DynamicBehaviorRegistry {
 					behavior.entityAttack(entityContext(definition, level, entity, state), target);
 					return null;
 				});
+	}
+
+	public static boolean entityPreAttack(DynamicContentDefinition definition, ServerLevel level,
+			DynamicCarrierEntity entity, DynamicEntityState state, Entity target) {
+		Boolean result = invoke(definition, target instanceof ServerPlayer player ? player : null,
+				EntityPreAttackBehavior.class, true, false,
+				behavior -> behavior.entityPreAttack(
+						entityContext(definition, level, entity, state), target));
+		return Boolean.TRUE.equals(result);
 	}
 
 	public static void entityDeath(DynamicContentDefinition definition, ServerLevel level,
@@ -375,8 +416,8 @@ public final class DynamicBehaviorRegistry {
 		return LOADED.get(name);
 	}
 
-	private static Loaded load(String source) {
-		DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(source);
+	private static Loaded load(DynamicBehaviorSourceBundle bundle) {
+		DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(bundle);
 		return new Loaded(compiled.instantiate(), compiled.classLoader());
 	}
 

@@ -1,15 +1,25 @@
 package com.yeyito.littlechemistry.ai.generation;
 
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
+import com.yeyito.littlechemistry.content.DynamicWorkstationButton;
+import com.yeyito.littlechemistry.content.DynamicWorkstationButtonRole;
+import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSlot;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSpec;
+import com.yeyito.littlechemistry.content.DynamicWorkstationUi;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -33,9 +43,12 @@ final class WorkspaceGenerationVerifierTest {
 			assertEquals(DynamicContentType.ITEM, verified.type());
 			assertEquals("Prismatic Dust", verified.displayName());
 			assertEquals(8, verified.outputCount());
-			assertEquals(64, verified.content().item().maxStack());
-			assertTrue(verified.content().behaviorSource().contains("GeneratedBehaviorImpl"));
-			workspace.stage(verified);
+				assertEquals(64, verified.content().item().maxStack());
+				assertTrue(verified.content().behaviorSource().contains("GeneratedBehaviorImpl"));
+				assertEquals(2, verified.compiledBehavior().sourceBundle().sources().size());
+				assertEquals("workspace-helper", verified.compiledBehavior().instantiate().getClass()
+						.getMethod("helperValue").invoke(verified.compiledBehavior().instantiate()));
+				workspace.stage(verified);
 			assertSame(verified.compiledBehavior(), GenerationWorkspace.preparedBehavior(verified.content()));
 			assertFalse(Files.exists(workspace.worldRoot()
 					.resolve("items/prismatic_dust/C_prismatic_dust_Content.java")));
@@ -92,6 +105,16 @@ final class WorkspaceGenerationVerifierTest {
 		Path world = temporaryDirectory.resolve("bound-world");
 		try (GenerationWorkspace workspace = itemWorkspace(
 				world, temporaryDirectory.resolve("bound-job"), 64)) {
+			Path soundSource = workspace.root().resolve("sounds/prismatic_dust/PrismaticSounds.java");
+			Files.createDirectories(soundSource.getParent());
+			Files.writeString(soundSource, """
+					package sounds.c_prismatic_dust;
+
+					public final class PrismaticSounds {
+					    private PrismaticSounds() {}
+					    public static float crystallinePitch() { return 1.35F; }
+					}
+					""");
 			GenerationRequest request = GenerationRequest.fixed(
 					DynamicContentType.ITEM, null, "Prismatic Dust", 1, null);
 			var verified = WorkspaceGenerationVerifier.verify(workspace, request);
@@ -103,6 +126,10 @@ final class WorkspaceGenerationVerifierTest {
 
 			assertTrue(Files.isRegularFile(world.resolve(
 					"items/prismatic_dust/C_prismatic_dust_Content.java")));
+			assertTrue(Files.isRegularFile(world.resolve(
+					"helpers/prismatic_dust/BehaviorHelper.java")));
+			assertTrue(Files.isRegularFile(world.resolve(
+					"sounds/prismatic_dust/PrismaticSounds.java")));
 		}
 	}
 
@@ -121,9 +148,11 @@ final class WorkspaceGenerationVerifierTest {
 			DynamicContentDefinition replacement = definition(verified, "A replacement definition.");
 			GenerationWorkspace.initialize(world, java.util.List.of(replacement));
 
-			assertFalse(Files.exists(world.resolve(
-					"items/prismatic_dust/C_prismatic_dust_Content.java")));
-			GenerationWorkspace.discardPending(verified.content());
+				assertFalse(Files.exists(world.resolve(
+						"items/prismatic_dust/C_prismatic_dust_Content.java")));
+				assertTrue(Files.readString(world.resolve("helpers/prismatic_dust/BehaviorHelper.java"))
+						.contains("workspace-helper"));
+				GenerationWorkspace.discardPending(verified.content());
 		}
 	}
 
@@ -140,6 +169,33 @@ final class WorkspaceGenerationVerifierTest {
 		}
 	}
 
+	@Test
+	void workstationTimingBelongsToProcessDescriptionRatherThanOutputPolicy() {
+		DynamicWorkstationSpec valid = workstation(
+				"Presses one result over 40 Minecraft ticks.",
+				"Results are compact, practical forms that preserve the input material's character.");
+		DynamicWorkstationSpec invalid = workstation(
+				"Presses one input into a compact result.",
+				"Results settle over 40 Minecraft ticks into compact forms.");
+
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateWorkstationDesign(valid));
+		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateWorkstationDesign(invalid));
+		assertTrue(failure.getMessage().contains("process description"));
+	}
+
+	@Test
+	void workstationPolicyRejectsGeneratedPromptEngineeringAndSchemaInstructions() {
+		DynamicWorkstationSpec imperative = workstation(
+				"Presses one result over 40 Minecraft ticks.",
+				"Create practical results. Set recipeData.mode to compact and verify the result.");
+
+		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateWorkstationDesign(imperative));
+
+		assertTrue(failure.getMessage().contains("third-person output-design data"));
+	}
+
 	private GenerationWorkspace itemWorkspace(int maxStack) throws Exception {
 		return itemWorkspace(temporaryDirectory.resolve("world-" + maxStack),
 				temporaryDirectory.resolve("job-" + maxStack), maxStack);
@@ -150,9 +206,20 @@ final class WorkspaceGenerationVerifierTest {
 		Path item = job.resolve("items/prismatic_dust");
 		Files.createDirectories(item);
 		Files.writeString(item.resolve("GeneratedBehaviorImpl.java"), """
+				import helpers.c_prismatic_dust.BehaviorHelper;
 				public final class GeneratedBehaviorImpl implements
 				        com.yeyito.littlechemistry.behavior.DynamicBehavior {
 				    public GeneratedBehaviorImpl() {}
+				    public String helperValue() { return BehaviorHelper.value(); }
+				}
+				""");
+		Path helpers = job.resolve("helpers/prismatic_dust");
+		Files.createDirectories(helpers);
+		Files.writeString(helpers.resolve("BehaviorHelper.java"), """
+				package helpers.c_prismatic_dust;
+				public final class BehaviorHelper {
+				    private BehaviorHelper() {}
+				    public static String value() { return "workspace-helper"; }
 				}
 				""");
 		Files.writeString(item.resolve("C_prismatic_dust_Content.java"), factory(maxStack));
@@ -214,6 +281,25 @@ final class WorkspaceGenerationVerifierTest {
 				content.customParticles(),
 				content.workstation(),
 				content.entity(),
-				content.entityModel());
+				content.entityModel(),
+				content.itemVisuals(),
+				verified.compiledBehavior().sourceBundle());
+	}
+
+	private static DynamicWorkstationSpec workstation(String processDescription, String policy) {
+		JsonObject schema = JsonParser.parseString(
+				"{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}").getAsJsonObject();
+		return new DynamicWorkstationSpec(
+				List.of(
+						new DynamicWorkstationSlot("input", DynamicWorkstationSlotRole.INPUT,
+								20, 20, 64, true, true, null, null),
+						new DynamicWorkstationSlot("result", DynamicWorkstationSlotRole.OUTPUT,
+								138, 20, 64, false, true, null, null)),
+				new DynamicWorkstationUi(176, 166, 7, 84, "202020FF", List.of(), List.of(),
+						List.of(new DynamicWorkstationButton("make", DynamicWorkstationButtonRole.MAKE_RECIPE,
+								"Make", 70, 48, 76, 20, null)), List.of()),
+				processDescription,
+				policy,
+				new DynamicWorkstationRecipeDataSchema(schema));
 	}
 }

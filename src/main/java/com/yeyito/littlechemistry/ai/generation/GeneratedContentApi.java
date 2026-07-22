@@ -7,6 +7,7 @@ import com.yeyito.littlechemistry.content.DynamicBlockModel;
 import com.yeyito.littlechemistry.content.DynamicBlockModelFace;
 import com.yeyito.littlechemistry.content.DynamicBlockTexture;
 import com.yeyito.littlechemistry.content.DynamicParticleFrame;
+import com.yeyito.littlechemistry.content.DynamicItemTexture;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import net.minecraft.core.Direction;
@@ -28,6 +29,10 @@ public final class GeneratedContentApi {
 
 	public static DynamicBlockTexture modelTexture(String id, DynamicTextureSpec texture) throws IOException {
 		return new DynamicBlockTexture(id, DynamicTextureAsset.sha256(texture.renderPng()), texture);
+	}
+
+	public static DynamicItemTexture itemTexture(String id, DynamicTextureSpec texture) throws IOException {
+		return new DynamicItemTexture(id, DynamicTextureAsset.sha256(texture.renderPng()), texture);
 	}
 
 	public static DynamicParticleFrame particleFrame(DynamicTextureSpec texture) throws IOException {

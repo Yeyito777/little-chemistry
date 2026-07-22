@@ -7,9 +7,17 @@ public record DynamicFoodProperties(
 		float saturation,
 		float consumeSeconds,
 		boolean alwaysEdible,
-		List<DynamicFoodEffect> effects
+		List<DynamicFoodEffect> effects,
+		DynamicConsumeStyle style
 ) {
+	/** Compatibility constructor for foods created before drink-style consumables were supported. */
+	public DynamicFoodProperties(int hunger, float saturation, float consumeSeconds, boolean alwaysEdible,
+			List<DynamicFoodEffect> effects) {
+		this(hunger, saturation, consumeSeconds, alwaysEdible, effects, DynamicConsumeStyle.EAT);
+	}
+
 	public DynamicFoodProperties {
+		if (style == null) throw new IllegalArgumentException("Food consume style is required");
 		if (hunger < 0 || hunger > 20) throw new IllegalArgumentException("Hunger restoration must be between 0 and 20");
 		if (!Float.isFinite(saturation) || saturation < 0.0F || saturation > 20.0F) {
 			throw new IllegalArgumentException("Saturation restoration must be between 0 and 20");

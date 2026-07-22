@@ -132,9 +132,26 @@ class DynamicWorkstationSpecTest {
 
 		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
 				() -> new DynamicWorkstationSpec(valid.slots(), largeUi, "界".repeat(1_024),
-						"界".repeat(DynamicWorkstationSpec.MAX_RECIPE_SYSTEM_PROMPT_LENGTH), recipeDataSchema()));
+						"界".repeat(DynamicWorkstationSpec.MAX_RECIPE_POLICY_LENGTH), recipeDataSchema()));
 
 		assertTrue(error.getMessage().contains("UTF-8 byte opening-data limit"), error.getMessage());
+	}
+
+	@Test
+	@SuppressWarnings("deprecation")
+	void legacySystemPromptNamesRemainSourceAndPersistenceCompatible() {
+		DynamicWorkstationSpec workstation = workstation();
+		JsonObject encoded = DynamicWorkstationJson.encode(workstation);
+
+		assertEquals(workstation.recipePolicy(), workstation.recipeSystemPrompt());
+		assertEquals(workstation.recipePolicy(), encoded.get("recipeSystemPrompt").getAsString());
+		assertFalse(encoded.has("recipePolicy"));
+		assertEquals(workstation, DynamicWorkstationJson.decode(encoded));
+		JsonObject modelFacing = encoded.deepCopy();
+		modelFacing.add("recipePolicy", modelFacing.remove("recipeSystemPrompt"));
+		assertEquals(workstation, DynamicWorkstationJson.decode(modelFacing));
+		modelFacing.addProperty("recipeSystemPrompt", workstation.recipePolicy());
+		assertThrows(IllegalArgumentException.class, () -> DynamicWorkstationJson.decode(modelFacing));
 	}
 
 	static DynamicWorkstationSpec workstation() {
@@ -161,8 +178,8 @@ class DynamicWorkstationSpecTest {
 								"Vent", 8, 52, 48, 20, null)),
 				List.of(new DynamicWorkstationStateChannel("progress", 0, 10_000, 0)));
 		return new DynamicWorkstationSpec(slots, ui,
-				"Separates mixed materials through controlled rotational force.",
-				"Generate coherent separation recipes. Catalysts are retained and duration_ticks controls spin time.",
+				"Separates mixed materials through controlled rotational force over 200 Minecraft ticks.",
+				"Results are coherent separated or clarified forms grounded in the supplied mixture and catalyst.",
 				schema);
 	}
 

@@ -86,12 +86,33 @@ public final class DynamicEntityRenderer extends MobRenderer<DynamicCarrierEntit
 		poseStack.scale(state.logicalWidth, state.logicalHeight, state.logicalWidth);
 		poseStack.translate(-0.5F, 0.0F, -0.5F);
 		int order = 0;
-			for (var texture : definition.entityModel().textures()) {
+		if (!state.visualTextureHash.isEmpty()) {
+			var textureLocation = RuntimeTextureStore.texture(state.visualTextureHash);
+			if (!state.isInvisible) {
+				nodes.order(order++).submitCustomGeometry(poseStack,
+						state.visualTextureTranslucent ? RenderTypes.entityTranslucentCullItemTarget(textureLocation)
+								: RenderTypes.entityCutout(textureLocation),
+						(pose, vertices) -> renderGeometry(definition.entityModel().geometry(), null,
+								pose, vertices, state.lightCoords));
+			} else if (!state.isInvisibleToPlayer) {
+				nodes.order(order++).submitCustomGeometry(poseStack,
+						RenderTypes.entityTranslucentCullItemTarget(textureLocation),
+						(pose, vertices) -> renderGeometry(definition.entityModel().geometry(), null,
+								pose, vertices, state.lightCoords));
+			}
+			if (state.appearsGlowing()) {
+				nodes.order(order++).submitCustomGeometry(poseStack, RenderTypes.outline(textureLocation),
+						(pose, vertices) -> renderGeometry(definition.entityModel().geometry(), null,
+								pose, new OutlineVertexConsumer(vertices, state.outlineColor), state.lightCoords));
+			}
+		} else for (var texture : definition.entityModel().textures()) {
 				String textureId = texture.id();
 				var textureLocation = RuntimeTextureStore.texture(texture.hash());
 				if (!state.isInvisible) {
 					nodes.order(order++).submitCustomGeometry(poseStack,
-							RenderTypes.entityCutout(textureLocation),
+							texture.texture().hasTranslucentAlpha()
+									? RenderTypes.entityTranslucentCullItemTarget(textureLocation)
+									: RenderTypes.entityCutout(textureLocation),
 							(pose, vertices) -> renderGeometry(definition.entityModel().geometry(), textureId,
 									pose, vertices, state.lightCoords));
 				} else if (!state.isInvisibleToPlayer) {
@@ -135,6 +156,21 @@ public final class DynamicEntityRenderer extends MobRenderer<DynamicCarrierEntit
 				? DynamicEntityVisualProfile.CUSTOM : definition.entityModel().profile();
 		state.modelTextureHash = definition == null || definition.entityModel() == null
 				? "" : definition.entityModel().primaryTexture().hash();
+		state.synchronizedState = entity.synchronizedStateSnapshot();
+		state.visualTextureHash = "";
+		state.visualTextureTranslucent = false;
+		if (definition != null && definition.entityModel() != null && !definition.entityModel().usesVanillaModel()) {
+			String visual = state.synchronizedState.get("visual");
+			if (visual != null) {
+				for (var texture : definition.entityModel().textures()) {
+					if (texture.id().equals(visual)) {
+						state.visualTextureHash = texture.hash();
+						state.visualTextureTranslucent = texture.texture().hasTranslucentAlpha();
+						break;
+					}
+				}
+			}
+		}
 	}
 
 	@Override

@@ -2,9 +2,13 @@ package com.yeyito.littlechemistry.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
+import com.yeyito.littlechemistry.content.DynamicItemVisuals;
+import com.yeyito.littlechemistry.behavior.DynamicItemState;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -17,6 +21,16 @@ import org.joml.Vector3fc;
 import java.util.function.Consumer;
 
 public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<DynamicSpecialItemRenderer.Argument> {
+	private final String textureState;
+
+	public DynamicSpecialItemRenderer() {
+		this("runtime");
+	}
+
+	private DynamicSpecialItemRenderer(String textureState) {
+		this.textureState = textureState;
+	}
+
 	@Override
 	public void submit(Argument argument, PoseStack poseStack, SubmitNodeCollector nodes, int light, int overlay,
 			boolean hasFoil, int outlineColor) {
@@ -29,12 +43,16 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 			for (var texture : argument.blockModel().textures()) {
 				String textureId = texture.id();
 				nodes.order(order++).submitCustomGeometry(poseStack,
-						RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
+						texture.texture().hasTranslucentAlpha()
+								? RenderTypes.entityTranslucentCullItemTarget(RuntimeTextureStore.texture(texture.hash()))
+								: RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
 						(pose, vertices) -> renderBlockModel(argument, textureId, pose, vertices, light, overlay));
 			}
 		} else {
 			Identifier texture = RuntimeTextureStore.texture(argument.textureHash());
-			var baseRenderType = argument.block()
+			var baseRenderType = argument.translucent()
+					? RenderTypes.entityTranslucentCullItemTarget(texture)
+					: argument.block()
 					? RenderTypes.entityCutout(texture)
 					: RenderTypes.entityCutoutCull(texture);
 			nodes.order(0).submitCustomGeometry(poseStack, baseRenderType, (pose, vertices) -> {
@@ -84,16 +102,34 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 			return null;
 		}
 		boolean block = stack.is(DynamicContentObjects.BLOCK_ITEM);
-		return new Argument(definition.textureHash(), block,
+		String selectedState = textureState.equals("runtime")
+				? DynamicItemState.of(stack).getString("visual", "base") : textureState;
+		String fallbackHash = selectedState.equals(DynamicItemVisuals.CHARGED_FIREWORK)
+				? definition.itemVisuals().textureHash(DynamicItemVisuals.CHARGED, definition.textureHash())
+				: definition.textureHash();
+		String textureHash = block ? definition.textureHash()
+				: definition.itemVisuals().textureHash(selectedState, fallbackHash);
+			boolean translucent;
+			if (block) {
+				translucent = definition.blockModel() == null && definition.texture() != null
+						&& definition.texture().hasTranslucentAlpha();
+			} else {
+				var stateTexture = definition.itemVisuals().state(selectedState);
+				var texture = stateTexture == null ? definition.texture() : stateTexture.texture();
+				translucent = texture != null && texture.hasTranslucentAlpha();
+		}
+		return new Argument(textureHash, block,
 				block && definition.block() != null ? definition.block().shape() : DynamicBlockShape.FULL_CUBE,
-				block ? definition.blockModel() : null);
+				block ? definition.blockModel() : null, translucent);
 	}
 
-	public record Argument(String textureHash, boolean block, DynamicBlockShape blockShape, DynamicBlockModel blockModel) {
+	public record Argument(String textureHash, boolean block, DynamicBlockShape blockShape,
+			DynamicBlockModel blockModel, boolean translucent) {
 		@Override
 		public boolean equals(Object other) {
 			return this == other || other instanceof Argument argument
 					&& block == argument.block
+					&& translucent == argument.translucent
 					&& blockShape == argument.blockShape
 					&& textureHash.equals(argument.textureHash)
 					&& blockModel == argument.blockModel;
@@ -103,17 +139,24 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 		public int hashCode() {
 			int result = textureHash.hashCode();
 			result = 31 * result + Boolean.hashCode(block);
+			result = 31 * result + Boolean.hashCode(translucent);
 			result = 31 * result + blockShape.hashCode();
 			return 31 * result + System.identityHashCode(blockModel);
 		}
 	}
 
-	public record Unbaked() implements SpecialModelRenderer.Unbaked<Argument> {
-		public static final MapCodec<Unbaked> MAP_CODEC = MapCodec.unit(new Unbaked());
+	public record Unbaked(String state) implements SpecialModelRenderer.Unbaked<Argument> {
+		public static final MapCodec<Unbaked> MAP_CODEC = RecordCodecBuilder.mapCodec(instance -> instance.group(
+				Codec.STRING.optionalFieldOf("state", "runtime").forGetter(Unbaked::state)
+		).apply(instance, Unbaked::new));
+
+		public Unbaked() {
+			this("runtime");
+		}
 
 		@Override
 		public DynamicSpecialItemRenderer bake(SpecialModelRenderer.BakingContext context) {
-			return new DynamicSpecialItemRenderer();
+			return new DynamicSpecialItemRenderer(state);
 		}
 
 		@Override

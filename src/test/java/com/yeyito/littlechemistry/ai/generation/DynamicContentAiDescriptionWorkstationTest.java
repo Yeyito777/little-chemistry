@@ -85,8 +85,9 @@ class DynamicContentAiDescriptionWorkstationTest {
 		assertEquals("output", summary.getAsJsonObject("workstation").getAsJsonArray("slots")
 				.get(1).getAsJsonObject().get("role").getAsString());
 		assertFalse(summary.getAsJsonObject("workstation").has("recipeSystemPrompt"));
-		assertEquals(workstation.recipeSystemPrompt(),
-				full.getAsJsonObject("workstation").get("recipeSystemPrompt").getAsString());
+		assertFalse(full.getAsJsonObject("workstation").has("recipeSystemPrompt"));
+		assertEquals(workstation.recipePolicy(),
+				full.getAsJsonObject("workstation").get("recipePolicy").getAsString());
 		assertEquals("object", full.getAsJsonObject("workstation").getAsJsonObject("recipeDataSchema")
 				.get("type").getAsString());
 		assertEquals("make_recipe", full.getAsJsonObject("workstation").getAsJsonObject("ui")

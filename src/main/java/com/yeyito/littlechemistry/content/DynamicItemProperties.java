@@ -60,24 +60,28 @@ public record DynamicItemProperties(
 		if (!Double.isFinite(attackDamage) || attackDamage < 0.0 || attackDamage > 100.0) throw new IllegalArgumentException("Attack damage must be between 0 and 100");
 		if (!Double.isFinite(attackSpeed) || attackSpeed < 0.1 || attackSpeed > 20.0) throw new IllegalArgumentException("Attack speed must be between 0.1 and 20");
 		if (durability < 0 || durability > 100_000) throw new IllegalArgumentException("Durability must be between 0 and 100000");
+		if (durability > 0 && maxStack != 1) {
+			throw new IllegalArgumentException("Durable items must have maxStack 1");
+		}
 		if (damagePerBlock < 0 || damagePerBlock > 64 || damagePerAttack < 0 || damagePerAttack > 64) {
 			throw new IllegalArgumentException("Durability costs must be between 0 and 64");
+		}
+		if (durability == 0 && (damagePerBlock != 0 || damagePerAttack != 0
+				|| craftingUse == DynamicCraftingUse.DAMAGE)) {
+			throw new IllegalArgumentException("Durability costs require positive durability");
 		}
 		if (fuelBurnTicks < 0 || fuelBurnTicks > MAX_FUEL_BURN_TICKS) {
 			throw new IllegalArgumentException("Fuel burn duration must be between 0 and "
 					+ MAX_FUEL_BURN_TICKS + " ticks");
 		}
 		if (itemType != DynamicItemType.TOOL) {
-			if (tool != DynamicTool.NONE || breakingPower != DynamicBreakingPower.NONE || durability != 0
-					|| attackDamage != 0.0 || attackSpeed != 4.0 || damagePerBlock != 0 || damagePerAttack != 0) {
-				throw new IllegalArgumentException("Items and food cannot carry tool-only properties");
+			if (tool != DynamicTool.NONE || breakingPower != DynamicBreakingPower.NONE
+					|| breakingSpeed != 1.0F || damagePerBlock != 0) {
+				throw new IllegalArgumentException("Items and food cannot carry mining-tool-only properties");
 			}
 			if (itemType == DynamicItemType.ITEM && food != null) throw new IllegalArgumentException("Ordinary items cannot carry food properties");
 			if (itemType == DynamicItemType.FOOD && food == null) throw new IllegalArgumentException("Food items require food properties");
 			if (itemType == DynamicItemType.FOOD && placement != null) throw new IllegalArgumentException("Food items cannot be placeable");
-			if (craftingUse == DynamicCraftingUse.DAMAGE) {
-				throw new IllegalArgumentException("Only tools can lose durability when used in crafting");
-			}
 		} else {
 			if (food != null || placement != null) throw new IllegalArgumentException("Tools cannot be food or placeable");
 			if (tool == DynamicTool.NONE || breakingPower == DynamicBreakingPower.NONE) {

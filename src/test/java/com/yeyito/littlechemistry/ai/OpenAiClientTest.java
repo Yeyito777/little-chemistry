@@ -1,6 +1,8 @@
 package com.yeyito.littlechemistry.ai;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -170,6 +172,36 @@ class OpenAiClientTest {
 		assertEquals("ok", round.calls().getFirst().arguments().get("value").getAsString());
 		assertEquals("response-tool-1", round.response().get("id").getAsString());
 		assertEquals(7, round.response().getAsJsonObject("usage").get("output_tokens").getAsInt());
+	}
+
+	@Test
+	void generationToolRoundSendsOneValidInstructionsFieldOutsideUserHistory() throws Exception {
+		AtomicReference<JsonObject> submitted = new AtomicReference<>();
+		server.createContext("/responses", exchange -> {
+			String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+			submitted.set(JsonParser.parseString(body).getAsJsonObject());
+			respond(exchange, 200, completedToolCall());
+		});
+		JsonObject text = new JsonObject();
+		text.addProperty("type", "input_text");
+		text.addProperty("text", "Implement the recipe.");
+		JsonArray content = new JsonArray();
+		content.add(text);
+		JsonObject user = new JsonObject();
+		user.addProperty("type", "message");
+		user.addProperty("role", "user");
+		user.add("content", content);
+		JsonArray input = new JsonArray();
+		input.add(user);
+
+		client(delay -> {}).runToolRound("one shared generation system prompt", new JsonArray(), input);
+
+		JsonObject request = submitted.get();
+		assertEquals("one shared generation system prompt", request.get("instructions").getAsString());
+		assertEquals(1, request.entrySet().stream().filter(entry -> entry.getKey().equals("instructions")).count());
+		assertEquals(1, request.getAsJsonArray("input").size());
+		assertEquals("user", request.getAsJsonArray("input").get(0).getAsJsonObject().get("role").getAsString());
+		assertFalse(request.getAsJsonArray("input").toString().contains("system_instructions"));
 	}
 
 	@Test

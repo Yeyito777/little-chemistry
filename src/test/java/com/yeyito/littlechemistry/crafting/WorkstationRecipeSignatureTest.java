@@ -51,6 +51,8 @@ final class WorkstationRecipeSignatureTest {
 		JsonObject primaryOutput = context.getAsJsonObject("primaryOutput");
 		assertEquals("result", primaryOutput.get("id").getAsString());
 		assertEquals(12, primaryOutput.get("capacity").getAsInt());
+		assertEquals("Test Press", context.get("displayName").getAsString());
+		assertEquals("Presses material.", context.get("description").getAsString());
 	}
 
 	private static DynamicContentDefinition definition() {
@@ -67,8 +69,8 @@ final class WorkstationRecipeSignatureTest {
 				new DynamicWorkstationUi(176, 166, 7, 84, "202020FF", List.of(), List.of(),
 						List.of(new DynamicWorkstationButton("make_recipe", DynamicWorkstationButtonRole.MAKE_RECIPE,
 								"Make Recipe", 70, 48, 76, 20, null)), List.of()),
-				"Presses one input into a compact result.",
-				"Choose a coherent result and set duration_ticks in Minecraft ticks.",
+				"Presses one input into a compact result over 40 Minecraft ticks.",
+				"Results are coherent compact forms that preserve the input material's practical character.",
 				new DynamicWorkstationRecipeDataSchema(schema));
 		return new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "test_press", "Test Press", "Presses material.",

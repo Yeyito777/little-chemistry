@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSourceBundle;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentJson;
@@ -30,7 +31,9 @@ import java.util.regex.Pattern;
 /** A real, isolated coding workspace backed by one world's persistent generated-mod source tree. */
 public final class GenerationWorkspace implements AutoCloseable {
 	static final Set<String> SOURCE_DIRECTORIES = Set.of(
-			"blocks", "armors", "items", "entities", "particles", "textures", "workstations", "helpers");
+			"blocks", "armors", "items", "entities", "sounds", "particles", "textures", "workstations", "helpers");
+	private static final Set<String> SUPPORT_DIRECTORIES = Set.of(
+			"sounds", "textures", "particles", "workstations", "helpers");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final int MAX_PUBLISHED_FILES = 2_000;
 	private static final long MAX_PUBLISHED_BYTES = 16L * 1024L * 1024L;
@@ -158,8 +161,7 @@ public final class GenerationWorkspace implements AutoCloseable {
 		String primaryCategory = category(type);
 		try {
 			for (String directory : SOURCE_DIRECTORIES) {
-				if (!directory.equals(primaryCategory) && !Set.of(
-						"textures", "particles", "workstations", "helpers").contains(directory)) continue;
+				if (!directory.equals(primaryCategory) && !SUPPORT_DIRECTORIES.contains(directory)) continue;
 				Path source = jobRoot.resolve(directory).resolve(identifier);
 				if (!Files.isDirectory(source)) continue;
 				copyTree(source, snapshot.resolve(directory).resolve(identifier),
@@ -231,8 +233,7 @@ public final class GenerationWorkspace implements AutoCloseable {
 				manifest.addProperty("sourceDigest", verified.sourceDigest());
 				writeText(pendingRoot.resolve("manifest.json"), GSON.toJson(manifest));
 				for (String directory : SOURCE_DIRECTORIES) {
-					if (!directory.equals(primaryCategory) && !Set.of(
-							"textures", "particles", "workstations", "helpers").contains(directory)) continue;
+					if (!directory.equals(primaryCategory) && !SUPPORT_DIRECTORIES.contains(directory)) continue;
 					Path source = verifiedSource.resolve(directory).resolve(identifier);
 					if (!Files.isDirectory(source)) continue;
 					copyTree(source, pendingRoot.resolve(directory).resolve(identifier),
@@ -418,8 +419,14 @@ public final class GenerationWorkspace implements AutoCloseable {
 		Path content = worldRoot.resolve(category).resolve(definition.name());
 		Files.createDirectories(content);
 		JsonObject canonical = DynamicContentJson.encodeDefinition(definition);
+		// Persistence retains the legacy recipeSystemPrompt key for world/digest compatibility, but the model-facing
+		// source workspace exposes the value under its actual user-level meaning.
+		if (canonical.get("workstation") instanceof JsonObject workstation
+				&& workstation.has("recipeSystemPrompt")) {
+			workstation.add("recipePolicy", workstation.remove("recipeSystemPrompt"));
+		}
 		writeText(content.resolve("definition.json"), GSON.toJson(canonical));
-		writeText(content.resolve("GeneratedBehaviorImpl.java"), definition.behaviorSource() + "\n");
+		writeBehaviorSources(worldRoot, content, definition.name(), definition.behaviorSourceBundle());
 
 		JsonObject textures = new JsonObject();
 		if (canonical.has("texture")) textures.add("inventory", canonical.get("texture").deepCopy());
@@ -431,6 +438,9 @@ public final class GenerationWorkspace implements AutoCloseable {
 		}
 		if (canonical.has("entityModel")) {
 			textures.add("entityModel", canonical.getAsJsonObject("entityModel").deepCopy());
+		}
+		if (canonical.has("itemVisuals")) {
+			textures.add("itemVisuals", canonical.getAsJsonArray("itemVisuals").deepCopy());
 		}
 		Path textureDirectory = worldRoot.resolve("textures").resolve(definition.name());
 		Files.createDirectories(textureDirectory);
@@ -472,6 +482,25 @@ public final class GenerationWorkspace implements AutoCloseable {
 		}
 	}
 
+	private static void writeBehaviorSources(Path worldRoot, Path content, String identifier,
+			DynamicBehaviorSourceBundle bundle) throws IOException {
+		for (var source : bundle.sources().entrySet()) {
+			String path = source.getKey();
+			Path target;
+			if (path.startsWith("entry/")) {
+				target = content.resolve(path.substring("entry/".length())).normalize();
+				if (!target.startsWith(content)) throw new IOException("Behavior entry source path escapes its content module");
+			} else if (path.startsWith("helpers/")) {
+				Path helpers = worldRoot.resolve("helpers").resolve(identifier);
+				target = helpers.resolve(path.substring("helpers/".length())).normalize();
+				if (!target.startsWith(helpers)) throw new IOException("Behavior helper source path escapes its module");
+			} else {
+				throw new IOException("Unknown behavior source path: " + path);
+			}
+			writeText(target, source.getValue() + "\n");
+		}
+	}
+
 	private static String definitionDigest(DynamicContentDefinition definition) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -500,7 +529,7 @@ public final class GenerationWorkspace implements AutoCloseable {
 		return "C_" + identifier + "_Content";
 	}
 
-	private static JsonObject encodeRequest(GenerationRequest request) {
+	static JsonObject encodeRequest(GenerationRequest request) {
 		JsonObject encoded = new JsonObject();
 		encoded.addProperty("mode", request.flexible() ? "recipe" : "fixed");
 		if (request.flexible()) {
@@ -521,9 +550,11 @@ public final class GenerationWorkspace implements AutoCloseable {
 			encoded.addProperty("factoryClass", category + "." + javaPackageSegment(id) + "." + factory);
 			encoded.addProperty("factoryFile", category + "/" + id + "/" + factory + ".java");
 			encoded.addProperty("behaviorFile", category + "/" + id + "/GeneratedBehaviorImpl.java");
+			encoded.addProperty("behaviorHelpersDirectory", "helpers/" + id);
 		}
 		if (request.recipeContext() != null) encoded.add("recipe", request.recipeContext());
-		if (request.workstationPolicy() != null) encoded.addProperty("workstationPolicy", request.workstationPolicy());
+		// The workstation-specific natural-language policy exists only in the API user query. Do not duplicate it in
+		// model-readable workspace metadata or let it masquerade as another instruction source.
 		if (request.recipeDataSchema() != null) encoded.add("recipeDataSchema", request.recipeDataSchema());
 		return encoded;
 	}
@@ -566,12 +597,13 @@ public final class GenerationWorkspace implements AutoCloseable {
 				}
 				""".formatted(category, javaPackageSegment(id), className, className));
 		writeText(directory.resolve("GeneratedBehaviorImpl.java"), """
+				// Runtime behavior helpers may be added as ordinary Java sources under helpers/%s/.
 				public final class GeneratedBehaviorImpl implements
 				        com.yeyito.littlechemistry.behavior.DynamicBehavior {
 				    public GeneratedBehaviorImpl() {}
 				}
-				""");
-		for (String support : List.of("textures", "particles", "helpers")) {
+				""".formatted(id));
+		for (String support : List.of("sounds", "textures", "particles", "helpers")) {
 			Files.createDirectories(root.resolve(support).resolve(id));
 		}
 		if (request.fixedType() == DynamicContentType.BLOCK) {
@@ -699,16 +731,40 @@ public final class GenerationWorkspace implements AutoCloseable {
 
 			The factory contract is `com.yeyito.littlechemistry.ai.generation.GeneratedContentFactory` and its method is
 			`GeneratedContentSpec create(String behaviorSource) throws Exception`. `GeneratedContentBuilder` is an optional
-			fluent assembly helper. `GeneratedContentApi` provides `texture`, `modelTexture`, `face`, `uniformFaces`,
-			`presetModel`, `selfDrops`, `id`, and `json`; these are conveniences, not a restricted DSL.
+			fluent assembly helper. `GeneratedContentApi` provides `texture`, `modelTexture`, `itemTexture`, `face`,
+			`uniformFaces`, `presetModel`, `selfDrops`, `id`, and `json`; these are conveniences, not a restricted DSL.
+			The factory's `behaviorSource` argument remains the entry source string for compatibility. Verification separately
+			collects that entry and all Java under `helpers/<id>/` into a persisted `DynamicBehaviorSourceBundle`, then compiles
+			and links the complete bundle against the runtime-aware server classpath.
 
 			All public constructors and Minecraft APIs are available directly. Search the class index and read source before
 			guessing signatures. Common definition classes are in `com.yeyito.littlechemistry.content`: `GeneratedContentSpec`,
 			`DynamicTextureSpec`, `DynamicBlockProperties`, `DynamicItemProperties`, `DynamicArmorProperties`,
 			`DynamicArmorDisplayTextureSpec`, `DynamicEntityProperties`, `DynamicBlockModel`, `DynamicEntityModel`,
-			`DynamicParticleDefinition`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
+			`DynamicItemVisuals`, `DynamicParticleDefinition`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
 			`DynamicTool`, `DynamicBlockShape`, `DynamicItemType`, `DynamicHeldType`, `DynamicArmorSlot`,
 			`DynamicEntityMovement`, and `DynamicEntityDisposition`.
+			Generated rideable-entity behavior should read authoritative controls through
+			`DynamicGeneratedEntityContext.riderInput()` and `DynamicRiderInput`, not inherited player `xxa`/`zza` fields.
+			The remappable primary, secondary, ascend, descend, and mode-switch channels are available through
+			`actionInput()` on item/entity/workstation contexts. Entity movement carriers include ground, flying, aquatic,
+			amphibious, and goal-free vehicle profiles. Generated behavior can install native goals through `goals()` and
+			`targetGoals()`, and can intercept damage/attacks with `EntityPreHurtBehavior` and `EntityPreAttackBehavior`.
+			Native held-use extensions can opt into `BeginUsingBehavior`, `UsingTickBehavior`, and `ReleaseUsingBehavior`;
+			vanilla use/release mechanics remain authoritative unless a pre-use callback explicitly handles the action.
+			Use `DynamicItemState`, `DynamicBlockState`, ordinary entity `state()`, and synchronized entity state rather than
+			fields on shared behavior singletons. Setting item state key `visual` to an authored `DynamicItemVisuals` ID changes
+			the synchronized runtime item texture; placed blocks and custom entities use their model texture IDs through the
+			same `visual` state convention.
+			Durability is available to every unstackable item. Bow, crossbow, fishing rod, mace, spear, shield, trident, axe,
+			shovel, hoe, pickaxe, and sword carriers retain native Minecraft class/component mechanics; callbacks extend rather
+			than replace vanilla behavior. Stateful native models require `pulling_0..2` for bows, those plus `charged` and
+			`charged_firework` for crossbows, `cast` for rods, `blocking` for shields, and `throwing` for tridents. Use
+			`GeneratedContentApi.itemTexture` to create content-addressed visual states. Food may select EAT or DRINK through
+			`DynamicConsumeStyle`, and chest armor may opt into the native glider component.
+			`DynamicWorkstationSpec.recipePolicy()` is declarative output-design guidance appended to workstation recipe user
+			requests; it is never sent as API system instructions. The deprecated `recipeSystemPrompt()` name exists only for
+			legacy source compatibility.
 
 			A typical factory returns:
 			```
