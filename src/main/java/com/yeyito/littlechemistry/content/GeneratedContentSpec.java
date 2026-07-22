@@ -95,6 +95,12 @@ public record GeneratedContentSpec(
 		if (workstation != null && block == null) {
 			throw new IllegalArgumentException("Only generated blocks may define a workstation");
 		}
+		if (item != null && item.heldType().isNativeProjectileWeapon()
+				&& (item.itemType() != DynamicItemType.ITEM || item.maxStack() != 1
+				|| item.enchantability() < 1)) {
+			throw new IllegalArgumentException(
+					"Generated bows and crossbows must be ordinary items with maxStack 1 and positive enchantability");
+		}
 		if (block != null) {
 			if (blockModel == null) throw new IllegalArgumentException("Generated blocks require a visual model");
 			blockModel.validateFor(block.shape());

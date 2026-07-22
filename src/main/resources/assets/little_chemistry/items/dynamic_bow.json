@@ -1,9 +1,47 @@
 {
   "model": {
-    "type": "minecraft:special",
-    "base": "minecraft:item/bow",
-    "model": {
-      "type": "little_chemistry:dynamic"
+    "type": "minecraft:condition",
+    "property": "minecraft:using_item",
+    "on_false": {
+      "type": "minecraft:special",
+      "base": "minecraft:item/bow",
+      "model": {
+        "type": "little_chemistry:dynamic"
+      }
+    },
+    "on_true": {
+      "type": "minecraft:range_dispatch",
+      "property": "minecraft:use_duration",
+      "scale": 0.05,
+      "fallback": {
+        "type": "minecraft:special",
+        "base": "minecraft:item/bow_pulling_0",
+        "model": {
+          "type": "little_chemistry:dynamic"
+        }
+      },
+      "entries": [
+        {
+          "threshold": 0.65,
+          "model": {
+            "type": "minecraft:special",
+            "base": "minecraft:item/bow_pulling_1",
+            "model": {
+              "type": "little_chemistry:dynamic"
+            }
+          }
+        },
+        {
+          "threshold": 0.9,
+          "model": {
+            "type": "minecraft:special",
+            "base": "minecraft:item/bow_pulling_2",
+            "model": {
+              "type": "little_chemistry:dynamic"
+            }
+          }
+        }
+      ]
     }
   }
 }

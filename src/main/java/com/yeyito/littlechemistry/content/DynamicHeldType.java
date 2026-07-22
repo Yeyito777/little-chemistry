@@ -19,6 +19,18 @@ public enum DynamicHeldType {
 		return serializedName;
 	}
 
+	public boolean isNativeProjectileWeapon() {
+		return this == BOW || this == CROSSBOW;
+	}
+
+	public int nativeDurability() {
+		return switch (this) {
+			case BOW -> 384;
+			case CROSSBOW -> 465;
+			default -> 0;
+		};
+	}
+
 	public static DynamicHeldType parse(String value) {
 		for (DynamicHeldType type : values()) {
 			if (type.serializedName.equals(value)) return type;

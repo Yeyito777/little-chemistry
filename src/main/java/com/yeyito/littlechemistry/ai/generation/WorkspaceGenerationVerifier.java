@@ -341,7 +341,7 @@ final class WorkspaceGenerationVerifier {
 		}
 	}
 
-	private static void validateArmorTexture(DynamicArmorDisplayTextureSpec texture, DynamicArmorSlot slot) {
+	static void validateArmorTexture(DynamicArmorDisplayTextureSpec texture, DynamicArmorSlot slot) {
 		int visible = 0;
 		int transparent = 0;
 		Set<Integer> used = new HashSet<>();
@@ -363,6 +363,12 @@ final class WorkspaceGenerationVerifier {
 		if (relevantOpaquePixels(texture, slot) < 16) {
 			throw new IllegalArgumentException("Armor display texture has too few visible pixels in the "
 					+ slot.serializedName() + " UV islands");
+		}
+		if (slot == DynamicArmorSlot.HEAD
+				&& (opaquePixels(texture, 0, 0, 32, 16) < 16
+				|| opaquePixels(texture, 32, 0, 32, 16) < 8)) {
+			throw new IllegalArgumentException(
+					"Head armor must paint both the base-head and hat/outer-head UV regions");
 		}
 	}
 

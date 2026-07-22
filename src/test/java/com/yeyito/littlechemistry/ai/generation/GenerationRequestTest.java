@@ -24,6 +24,20 @@ final class GenerationRequestTest {
 	}
 
 	@Test
+	void armorQueryExplicitlyRequiresHeadUvReferenceInspection() {
+		String prompt = GenerationRequest.fixed(
+				DynamicContentType.ARMOR, com.yeyito.littlechemistry.content.DynamicArmorSlot.HEAD,
+				"Moonlit Crown", 1, null).userPrompt();
+
+		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
+		assertTrue(prompt.contains("16x16 inventory icon"));
+		assertTrue(prompt.contains("64x32 equipment sheet"));
+		assertTrue(prompt.contains("base-head UV region at x=0..31, y=0..15"));
+		assertTrue(prompt.contains("hat/outer-head region at x=32..63, y=0..15"));
+		assertTrue(prompt.contains("renders on the player's head"));
+	}
+
+	@Test
 	void ordinaryRecipeQueryInfersKindAndChoosesANaturalOutputCountWithoutRejectionPriming() {
 		var recipe = JsonParser.parseString("""
 				{"recipeType":"crafting","width":3,"height":3,
@@ -44,6 +58,14 @@ final class GenerationRequestTest {
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
+		assertTrue(prompt.contains("select result kind `block`"));
+		assertTrue(prompt.contains("non-null `DynamicWorkstationSpec`"));
+		assertTrue(prompt.contains("Furnaces, powered processors, crafting benches, and workbenches"));
+		assertTrue(prompt.contains("functional workstations rather than decorative blocks"));
+		assertTrue(prompt.contains("`WorkstationBehavior` and `WorkstationTickBehavior`"));
+		assertTrue(prompt.contains("heldType `BOW` or `CROSSBOW`"));
+		assertTrue(prompt.contains("outputCount 1, and positive enchantability"));
+		assertTrue(prompt.contains("do not reimplement those mechanics"));
 	}
 
 	@Test

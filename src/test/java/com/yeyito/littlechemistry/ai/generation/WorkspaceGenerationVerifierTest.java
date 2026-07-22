@@ -1,6 +1,8 @@
 package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
@@ -165,6 +167,17 @@ final class WorkspaceGenerationVerifierTest {
 	}
 
 	@Test
+	void headArmorRequiresBothBaseAndOuterHeadUvArtwork() {
+		DynamicArmorDisplayTextureSpec missingOuterHead = headArmorTexture(false);
+		DynamicArmorDisplayTextureSpec completeHead = headArmorTexture(true);
+
+		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateArmorTexture(missingOuterHead, DynamicArmorSlot.HEAD));
+		assertTrue(failure.getMessage().contains("base-head and hat/outer-head"));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateArmorTexture(completeHead, DynamicArmorSlot.HEAD));
+	}
+
+	@Test
 	void workstationTimingBelongsToProcessDescriptionRatherThanOutputPolicy() {
 		DynamicWorkstationSpec valid = workstation(
 				"Presses one result over 40 Minecraft ticks.",
@@ -209,6 +222,19 @@ final class WorkspaceGenerationVerifierTest {
 				() -> WorkspaceGenerationVerifier.validateWorkstationDesign(listDirective));
 
 		assertTrue(failure.getMessage().contains("third-person output-design data"));
+	}
+
+	private static DynamicArmorDisplayTextureSpec headArmorTexture(boolean includeOuterHead) {
+		String painted = java.util.stream.IntStream.range(0, 32)
+				.mapToObj(index -> index % 2 == 0 ? "1" : "2")
+				.collect(java.util.stream.Collectors.joining());
+		String transparentHalf = "0".repeat(32);
+		String transparentRow = "0".repeat(64);
+		List<String> rows = java.util.stream.IntStream.range(0, 32)
+				.mapToObj(y -> y < 16 ? painted + (includeOuterHead ? painted : transparentHalf) : transparentRow)
+				.toList();
+		return new DynamicArmorDisplayTextureSpec(
+				List.of("00000000", "804020FF", "E0C080FF"), rows);
 	}
 
 	private GenerationWorkspace itemWorkspace(int maxStack) throws Exception {

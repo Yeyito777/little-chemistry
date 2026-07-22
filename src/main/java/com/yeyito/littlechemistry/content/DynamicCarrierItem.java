@@ -31,7 +31,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.Locale;
 import java.util.function.Consumer;
 
-public final class DynamicCarrierItem extends Item {
+public final class DynamicCarrierItem extends Item implements DynamicItemCarrier {
 	public DynamicCarrierItem(Properties properties) {
 		super(properties);
 	}

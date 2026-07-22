@@ -23,6 +23,27 @@ record GenerationRequest(
 			available tools to inspect relevant reference textures and study their palettes, pixel arrangements, silhouettes,
 			shading, and UV or layout conventions. Then create an original texture grounded in those references.
 			""";
+	private static final String ARMOR_DIRECTION = """
+			If the result is armor, inspect reference/vanilla/TEXTURES.txt and read at least one relevant vanilla or modded
+			armor item icon and humanoid equipment texture before coding. Author both the original 16x16 inventory icon and the
+			required 64x32 equipment sheet using Minecraft's actual armor UV layout. For head armor, explicitly study and paint
+			the base-head UV region at x=0..31, y=0..15 and hat/outer-head region at x=32..63, y=0..15 so the worn helmet
+			renders on the player's head instead of only in the inventory.
+			""";
+	private static final String WORKSTATION_DIRECTION = """
+			If the natural result is a workstation, select result kind `block` and code it as a complete generated block with a
+			non-null `DynamicWorkstationSpec`. Furnaces, powered processors, crafting benches, and workbenches should normally be
+			functional workstations rather than decorative blocks. Define its input/output slots, UI, Minecraft-tick
+			processDescription, concise third-person recipePolicy, and closed recipeDataSchema. Its `GeneratedBehaviorImpl` must
+			implement both `WorkstationBehavior` and `WorkstationTickBehavior`; a decorative furnace-like block without those APIs
+			is not a workstation. Inspect reference/API.md and the referenced Little Chemistry classes for exact constructors.
+			""";
+	private static final String PROJECTILE_WEAPON_DIRECTION = """
+			If the result is a bow or crossbow, make it an ordinary item with heldType `BOW` or `CROSSBOW`, maxStack 1,
+			outputCount 1, and positive enchantability.
+			The registered native carrier supplies vanilla drawing, charging, ammunition, firing, sounds, enchantments, and
+			standard durability; do not reimplement those mechanics in generated behavior.
+			""";
 
 	GenerationRequest {
 		if (fixedType == null && fixedDisplayName != null || fixedType != null && fixedDisplayName == null) {
@@ -108,6 +129,7 @@ record GenerationRequest(
 						+ "`<category>/<id>/C_<id>_Content.java` with package `<category>.c_<id>`, plus the sibling "
 						+ "`GeneratedBehaviorImpl.java`. The process and every ingredient must materially influence identity, "
 						+ "pixels, native properties, and behavior.\n\n");
+			prompt.append(ARMOR_DIRECTION).append(WORKSTATION_DIRECTION).append(PROJECTILE_WEAPON_DIRECTION).append('\n');
 		} else {
 			String kind = switch (fixedType) {
 				case ITEM -> "item";
@@ -137,6 +159,9 @@ record GenerationRequest(
 						.append(factoryClass).append("`, and sibling behavior file `")
 						.append(category).append('/').append(identifier).append("/GeneratedBehaviorImpl.java`. ")
 						.append("The requested output count is ").append(fixedOutputCount).append(".\n\n");
+			if (fixedType == DynamicContentType.ARMOR) prompt.append(ARMOR_DIRECTION).append('\n');
+			if (fixedType == DynamicContentType.BLOCK) prompt.append(WORKSTATION_DIRECTION).append('\n');
+			if (fixedType == DynamicContentType.ITEM) prompt.append(PROJECTILE_WEAPON_DIRECTION).append('\n');
 		}
 		prompt.append(TEXTURE_DIRECTION);
 		if (workstationPolicy != null) {

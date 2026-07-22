@@ -15,6 +15,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.component.Tool;
 import net.minecraft.world.item.component.Weapon;
 import net.minecraft.world.item.enchantment.Enchantable;
@@ -36,12 +37,14 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 public final class DynamicContentObjects {
 	public static DataComponentType<Identifier> CONTENT_ID;
 	public static DynamicCarrierItem ITEM;
 	public static DynamicCarrierItem TOOL_HELD_ITEM;
-	private static final Map<DynamicHeldType, DynamicCarrierItem> HELD_ITEMS = new EnumMap<>(DynamicHeldType.class);
+	private static final Map<DynamicHeldType, Item> HELD_ITEMS = new EnumMap<>(DynamicHeldType.class);
 	public static DynamicCarrierItem ARMOR_HEAD;
 	public static DynamicCarrierItem ARMOR_CHEST;
 	public static DynamicCarrierItem ARMOR_LEGGINGS;
@@ -64,13 +67,21 @@ public final class DynamicContentObjects {
 						.build()
 		);
 
-		ITEM = registerHeldCarrier(DynamicHeldType.REGULAR, "dynamic_item", false);
-		TOOL_HELD_ITEM = registerHeldCarrier(DynamicHeldType.TOOL, "dynamic_tool", true);
-		registerHeldCarrier(DynamicHeldType.ROD, "dynamic_rod", false);
-		registerHeldCarrier(DynamicHeldType.BOW, "dynamic_bow", false);
-		registerHeldCarrier(DynamicHeldType.CROSSBOW, "dynamic_crossbow", false);
-		registerHeldCarrier(DynamicHeldType.MACE, "dynamic_mace", false);
-		registerHeldCarrier(DynamicHeldType.SPEAR, "dynamic_spear", false);
+		ITEM = registerHeldCarrier(DynamicHeldType.REGULAR, "dynamic_item",
+				DynamicCarrierItem::new, UnaryOperator.identity());
+		TOOL_HELD_ITEM = registerHeldCarrier(DynamicHeldType.TOOL, "dynamic_tool",
+				DynamicCarrierItem::new, properties -> properties.stacksTo(1));
+		registerHeldCarrier(DynamicHeldType.ROD, "dynamic_rod",
+				DynamicCarrierItem::new, UnaryOperator.identity());
+		registerHeldCarrier(DynamicHeldType.BOW, "dynamic_bow",
+				DynamicBowCarrierItem::new, UnaryOperator.identity());
+		registerHeldCarrier(DynamicHeldType.CROSSBOW, "dynamic_crossbow",
+				DynamicCrossbowCarrierItem::new, properties -> properties
+						.component(DataComponents.CHARGED_PROJECTILES, ChargedProjectiles.EMPTY));
+		registerHeldCarrier(DynamicHeldType.MACE, "dynamic_mace",
+				DynamicCarrierItem::new, UnaryOperator.identity());
+		registerHeldCarrier(DynamicHeldType.SPEAR, "dynamic_spear",
+				DynamicCarrierItem::new, UnaryOperator.identity());
 
 		ARMOR_HEAD = registerArmorCarrier("dynamic_armor_head");
 		ARMOR_CHEST = registerArmorCarrier("dynamic_armor_chest");
@@ -125,11 +136,21 @@ public final class DynamicContentObjects {
 		stack.set(DataComponents.RARITY, definition.rarity());
 		if (definition.item() != null) {
 			DynamicItemProperties properties = definition.item();
-			stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
+			if (properties.heldType().isNativeProjectileWeapon() && properties.maxStack() == 1) {
+				stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
+				stack.set(DataComponents.MAX_DAMAGE, properties.heldType().nativeDurability());
+				stack.set(DataComponents.DAMAGE, 0);
+			} else {
+				stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
+				if (properties.heldType().isNativeProjectileWeapon()) {
+					stack.remove(DataComponents.MAX_DAMAGE);
+					stack.remove(DataComponents.DAMAGE);
+				}
+			}
 			stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, properties.foil());
 			if (properties.enchantability() > 0) {
 				stack.set(DataComponents.ENCHANTABLE, new Enchantable(properties.enchantability()));
-			}
+			} else stack.remove(DataComponents.ENCHANTABLE);
 			if (properties.food() != null) {
 				DynamicFoodProperties food = properties.food();
 				stack.set(DataComponents.FOOD, new FoodProperties(food.hunger(), food.saturation(), food.alwaysEdible()));
@@ -181,6 +202,38 @@ public final class DynamicContentObjects {
 		if (definition == null) return;
 		Rarity currentRarity = stack.getOrDefault(DataComponents.RARITY, Rarity.COMMON);
 		if (currentRarity != definition.rarity()) stack.set(DataComponents.RARITY, definition.rarity());
+		if (definition.item() != null) {
+			DynamicItemProperties properties = definition.item();
+			if (properties.enchantability() > 0) {
+				Enchantable expected = new Enchantable(properties.enchantability());
+				if (!expected.equals(stack.get(DataComponents.ENCHANTABLE))) {
+					stack.set(DataComponents.ENCHANTABLE, expected);
+				}
+			} else stack.remove(DataComponents.ENCHANTABLE);
+			if (properties.heldType().isNativeProjectileWeapon()) {
+				if (properties.maxStack() == 1) {
+					if (stack.getOrDefault(DataComponents.MAX_STACK_SIZE, 1) != 1) {
+						stack.set(DataComponents.MAX_STACK_SIZE, 1);
+					}
+					int durability = properties.heldType().nativeDurability();
+					if (stack.getOrDefault(DataComponents.MAX_DAMAGE, 0) != durability) {
+						stack.set(DataComponents.MAX_DAMAGE, durability);
+					}
+					int damage = stack.getOrDefault(DataComponents.DAMAGE, 0);
+					if (!stack.has(DataComponents.DAMAGE) || damage < 0 || damage > durability) {
+						stack.set(DataComponents.DAMAGE, Math.max(0, Math.min(damage, durability)));
+					}
+				} else {
+					// Old V3.5 catalogs could define stackable visual bows. Remove damage first so their
+					// decoded stacks never transiently combine MAX_DAMAGE with a stack size above one.
+					stack.remove(DataComponents.DAMAGE);
+					stack.remove(DataComponents.MAX_DAMAGE);
+					if (stack.getOrDefault(DataComponents.MAX_STACK_SIZE, 1) != properties.maxStack()) {
+						stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
+					}
+				}
+			}
+		}
 		ItemAttributeModifiers expected = definition.armor() != null
 				? attributes(definition.armor())
 				: definition.item() != null ? attributes(definition.item()) : null;
@@ -238,19 +291,27 @@ public final class DynamicContentObjects {
 		return ResourceKey.create(EquipmentAssets.ROOT_ID, LittleChemistry.id("dynamic/" + textureHash));
 	}
 
-	private static DynamicCarrierItem registerHeldCarrier(DynamicHeldType heldType, String name, boolean stacksToOne) {
+	private static <T extends Item> T registerHeldCarrier(DynamicHeldType heldType, String name,
+			Function<Item.Properties, T> factory, UnaryOperator<Item.Properties> configure) {
 		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, LittleChemistry.id(name));
-		Item.Properties properties = new Item.Properties().setId(key);
-		if (stacksToOne) properties.stacksTo(1);
-		DynamicCarrierItem carrier = Registry.register(BuiltInRegistries.ITEM, key, new DynamicCarrierItem(properties));
+		T carrier = Registry.register(BuiltInRegistries.ITEM, key,
+				factory.apply(configure.apply(new Item.Properties().setId(key))));
 		HELD_ITEMS.put(heldType, carrier);
 		return carrier;
 	}
 
-	private static DynamicCarrierItem heldCarrier(DynamicHeldType heldType) {
-		DynamicCarrierItem carrier = HELD_ITEMS.get(heldType);
+	private static Item heldCarrier(DynamicHeldType heldType) {
+		Item carrier = HELD_ITEMS.get(heldType);
 		if (carrier == null) throw new IllegalStateException("No carrier registered for held type " + heldType);
 		return carrier;
+	}
+
+	static Class<? extends Item> carrierClassFor(DynamicHeldType heldType) {
+		return switch (heldType) {
+			case BOW -> DynamicBowCarrierItem.class;
+			case CROSSBOW -> DynamicCrossbowCarrierItem.class;
+			default -> DynamicCarrierItem.class;
+		};
 	}
 
 	private static DynamicCarrierItem registerArmorCarrier(String name) {
@@ -287,7 +348,7 @@ public final class DynamicContentObjects {
 
 	/** Infrastructure carriers are never valid standalone item identities. */
 	public static boolean isCarrierItem(Item item) {
-		return item instanceof DynamicCarrierItem || item instanceof DynamicCarrierBlockItem
+		return item instanceof DynamicItemCarrier || item instanceof DynamicCarrierBlockItem
 				|| item instanceof DynamicEntitySpawnerItem;
 	}
 }
