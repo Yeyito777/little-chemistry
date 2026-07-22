@@ -50,7 +50,7 @@ public final class DynamicEntitySpawnerItem extends Item {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null) {
 			if (!definition.description().isBlank()) {
-				DynamicTooltipText.appendWrapped(builder, definition.description(), ChatFormatting.GRAY);
+				builder.accept(Component.literal(definition.description()).withStyle(ChatFormatting.GRAY));
 			}
 			builder.accept(Component.literal("Use on a block to spawn").withStyle(ChatFormatting.DARK_GRAY));
 		}

@@ -20,14 +20,6 @@ public record DynamicBlockUseContext(
 		Direction clickedFace,
 		Vec3 clickLocation
 ) {
-	public DynamicItemState state() {
-		return DynamicItemState.of(stack);
-	}
-
-	public DynamicActionInput actionInput() {
-		return DynamicActionInput.capture(player);
-	}
-
 	public BlockPos adjacentPos() {
 		return clickedPos.relative(clickedFace);
 	}

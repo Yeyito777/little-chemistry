@@ -10,15 +10,8 @@ public record DynamicArmorProperties(
 		double defense,
 		double toughness,
 		double knockbackResistance,
-		int durability,
-		boolean glider
+		int durability
 ) {
-	/** Compatibility constructor for armor definitions predating generated glider equipment. */
-	public DynamicArmorProperties(DynamicArmorSlot slot, Rarity rarity, boolean foil, int enchantability,
-			double defense, double toughness, double knockbackResistance, int durability) {
-		this(slot, rarity, foil, enchantability, defense, toughness, knockbackResistance, durability, false);
-	}
-
 	public DynamicArmorProperties {
 		if (slot == null) throw new IllegalArgumentException("Armor slot is required");
 		if (rarity == null) throw new IllegalArgumentException("Armor rarity is required");
@@ -51,6 +44,6 @@ public record DynamicArmorProperties(
 			case LEGGINGS -> 225;
 			case BOOTS -> 195;
 		};
-		return new DynamicArmorProperties(slot, Rarity.COMMON, false, 9, defense, 0.0, 0.0, durability, false);
+		return new DynamicArmorProperties(slot, Rarity.COMMON, false, 9, defense, 0.0, 0.0, durability);
 	}
 }

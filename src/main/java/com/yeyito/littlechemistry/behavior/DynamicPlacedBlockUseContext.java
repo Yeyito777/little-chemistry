@@ -21,14 +21,6 @@ public record DynamicPlacedBlockUseContext(
 		BlockHitResult hit,
 		DynamicContentDefinition definition
 ) {
-	public DynamicBlockState persistentState() {
-		return DynamicBlockState.at(level, position);
-	}
-
-	public DynamicActionInput actionInput() {
-		return DynamicActionInput.capture(player);
-	}
-
 	public boolean emptyHand() {
 		return hand == null || heldStack.isEmpty();
 	}

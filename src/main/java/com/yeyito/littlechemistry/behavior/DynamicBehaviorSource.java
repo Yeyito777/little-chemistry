@@ -15,12 +15,11 @@ public final class DynamicBehaviorSource {
 	private static final String MARKER_SOURCE = "public final class " + CLASS_NAME
 			+ " implements com.yeyito.littlechemistry.behavior.DynamicBehavior { public "
 			+ CLASS_NAME + "() {} }";
-	private static final Pattern PACKAGE_DECLARATION = Pattern.compile(
-			"\\bpackage\\s+([A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*)\\s*;");
+	private static final Pattern CLASS_DECLARATION = Pattern.compile(
+			"\\bclass\\s+" + Pattern.quote(CLASS_NAME) + "\\b");
 	private static final Pattern OVERRIDE_SUFFIX = Pattern.compile("@(?:java\\.lang\\.)?Override\\s*$");
 	private static final Pattern PASS_RETURN = Pattern.compile(
 			"return(?:net\\.minecraft\\.world\\.)?InteractionResult\\.PASS;");
-	private static final Pattern FALSE_RETURN = Pattern.compile("returnfalse;");
 	private static final Pattern IDENTIFIER_RETURN = Pattern.compile("return([A-Za-z_$][A-Za-z0-9_$]*);");
 	private static final Pattern DYNAMIC_PARTICLE_SPAWN = Pattern.compile(
 			"\\bDynamicParticles\\s*\\.\\s*spawn\\s*\\(");
@@ -74,38 +73,18 @@ public final class DynamicBehaviorSource {
 			migrated = migrated.substring(0, migratedClass.openingBrace()) + interfaces
 					+ " " + migrated.substring(migratedClass.openingBrace());
 		}
-		CAPABILITY_CACHE.remove(CLASS_NAME + '\0' + normalized);
+		CAPABILITY_CACHE.remove(normalized);
 		return migrated.strip();
 	}
 
-	/**
-	 * Returns the callback capabilities explicitly selected in an entry source declaration.
-	 *
-	 * <p>Legacy callers normally supply {@code GeneratedBehaviorImpl}, but persisted source bundles may use any
-	 * Java-safe entry-class name. When the legacy name is absent, inspect the top-level class that directly declares
-	 * {@link DynamicBehavior} instead of silently treating a valid packaged bundle as legacy-only.</p>
-	 */
+	/** Returns the callback capabilities explicitly selected in the generated class declaration. */
 	public static Set<DynamicBehaviorCapability> capabilities(String source) {
 		if (source == null || source.isBlank()) return Set.of();
-		String masked = maskNonCode(source);
-		if (Pattern.compile("\\bclass\\s+" + Pattern.quote(CLASS_NAME) + "\\b").matcher(masked).find()) {
-			return capabilities(source, CLASS_NAME);
-		}
-		return capabilities(source, locateBehaviorEntryClassName(source));
-	}
-
-	/** Returns the callback capabilities declared directly by a source bundle's entry class. */
-	public static Set<DynamicBehaviorCapability> capabilities(DynamicBehaviorSourceBundle bundle) {
-		if (bundle == null) return Set.of();
-		return capabilities(bundle.entrySource(), simpleName(bundle.entryClass()));
+		return CAPABILITY_CACHE.computeIfAbsent(source, DynamicBehaviorSource::inspectCapabilities);
 	}
 
 	public static boolean supports(String source, DynamicBehaviorCapability capability) {
 		return capabilities(source).contains(capability);
-	}
-
-	public static boolean supports(DynamicBehaviorSourceBundle bundle, DynamicBehaviorCapability capability) {
-		return capabilities(bundle).contains(capability);
 	}
 
 	/**
@@ -147,40 +126,8 @@ public final class DynamicBehaviorSource {
 		return List.copyOf(ids);
 	}
 
-	/** Inspects every runtime source in a bundle so particle calls cannot be hidden in helper classes. */
-	public static List<String> referencedCustomParticleIds(DynamicBehaviorSourceBundle bundle) {
-		if (bundle == null) return List.of();
-		List<String> ids = new ArrayList<>();
-		for (String source : bundle.sources().values()) ids.addAll(referencedCustomParticleIds(source));
-		return List.copyOf(ids);
-	}
-
-	/**
-	 * Resolves the binary name of the public entry class declared by a Java source file.
-	 * The expected simple name comes from the source filename and prevents an unrelated nested class from being selected.
-	 */
-	public static String declaredEntryClass(String source, String expectedSimpleName) {
-		if (source == null || source.isBlank() || expectedSimpleName == null
-				|| !expectedSimpleName.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
-			throw new IllegalArgumentException("Behavior entry source identity is invalid");
-		}
-		String masked = maskNonCode(source);
-		Pattern declaration = Pattern.compile("\\bpublic\\s+(?:(?:final|abstract|sealed|non-sealed)\\s+)*class\\s+"
-				+ Pattern.quote(expectedSimpleName) + "\\b");
-		if (!declaration.matcher(masked).find()) {
-			throw new IllegalArgumentException("Behavior entry source must declare public class " + expectedSimpleName);
-		}
-		Matcher packageDeclaration = PACKAGE_DECLARATION.matcher(masked);
-		return packageDeclaration.find() ? packageDeclaration.group(1) + "." + expectedSimpleName : expectedSimpleName;
-	}
-
-	private static Set<DynamicBehaviorCapability> capabilities(String source, String className) {
-		String cacheKey = className + '\0' + source;
-		return CAPABILITY_CACHE.computeIfAbsent(cacheKey, ignored -> inspectCapabilities(source, className));
-	}
-
-	private static Set<DynamicBehaviorCapability> inspectCapabilities(String source, String className) {
-		EnumSet<DynamicBehaviorCapability> capabilities = declaredCapabilities(source, locateClass(source, className));
+	private static Set<DynamicBehaviorCapability> inspectCapabilities(String source) {
+		EnumSet<DynamicBehaviorCapability> capabilities = declaredCapabilities(source, locateClass(source));
 		return capabilities.isEmpty()
 				? Set.of()
 				: Collections.unmodifiableSet(EnumSet.copyOf(capabilities));
@@ -200,46 +147,14 @@ public final class DynamicBehaviorSource {
 	}
 
 	private static SourceClass locateClass(String source) {
-		return locateClass(source, CLASS_NAME);
-	}
-
-	private static String locateBehaviorEntryClassName(String source) {
 		String masked = maskNonCode(source);
-		Matcher declaration = Pattern.compile("\\bclass\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b").matcher(masked);
-		int depth = 0;
-		int cursor = 0;
-		while (declaration.find()) {
-			for (int index = cursor; index < declaration.start(); index++) {
-				char value = masked.charAt(index);
-				if (value == '{') depth++;
-				else if (value == '}') depth--;
-			}
-			cursor = declaration.end();
-			if (depth != 0) continue;
-			int openingBrace = masked.indexOf('{', declaration.end());
-			if (openingBrace < 0) break;
-			String declarationHeader = masked.substring(declaration.end(), openingBrace);
-			if (Pattern.compile("\\b(?:[A-Za-z_$][A-Za-z0-9_$]*\\.)*DynamicBehavior\\b")
-					.matcher(declarationHeader).find()) {
-				return declaration.group(1);
-			}
-		}
-		throw new IllegalArgumentException("Behavior does not declare a top-level DynamicBehavior entry class");
-	}
-
-	private static SourceClass locateClass(String source, String className) {
-		String masked = maskNonCode(source);
-		Matcher declaration = Pattern.compile("\\bclass\\s+" + Pattern.quote(className) + "\\b").matcher(masked);
-		if (!declaration.find()) throw new IllegalArgumentException("Behavior does not declare " + className);
+		Matcher declaration = CLASS_DECLARATION.matcher(masked);
+		if (!declaration.find()) throw new IllegalArgumentException("Behavior does not declare " + CLASS_NAME);
 		int openingBrace = masked.indexOf('{', declaration.end());
 		if (openingBrace < 0) throw new IllegalArgumentException("Behavior class has no body");
 		int closingBrace = matchingDelimiter(masked, openingBrace, '{', '}');
 		if (closingBrace < 0) throw new IllegalArgumentException("Behavior class body is incomplete");
 		return new SourceClass(declaration.start(), openingBrace, closingBrace);
-	}
-
-	private static String simpleName(String binaryName) {
-		return binaryName.substring(binaryName.lastIndexOf('.') + 1);
 	}
 
 	private static MethodRegion findTopLevelMethod(String masked, SourceClass sourceClass, String methodName) {
@@ -267,9 +182,8 @@ public final class DynamicBehaviorSource {
 	private static boolean isNeutral(String masked, MethodRegion method, DynamicBehaviorCapability capability) {
 		String body = masked.substring(method.openingBrace() + 1, method.closingBrace()).replaceAll("\\s+", "");
 		return switch (capability) {
-			case BEGIN_USING, USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, USE_PLACED_BLOCK ->
+			case USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, USE_PLACED_BLOCK ->
 					PASS_RETURN.matcher(body).matches();
-			case RELEASE_USING -> FALSE_RETURN.matcher(body).matches();
 			case FINISH_USING -> returnsResultParameter(masked, method, body);
 			default -> body.isEmpty();
 		};

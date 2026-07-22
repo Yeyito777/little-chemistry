@@ -45,23 +45,15 @@ public final class DynamicBehaviorCompiler {
 	}
 
 	public static Compiled compile(String source) {
-		return compile(DynamicBehaviorSourceBundle.legacy(normalize(source)));
-	}
-
-	/** Compiles and links an entry class and all of its persisted runtime helper sources as one isolated module. */
-	public static Compiled compile(DynamicBehaviorSourceBundle sourceBundle) {
-		if (sourceBundle == null) throw new IllegalArgumentException("Behavior source bundle is empty");
-		DynamicBehaviorSourceBundle normalized = new DynamicBehaviorSourceBundle(
-				sourceBundle.entryClass(), sourceBundle.entrySourcePath(), sourceBundle.sources());
+		String normalized = normalize(source);
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
 		StringWriter compilerOutput = new StringWriter();
 		EclipseCompiler compiler = new EclipseCompiler();
 		try (StandardJavaFileManager standardFiles = compiler.getStandardFileManager(
-				diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
+						diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
 			configureClassPath(standardFiles);
-			List<SourceFile> compilationUnits = normalized.sources().entrySet().stream()
-					.map(source -> new SourceFile(source.getKey(), source.getValue())).toList();
-			MemoryFileManager files = new MemoryFileManager(standardFiles, compilationUnits);
+			SourceFile compilationUnit = new SourceFile(normalized);
+			MemoryFileManager files = new MemoryFileManager(standardFiles, compilationUnit);
 			List<String> options = List.of(
 					"--release", "25",
 					"-proc:none",
@@ -74,28 +66,28 @@ public final class DynamicBehaviorCompiler {
 					diagnostics,
 					options,
 					null,
-					compilationUnits
+					List.of(compilationUnit)
 			).call());
 			if (!succeeded) {
 				throw new IllegalArgumentException(compilationFailure(diagnostics.getDiagnostics(), compilerOutput));
 			}
 
 			Map<String, byte[]> classFiles = files.classFiles();
-			if (!classFiles.containsKey(normalized.entryClass())) {
-				throw new IllegalArgumentException("Generated behavior did not emit " + normalized.entryClass());
+			if (!classFiles.containsKey(GENERATED_CLASS_NAME)) {
+				throw new IllegalArgumentException("Generated behavior did not emit " + GENERATED_CLASS_NAME);
 			}
 			GeneratedClassLoader classLoader = new GeneratedClassLoader(
 					DynamicBehavior.class.getClassLoader(), classFiles);
 			classLoader.linkAll();
-			Class<?> generated = Class.forName(normalized.entryClass(), false, classLoader);
+			Class<?> generated = Class.forName(GENERATED_CLASS_NAME, false, classLoader);
 			if (!DynamicBehavior.class.isAssignableFrom(generated)) {
-				throw new IllegalArgumentException(normalized.entryClass() + " must implement DynamicBehavior");
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must implement DynamicBehavior");
 			}
-			validateCapabilities(normalized, generated, classLoader, classFiles.keySet());
+			validateCapabilities(normalized, generated);
 			@SuppressWarnings("unchecked")
 			Class<? extends DynamicBehavior> behaviorClass = (Class<? extends DynamicBehavior>) generated;
 			Constructor<? extends DynamicBehavior> constructor = behaviorClass.getConstructor();
-			return new Compiled(normalized.entrySource(), normalized, constructor, classLoader);
+			return new Compiled(normalized, constructor, classLoader);
 		} catch (IOException error) {
 			throw new IllegalArgumentException("Java compiler I/O failed: " + safeMessage(error), error);
 		} catch (ReflectiveOperationException | LinkageError error) {
@@ -183,78 +175,42 @@ public final class DynamicBehaviorCompiler {
 		return message.toString();
 	}
 
-	private static void validateCapabilities(DynamicBehaviorSourceBundle sourceBundle, Class<?> generated,
-			ClassLoader classLoader, Set<String> generatedClassNames) {
-		Set<DynamicBehaviorCapability> declared = DynamicBehaviorSource.capabilities(sourceBundle);
-		String entryClass = sourceBundle.entryClass();
+	private static void validateCapabilities(String source, Class<?> generated) {
+		Set<DynamicBehaviorCapability> declared = DynamicBehaviorSource.capabilities(source);
 		for (DynamicBehaviorCapability capability : DynamicBehaviorCapability.values()) {
 			if (declared.contains(capability) && !declared.containsAll(capability.requiredCapabilities())) {
-				throw new IllegalArgumentException(entryClass + " must declare "
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must declare "
 						+ capability.requiredCapabilities().iterator().next().interfaceName() + " with "
 						+ capability.interfaceName());
 			}
 			boolean implemented = capability.interfaceClass().isAssignableFrom(generated);
 			if (implemented != declared.contains(capability)) {
-				throw new IllegalArgumentException(entryClass + " must declare "
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " must declare "
 						+ capability.interfaceName() + " directly when implementing "
 						+ capability.callbackName());
 			}
 			boolean declaresCallback = Arrays.stream(generated.getDeclaredMethods())
 					.anyMatch(method -> method.getName().equals(capability.callbackName()));
 			if (declaresCallback && !implemented) {
-				throw new IllegalArgumentException(entryClass + " declares "
+				throw new IllegalArgumentException(GENERATED_CLASS_NAME + " declares "
 						+ capability.callbackName() + " but does not implement "
 						+ capability.interfaceName());
 			}
 		}
-		boolean workstationBehavior = WorkstationBehavior.class.isAssignableFrom(generated);
+		if (WorkstationBehavior.class.isAssignableFrom(generated) && generated.getDeclaredFields().length != 0) {
+			throw new IllegalArgumentException(GENERATED_CLASS_NAME
+					+ " must not declare fields when implementing workstation capabilities; use DynamicWorkstationContext state");
+		}
 		boolean entityBehavior = EntitySpawnedBehavior.class.isAssignableFrom(generated)
 				|| EntityTickBehavior.class.isAssignableFrom(generated)
 				|| EntityInteractBehavior.class.isAssignableFrom(generated)
-				|| EntityPreHurtBehavior.class.isAssignableFrom(generated)
-				|| EntityPreAttackBehavior.class.isAssignableFrom(generated)
 				|| EntityHurtBehavior.class.isAssignableFrom(generated)
 				|| EntityAttackBehavior.class.isAssignableFrom(generated)
 				|| EntityDeathBehavior.class.isAssignableFrom(generated);
-		if (workstationBehavior || entityBehavior) validateSingletonState(
-				entryClass, generated, classLoader, generatedClassNames, workstationBehavior);
-	}
-
-	private static void validateSingletonState(String entryClass, Class<?> generated, ClassLoader classLoader,
-			Set<String> generatedClassNames, boolean workstationBehavior) {
-		Set<Class<?>> inspected = new HashSet<>();
-		for (Class<?> current = generated; current != null && current != Object.class; current = current.getSuperclass()) {
-			inspectSingletonFields(entryClass, current, inspected, workstationBehavior);
+		if (entityBehavior && generated.getDeclaredFields().length != 0) {
+			throw new IllegalArgumentException(GENERATED_CLASS_NAME
+					+ " must not declare fields when implementing entity capabilities; use DynamicEntityState");
 		}
-		for (String className : generatedClassNames) {
-			try {
-				inspectSingletonFields(entryClass, Class.forName(className, false, classLoader),
-						inspected, workstationBehavior);
-			} catch (ClassNotFoundException impossible) {
-				throw new IllegalArgumentException("Generated behavior helper could not be inspected: " + className, impossible);
-			}
-		}
-	}
-
-	private static void inspectSingletonFields(String entryClass, Class<?> type, Set<Class<?>> inspected,
-			boolean workstationBehavior) {
-		if (!inspected.add(type)) return;
-		for (java.lang.reflect.Field field : type.getDeclaredFields()) {
-			if (field.isSynthetic()) continue;
-			int modifiers = field.getModifiers();
-			boolean safeConstant = java.lang.reflect.Modifier.isStatic(modifiers)
-					&& java.lang.reflect.Modifier.isFinal(modifiers) && isSafeConstantType(field.getType());
-			if (safeConstant) continue;
-			String stateApi = workstationBehavior ? "DynamicWorkstationContext state" : "DynamicEntityState";
-			throw new IllegalArgumentException(entryClass + " and its runtime helpers must not declare mutable field "
-					+ type.getName() + "." + field.getName() + "; use " + stateApi);
-		}
-	}
-
-	private static boolean isSafeConstantType(Class<?> type) {
-		return type.isPrimitive() || type.isEnum() || type == String.class || type == Class.class
-				|| type == Boolean.class || type == Character.class || type == Byte.class || type == Short.class
-				|| type == Integer.class || type == Long.class || type == Float.class || type == Double.class;
 	}
 
 	private static String normalize(String source) {
@@ -277,7 +233,6 @@ public final class DynamicBehaviorCompiler {
 
 	public record Compiled(
 			String source,
-			DynamicBehaviorSourceBundle sourceBundle,
 			Constructor<? extends DynamicBehavior> constructor,
 			ClassLoader classLoader
 	) {
@@ -291,12 +246,10 @@ public final class DynamicBehaviorCompiler {
 	}
 
 	private static final class SourceFile extends SimpleJavaFileObject {
-		private final String path;
 		private final String source;
 
-		private SourceFile(String path, String source) {
-			super(URI.create("string:///" + path), Kind.SOURCE);
-			this.path = path;
+		private SourceFile(String source) {
+			super(URI.create("string:///" + GENERATED_CLASS_NAME + Kind.SOURCE.extension), Kind.SOURCE);
 			this.source = source;
 		}
 
@@ -307,7 +260,7 @@ public final class DynamicBehaviorCompiler {
 
 		@Override
 		public String getName() {
-			return path;
+			return GENERATED_CLASS_NAME + Kind.SOURCE.extension;
 		}
 	}
 
@@ -350,15 +303,15 @@ public final class DynamicBehaviorCompiler {
 	}
 
 	private static final class MemoryFileManager extends ForwardingJavaFileManager<StandardJavaFileManager> {
-		private final Set<SourceFile> sources;
+		private final SourceFile source;
 		private final FabricLauncher launcher = fabricLauncher();
 		private final Map<String, RuntimeClassFile> runtimeClasses = new HashMap<>();
 		private final Set<String> unavailableRuntimeClasses = new HashSet<>();
 		private final Map<String, ClassFile> outputs = new TreeMap<>();
 
-		private MemoryFileManager(StandardJavaFileManager fileManager, List<SourceFile> sources) {
+		private MemoryFileManager(StandardJavaFileManager fileManager, SourceFile source) {
 			super(fileManager);
-			this.sources = Set.copyOf(sources);
+			this.source = source;
 		}
 
 		@Override
@@ -368,7 +321,7 @@ public final class DynamicBehaviorCompiler {
 
 		@Override
 		public boolean contains(Location location, FileObject file) throws IOException {
-			if (location == StandardLocation.SOURCE_PATH && sources.contains(file)) return true;
+			if (location == StandardLocation.SOURCE_PATH && file == source) return true;
 			return super.contains(location, file);
 		}
 
@@ -413,9 +366,8 @@ public final class DynamicBehaviorCompiler {
 			if (kind != JavaFileObject.Kind.CLASS) {
 				throw new IllegalArgumentException("Unexpected compiler output kind: " + kind);
 			}
-			String binaryName = className.replace('/', '.').replace('\\', '.');
-			ClassFile output = new ClassFile(binaryName);
-			outputs.put(binaryName, output);
+			ClassFile output = new ClassFile(className);
+			outputs.put(className, output);
 			return output;
 		}
 

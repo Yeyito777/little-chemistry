@@ -72,14 +72,6 @@ public record DynamicTextureSpec(List<String> palette, List<String> rows) {
 		}
 	}
 
-	public boolean hasTranslucentAlpha() {
-		for (String color : palette) {
-			int alpha = Integer.parseInt(color.substring(6, 8), 16);
-			if (alpha > 0 && alpha < 255) return true;
-		}
-		return false;
-	}
-
 	public byte[] renderPng() throws IOException {
 		BufferedImage image = new BufferedImage(width(), height(), BufferedImage.TYPE_INT_ARGB);
 		for (int y = 0; y < rows.size(); y++) {

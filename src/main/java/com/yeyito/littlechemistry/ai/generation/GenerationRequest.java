@@ -102,9 +102,8 @@ record GenerationRequest(
 			}
 			prompt.append("For an accepted result, armor output count is 1. Normalize `displayName` to a lowercase "
 						+ "underscore ID and create `<category>/<id>/C_<id>_Content.java` with package "
-						+ "`<category>.c_<id>`, plus the sibling `GeneratedBehaviorImpl.java`. Runtime behavior helper "
-						+ "Java may be placed under `helpers/<id>/` and imported by the behavior entry class. The process "
-						+ "and every ingredient must materially influence identity, pixels, native properties, and behavior.\n\n");
+						+ "`<category>.c_<id>`, plus the sibling `GeneratedBehaviorImpl.java`. The process and every "
+						+ "ingredient must materially influence identity, pixels, native properties, and behavior.\n\n");
 		} else {
 			String kind = switch (fixedType) {
 				case ITEM -> "item";
@@ -133,20 +132,17 @@ record GenerationRequest(
 						.append(GenerationWorkspace.javaPackageSegment(identifier)).append("`, public factory class `")
 						.append(factoryClass).append("`, and sibling behavior file `")
 						.append(category).append('/').append(identifier).append("/GeneratedBehaviorImpl.java`. ")
-						.append("Runtime behavior helper Java may be added under `helpers/").append(identifier)
-						.append("/`. The requested output count is ").append(fixedOutputCount).append(".\n\n");
+						.append("The requested output count is ").append(fixedOutputCount).append(".\n\n");
 		}
 		prompt.append(TEXTURE_DIRECTION);
 		if (workstationPolicy != null) {
 			prompt.append("If accepting the recipe, implement the complete gameplay properties and behavior that naturally follow "
 					+ "from the concept and recipe. For either an accepted result or a rejection, call `verify` and repair any "
-					+ "diagnostics before finishing. ");
+					+ "diagnostics before finishing.");
 		} else {
 			prompt.append("Implement the complete gameplay properties and behavior that naturally follow from the concept and recipe. ")
-					.append("Build and verify the finished content, repairing any diagnostics before finishing. ");
+					.append("Build and verify the finished content, repairing any diagnostics before finishing.");
 		}
-		prompt.append("Also consider whether the result warrants native Minecraft sound design, custom particles, runtime behavior ")
-				.append("helpers, or other reusable helpers, and create the appropriate source under sounds/, particles/, or helpers/.");
 		return prompt.toString();
 	}
 

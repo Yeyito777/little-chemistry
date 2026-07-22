@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.LittleChemistrySettings;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.ContentGenerationService;
@@ -48,11 +49,15 @@ public final class LittleChemistryCommands {
 	private static final PermissionNode<Boolean> CREATE_PERMISSION = PermissionNode.of(
 			LittleChemistry.id("command.create")
 	);
+	private static final PermissionNode<Boolean> SETTINGS_PERMISSION = PermissionNode.of(
+			LittleChemistry.id("command.settings")
+	);
 	private static final Predicate<CommandSourceStack> CREATE_PREDICATE =
 			PermissionPredicates.require(CREATE_PERMISSION, PermissionLevel.ADMINS);
 	private static final ExecutorService AI_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 	private static final Map<UUID, CompletableFuture<String>> ACTIVE_REQUESTS = new ConcurrentHashMap<>();
 	private static final AuthConfig AUTH_CONFIG = new AuthConfig();
+	private static final LittleChemistrySettings SETTINGS = new LittleChemistrySettings();
 	private static final OpenAiClient OPEN_AI = new OpenAiClient(AUTH_CONFIG);
 
 	private LittleChemistryCommands() {
@@ -71,6 +76,14 @@ public final class LittleChemistryCommands {
 								.then(literal("apikey")
 										.then(argument("api_key", StringArgumentType.word())
 												.executes(LittleChemistryCommands::useApiKey))))
+						.then(literal("settings")
+								.requires(PermissionPredicates.require(SETTINGS_PERMISSION, PermissionLevel.ADMINS))
+								.then(literal(LittleChemistrySettings.EXOCORTEX_LOGGING)
+										.executes(LittleChemistryCommands::showExocortexLogging)
+										.then(literal("on")
+												.executes(context -> setExocortexLogging(context, true)))
+										.then(literal("off")
+												.executes(context -> setExocortexLogging(context, false)))))
 							.then(literal("item")
 									.requires(CREATE_PREDICATE)
 								.then(literal("create")
@@ -195,10 +208,7 @@ public final class LittleChemistryCommands {
 			context.getSource().sendSuccess(() -> Component.literal("Little Chemistry test " + result.suiteNumber()
 					+ " placed " + result.placedCount() + " crafting tables and started " + started
 					+ " invention jobs" + (skipped == 0 ? "." : "; " + skipped
-					+ " grids were left populated but already had a recipe or could not start.")
-					+ (result.exocortexExportEnabled()
-					? " Completed job logs will appear in the exact Exocortex folder littlechemistry/logs."
-					: " The exact Exocortex folder littlechemistry/logs was not found; logs will remain world-only."))
+					+ " grids were left populated but already had a recipe or could not start."))
 					.withStyle(started > 0 ? ChatFormatting.GREEN : ChatFormatting.YELLOW), false);
 			return (int) started;
 		} catch (IOException | IllegalArgumentException error) {
@@ -285,6 +295,29 @@ public final class LittleChemistryCommands {
 			return 1;
 		} catch (IOException | IllegalArgumentException error) {
 			context.getSource().sendFailure(error("Could not save API key: " + rootMessage(error)));
+			return 0;
+		}
+	}
+
+	private static int showExocortexLogging(CommandContext<CommandSourceStack> context) {
+		boolean enabled = SETTINGS.exocortexLogging();
+		context.getSource().sendSuccess(() -> Component.literal("Exocortex craft logging is "
+				+ (enabled ? "ON." : "OFF.") + (enabled
+				? " New AI recipe conversations will be sent to littlechemistry/logs when that exact live Exocortex folder exists."
+				: " New AI recipe conversations will remain in their per-world logs only."))
+				.withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW), false);
+		return 1;
+	}
+
+	private static int setExocortexLogging(CommandContext<CommandSourceStack> context, boolean enabled) {
+		try {
+			SETTINGS.setExocortexLogging(enabled);
+			context.getSource().sendSuccess(() -> Component.literal("Exocortex craft logging is now "
+					+ (enabled ? "ON." : "OFF."))
+					.withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW), false);
+			return 1;
+		} catch (IOException error) {
+			context.getSource().sendFailure(error("Could not save exocortex-logging: " + rootMessage(error)));
 			return 0;
 		}
 	}

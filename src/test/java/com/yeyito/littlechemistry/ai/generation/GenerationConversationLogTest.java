@@ -155,7 +155,7 @@ final class GenerationConversationLogTest {
 		Path job = temporaryDirectory.resolve("rejected-job");
 		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
 			Files.writeString(job.resolve("request.json"), """
-					{"mode":"recipe","workstationPolicy":"Reject invalid recipes."}
+					{"mode":"recipe","recipe":{"workstation":{"displayName":"Weak Press"}}}
 					""");
 			JsonArray history = initialHistory();
 			WorkstationRecipeRejection rejection = new WorkstationRecipeRejection(

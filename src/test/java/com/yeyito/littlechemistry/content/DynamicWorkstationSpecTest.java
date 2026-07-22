@@ -132,7 +132,7 @@ class DynamicWorkstationSpecTest {
 
 		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
 				() -> new DynamicWorkstationSpec(valid.slots(), largeUi, "界".repeat(1_024),
-						"界".repeat(DynamicWorkstationSpec.MAX_RECIPE_POLICY_LENGTH), recipeDataSchema()));
+						"界".repeat(DynamicWorkstationSpec.MAX_RECIPE_SYSTEM_PROMPT_LENGTH), recipeDataSchema()));
 
 		assertTrue(error.getMessage().contains("UTF-8 byte opening-data limit"), error.getMessage());
 	}
@@ -152,6 +152,17 @@ class DynamicWorkstationSpecTest {
 		assertEquals(workstation, DynamicWorkstationJson.decode(modelFacing));
 		modelFacing.addProperty("recipeSystemPrompt", workstation.recipePolicy());
 		assertThrows(IllegalArgumentException.class, () -> DynamicWorkstationJson.decode(modelFacing));
+	}
+
+	@Test
+	void legacyImperativePolicyRemainsLoadableAsUntrustedCompatibilityData() {
+		JsonObject encoded = DynamicWorkstationJson.encode(workstation());
+		String legacy = "Generate coherent separation recipes. Catalysts are retained and duration_ticks controls spin time.";
+		encoded.addProperty("recipeSystemPrompt", legacy);
+
+		DynamicWorkstationSpec decoded = DynamicWorkstationJson.decode(encoded);
+
+		assertEquals(legacy, decoded.recipePolicy());
 	}
 
 	static DynamicWorkstationSpec workstation() {

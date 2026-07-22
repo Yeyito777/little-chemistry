@@ -180,11 +180,7 @@ public final class DynamicContentAiDescription {
 		result.addProperty("fuelBurnTicks", item.fuelBurnTicks());
 		result.addProperty("foil", item.foil());
 		result.addProperty("enchantability", item.enchantability());
-		result.addProperty("durability", item.durability());
 		result.addProperty("reach", item.reach());
-		result.addProperty("attackDamage", item.attackDamage());
-		result.addProperty("attackSpeed", item.attackSpeed());
-		result.addProperty("damagePerAttack", item.damagePerAttack());
 		if (item.itemType() == DynamicItemType.TOOL) {
 			JsonObject tool = new JsonObject();
 			tool.addProperty("category", item.tool().serializedName());
@@ -192,6 +188,7 @@ public final class DynamicContentAiDescription {
 			tool.addProperty("breakingSpeed", item.breakingSpeed());
 			tool.addProperty("attackDamage", item.attackDamage());
 			tool.addProperty("attackSpeed", item.attackSpeed());
+			tool.addProperty("durability", item.durability());
 			tool.addProperty("damagePerBlock", item.damagePerBlock());
 			tool.addProperty("damagePerAttack", item.damagePerAttack());
 			result.add("tool", tool);
@@ -207,7 +204,6 @@ public final class DynamicContentAiDescription {
 		result.addProperty("saturation", food.saturation());
 		result.addProperty("consumeSeconds", food.consumeSeconds());
 		result.addProperty("alwaysEdible", food.alwaysEdible());
-		result.addProperty("style", food.style().serializedName());
 		JsonArray effects = new JsonArray();
 		for (DynamicFoodEffect effect : food.effects()) {
 			JsonObject encoded = new JsonObject();
@@ -244,7 +240,6 @@ public final class DynamicContentAiDescription {
 		result.addProperty("toughness", armor.toughness());
 		result.addProperty("knockbackResistance", armor.knockbackResistance());
 		result.addProperty("durability", armor.durability());
-		result.addProperty("glider", armor.glider());
 		return result;
 	}
 

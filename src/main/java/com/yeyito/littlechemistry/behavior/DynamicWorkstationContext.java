@@ -54,10 +54,6 @@ public final class DynamicWorkstationContext {
 		return definition;
 	}
 
-	public DynamicActionInput actionInput(net.minecraft.server.level.ServerPlayer player) {
-		return DynamicActionInput.capture(player);
-	}
-
 	public Set<String> slotIds() {
 		Set<String> result = new LinkedHashSet<>();
 		for (String slotId : runtime.slotIds()) {

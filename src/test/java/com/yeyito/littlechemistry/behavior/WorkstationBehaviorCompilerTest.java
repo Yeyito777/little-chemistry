@@ -167,7 +167,7 @@ final class WorkstationBehaviorCompilerTest {
 	}
 
 	@Test
-	void compilerRejectsMutableFieldsButAllowsSafeConstantsOnACompiledWorkstationClass() {
+	void compilerRejectsAllFieldsOnACompiledWorkstationClass() {
 		String withInstanceField = """
 				import com.yeyito.littlechemistry.behavior.*;
 				public final class GeneratedBehaviorImpl implements DynamicBehavior, WorkstationBehavior {
@@ -183,9 +183,10 @@ final class WorkstationBehaviorCompilerTest {
 
 		IllegalArgumentException instanceError = assertThrows(IllegalArgumentException.class,
 				() -> DynamicBehaviorCompiler.compile(withInstanceField));
-		DynamicBehavior constantsOnly = DynamicBehaviorCompiler.compile(withStaticField).instantiate();
+		IllegalArgumentException staticError = assertThrows(IllegalArgumentException.class,
+				() -> DynamicBehaviorCompiler.compile(withStaticField));
 
-		assertTrue(instanceError.getMessage().contains("must not declare mutable field"), instanceError.getMessage());
-		assertTrue(constantsOnly instanceof WorkstationBehavior);
+		assertTrue(instanceError.getMessage().contains("must not declare fields"), instanceError.getMessage());
+		assertTrue(staticError.getMessage().contains("must not declare fields"), staticError.getMessage());
 	}
 }

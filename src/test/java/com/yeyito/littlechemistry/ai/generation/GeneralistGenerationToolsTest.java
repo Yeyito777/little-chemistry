@@ -8,7 +8,6 @@ import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -31,40 +30,34 @@ final class GeneralistGenerationToolsTest {
 			Files.createDirectories(job.resolve("reference"));
 			Files.createDirectories(job.resolve(".existing-sourcepath"));
 			Files.writeString(job.resolve("request.json"), "immutable");
+			Files.writeString(job.resolve("AGENTS.md"), "immutable instructions");
+			Files.writeString(job.resolve("README.md"), "immutable readme");
 			GenerationRequest request = GenerationRequest.fixed(
 					DynamicContentType.ITEM, null, "Sandbox Item", 1, null);
 			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace, request);
 			JsonObject arguments = new JsonObject();
 			arguments.addProperty("command",
-					"printf ok > items/created.txt; ln -s /etc/passwd items/host-link; printf changed > request.json");
+					"printf ok > items/created.txt; ln -s /etc/passwd items/host-link; "
+							+ "printf changed > request.json; printf changed > AGENTS.md; printf changed > README.md");
 
-			var result = tools.execute("bash", arguments);
-			JsonObject readLink = new JsonObject();
-			readLink.addProperty("path", "items/host-link");
-			var escapedRead = tools.execute("read", readLink);
-			JsonObject grepItems = new JsonObject();
-			grepItems.addProperty("pattern", "root:");
-			grepItems.addProperty("path", "items");
-			var escapedGrep = tools.execute("grep", grepItems);
+				var result = tools.execute("bash", arguments);
+				JsonObject readLink = new JsonObject();
+				readLink.addProperty("path", "items/host-link");
+				var escapedRead = tools.execute("read", readLink);
+				JsonObject grepItems = new JsonObject();
+				grepItems.addProperty("pattern", "root:");
+				grepItems.addProperty("path", "items");
+				var escapedGrep = tools.execute("grep", grepItems);
 
 			assertEquals(1, result.output().get("exitCode").getAsInt());
 			assertEquals("ok", Files.readString(job.resolve("items/created.txt")));
 			assertEquals("immutable", Files.readString(job.resolve("request.json")));
-			assertFalse(escapedRead.output().get("ok").getAsBoolean());
-			assertEquals(0, escapedGrep.output().get("matches").getAsInt());
+			assertEquals("immutable instructions", Files.readString(job.resolve("AGENTS.md")));
+			assertEquals("immutable readme", Files.readString(job.resolve("README.md")));
+				assertFalse(escapedRead.output().get("ok").getAsBoolean());
+				assertEquals(0, escapedGrep.output().get("matches").getAsInt());
+			}
 		}
-	}
-
-	@Test
-	void generationWorkspaceCreatesWritableSoundSourceRoots() throws Exception {
-		Path world = temporaryDirectory.resolve("sound-world");
-		Path job = temporaryDirectory.resolve("sound-job");
-
-		try (GenerationWorkspace ignored = GenerationWorkspace.testing(world, job)) {
-			assertTrue(Files.isDirectory(world.resolve("sounds")));
-			assertTrue(Files.isDirectory(job.resolve("sounds")));
-		}
-	}
 
 	@Test
 	void javaIdentityIsSafeForDigitLeadingAndKeywordRuntimeIds() {
@@ -80,53 +73,12 @@ final class GeneralistGenerationToolsTest {
 		Set<String> names = new HashSet<>();
 		definitions.forEach(element -> names.add(element.getAsJsonObject().get("name").getAsString()));
 
-		assertEquals(Set.of("bash", "read", "view_image", "grep", "glob", "write", "edit", "patch", "verify"), names);
+		assertEquals(Set.of("bash", "read", "grep", "glob", "write", "edit", "patch", "verify"), names);
 		assertFalse(names.stream().anyMatch(name -> name.startsWith("set_")));
 		assertFalse(names.contains("submit"));
 		assertTrue(definitions.asList().stream().map(element -> element.getAsJsonObject())
 				.filter(tool -> tool.get("name").getAsString().equals("verify"))
 				.findFirst().orElseThrow().get("description").getAsString().contains("Compile"));
-	}
-
-	@Test
-	void imageToolResultPreservesVisionInputAndExocortexImageBlock() {
-		JsonObject metadata = new JsonObject();
-		metadata.addProperty("ok", true);
-		GeneralistGenerationTools.ToolResult result = new GeneralistGenerationTools.ToolResult(
-				metadata, null, "data:image/png;base64,AQID");
-
-		JsonArray response = result.responseOutput().getAsJsonArray();
-		assertEquals("input_text", response.get(0).getAsJsonObject().get("type").getAsString());
-		assertEquals("input_image", response.get(1).getAsJsonObject().get("type").getAsString());
-		assertTrue(response.get(1).getAsJsonObject().get("image_url").getAsString().endsWith("AQID"));
-
-		JsonArray exocortex = result.exocortexContent().getAsJsonArray();
-		assertEquals("image", exocortex.get(1).getAsJsonObject().get("type").getAsString());
-		assertEquals("AQID", exocortex.get(1).getAsJsonObject().getAsJsonObject("source")
-				.get("data").getAsString());
-	}
-
-	@Test
-	void viewImageRejectsOversizedPngHeaderBeforeRasterDecode() throws Exception {
-		Path world = temporaryDirectory.resolve("image-world");
-		Path job = temporaryDirectory.resolve("image-job");
-		byte[] header = ByteBuffer.allocate(24)
-				.put(new byte[] {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'})
-				.putInt(13).put(new byte[] {'I', 'H', 'D', 'R'})
-				.putInt(100_000).putInt(100_000).array();
-
-		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
-			Files.write(job.resolve("oversized.png"), header);
-			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
-					GenerationRequest.fixed(DynamicContentType.ITEM, null, "Image Test", 1, null));
-			JsonObject arguments = new JsonObject();
-			arguments.addProperty("path", "oversized.png");
-
-			JsonObject result = tools.execute("view_image", arguments).output();
-
-			assertEquals(false, result.get("ok").getAsBoolean());
-			assertTrue(result.get("message").getAsString().contains("512x512"));
-		}
 	}
 
 	@Test

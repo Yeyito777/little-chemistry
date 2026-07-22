@@ -2,7 +2,6 @@ package com.yeyito.littlechemistry.content;
 
 public enum DynamicBlockShape {
 	FULL_CUBE("full_cube"),
-	TRANSLUCENT_CUBE("translucent_cube"),
 	SLAB("slab"),
 	NO_COLLISION("no_collision"),
 	STAR("star"),

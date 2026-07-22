@@ -47,14 +47,10 @@ public class DynamicCarrierEntity extends PathfinderMob {
 	private static final String SAVE_STATE = "LittleChemistryState";
 	private static final String SAVE_INITIALIZED = "LittleChemistryInitialized";
 	private static final String SAVE_DEFINITION_SEED = "LittleChemistryDefinitionSeed";
-	private static final String SAVE_SYNCHRONIZED_STATE = "LittleChemistrySynchronizedState";
 	private static final EntityDataAccessor<String> CONTENT_NAME = SynchedEntityData.defineId(
-			DynamicCarrierEntity.class, EntityDataSerializers.STRING);
-	private static final EntityDataAccessor<String> SYNCHRONIZED_STATE = SynchedEntityData.defineId(
 			DynamicCarrierEntity.class, EntityDataSerializers.STRING);
 
 	private final DynamicEntityState dynamicState = new DynamicEntityState();
-	private final DynamicEntityState synchronizedState = new DynamicEntityState();
 	private boolean behaviorInitialized;
 	private boolean deathCallbackFired;
 	private DynamicContentDefinition appliedDefinition;
@@ -100,7 +96,6 @@ public class DynamicCarrierEntity extends PathfinderMob {
 	protected void defineSynchedData(SynchedEntityData.Builder builder) {
 		super.defineSynchedData(builder);
 		builder.define(CONTENT_NAME, "");
-		builder.define(SYNCHRONIZED_STATE, "");
 	}
 
 	public void setDefinition(DynamicContentDefinition definition) {
@@ -150,27 +145,7 @@ public class DynamicCarrierEntity extends PathfinderMob {
 			appliedDefinition = null;
 			reconcileDefinition(false);
 			refreshDimensions();
-		} else if (SYNCHRONIZED_STATE.equals(accessor)) {
-			try {
-				synchronizedState.decode(entityData.get(SYNCHRONIZED_STATE));
-			} catch (RuntimeException corrupt) {
-				synchronizedState.decode("");
-			}
 		}
-	}
-
-	public String synchronizedStateValue(String key, String fallback) {
-		return synchronizedState.getString(key, fallback);
-	}
-
-	public java.util.Map<String, String> synchronizedStateSnapshot() {
-		return synchronizedState.snapshot();
-	}
-
-	public void setSynchronizedStateValue(String key, @Nullable String value) {
-		if (level().isClientSide()) throw new IllegalStateException("Synchronized entity state is server-authoritative");
-		synchronizedState.setString(key, value);
-		entityData.set(SYNCHRONIZED_STATE, synchronizedState.encode().equals("{}") ? "" : synchronizedState.encode());
 	}
 
 	@Override
@@ -189,8 +164,7 @@ public class DynamicCarrierEntity extends PathfinderMob {
 			return;
 		}
 		if (!behaviorInitialized) initializeBehavior();
-		if (DynamicBehaviorSource.supports(
-				definition.behaviorSourceBundle(), DynamicBehaviorCapability.ENTITY_TICK)) {
+		if (DynamicBehaviorSource.supports(definition.behaviorSource(), DynamicBehaviorCapability.ENTITY_TICK)) {
 			DynamicBehaviorRegistry.entityTick(definition, serverLevel, this, dynamicState);
 		}
 	}
@@ -209,32 +183,22 @@ public class DynamicCarrierEntity extends PathfinderMob {
 
 	@Override
 	public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+		boolean accepted = super.hurtServer(level, source, amount);
 		DynamicContentDefinition definition = definition();
-		float appliedAmount = definition == null ? amount : DynamicBehaviorRegistry.entityPreHurt(
-				definition, level, this, dynamicState, source, amount);
-		if (appliedAmount <= 0.0F) return false;
-		boolean accepted = super.hurtServer(level, source, appliedAmount);
 		if (accepted && definition != null) {
-			DynamicBehaviorRegistry.entityHurt(definition, level, this, dynamicState, source, appliedAmount);
+			DynamicBehaviorRegistry.entityHurt(definition, level, this, dynamicState, source, amount);
 		}
 		return accepted;
 	}
 
 	@Override
 	public boolean doHurtTarget(ServerLevel level, Entity target) {
-		DynamicContentDefinition definition = definition();
-		if (definition != null && !DynamicBehaviorRegistry.entityPreAttack(
-				definition, level, this, dynamicState, target)) return false;
 		boolean accepted = super.doHurtTarget(level, target);
+		DynamicContentDefinition definition = definition();
 		if (accepted && definition != null) {
 			DynamicBehaviorRegistry.entityAttack(definition, level, this, dynamicState, target);
 		}
 		return accepted;
-	}
-
-	/** Exposes the native target-goal selector to generated spawn/setup behavior. */
-	public net.minecraft.world.entity.ai.goal.GoalSelector targetGoalSelector() {
-		return targetSelector;
 	}
 
 	@Override
@@ -333,9 +297,6 @@ public class DynamicCarrierEntity extends PathfinderMob {
 		output.putString(SAVE_STATE, dynamicState.encode());
 		output.putBoolean(SAVE_INITIALIZED, behaviorInitialized);
 		output.putLong(SAVE_DEFINITION_SEED, definitionSeed);
-		if (!synchronizedState.snapshot().isEmpty()) {
-			output.putString(SAVE_SYNCHRONIZED_STATE, synchronizedState.encode());
-		}
 	}
 
 	@Override
@@ -352,13 +313,6 @@ public class DynamicCarrierEntity extends PathfinderMob {
 		}
 		behaviorInitialized = input.getBooleanOr(SAVE_INITIALIZED, !name.isEmpty());
 		definitionSeed = input.getLongOr(SAVE_DEFINITION_SEED, 0L);
-		try {
-			synchronizedState.decode(input.getStringOr(SAVE_SYNCHRONIZED_STATE, ""));
-		} catch (RuntimeException corrupt) {
-			synchronizedState.decode("");
-		}
-		entityData.set(SYNCHRONIZED_STATE,
-				synchronizedState.snapshot().isEmpty() ? "" : synchronizedState.encode());
 		appliedDefinition = null;
 		reconcileDefinition(false);
 		refreshDimensions();

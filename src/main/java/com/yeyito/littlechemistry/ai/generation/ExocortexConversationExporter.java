@@ -28,8 +28,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Optional local-development bridge that imports completed suite conversations into one exact existing Exocortex folder.
- * It never creates or guesses folders and is not enabled for ordinary generation jobs.
+ * Optional bridge that imports completed recipe-generation conversations into one exact existing Exocortex folder.
+ * It never creates or guesses folders and is used only when the mod's exocortex-logging setting is enabled.
  */
 public final class ExocortexConversationExporter {
 	private static final Gson GSON = new Gson();

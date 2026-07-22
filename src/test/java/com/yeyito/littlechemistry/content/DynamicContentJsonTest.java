@@ -4,9 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
-import com.yeyito.littlechemistry.behavior.DynamicBehaviorRegistry;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
-import com.yeyito.littlechemistry.behavior.DynamicBehaviorSourceBundle;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
@@ -22,9 +20,22 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DynamicContentJsonTest {
+	@Test
+	void rejectsFractionalAndOverflowingCatalogFormats() {
+		JsonObject root = new JsonObject();
+		root.addProperty("format", 19.5);
+		assertThrows(IllegalArgumentException.class,
+				() -> DynamicContentJson.decode(root.toString().getBytes(StandardCharsets.UTF_8)));
+
+		root.addProperty("format", new java.math.BigInteger("999999999999999999999999"));
+		assertThrows(IllegalArgumentException.class,
+				() -> DynamicContentJson.decode(root.toString().getBytes(StandardCharsets.UTF_8)));
+	}
+
 	private static final String TEXTURE_HASH = "0".repeat(64);
 
 	@BeforeAll
@@ -44,119 +55,13 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(21, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(19, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 		assertEquals(DynamicCraftingUse.KEEP, decoded.definitions().getFirst().item().craftingUse());
 		assertEquals(1600, decoded.definitions().getFirst().item().fuelBurnTicks());
 		DynamicBehaviorCompiler.compile(decoded.definitions().getFirst().behaviorSource());
-	}
-
-	@Test
-	void roundTripPreservesNonMiningNativeMeleeProperties() {
-		DynamicItemProperties melee = new DynamicItemProperties(
-				DynamicItemType.ITEM, DynamicHeldType.SPEAR, 1, Rarity.RARE, false, 12, 0.0,
-				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 9.0, 1.2,
-				500, 0, 2, null, null);
-
-		DynamicContentDefinition decoded = DynamicContentJson.decode(DynamicContentJson.encode(
-				UUID.randomUUID(), 1, List.of(definition("melee_spear", melee)))).definitions().getFirst();
-
-		assertEquals(9.0, decoded.item().attackDamage());
-		assertEquals(1.2, decoded.item().attackSpeed());
-		assertEquals(2, decoded.item().damagePerAttack());
-		assertEquals(DynamicTool.NONE, decoded.item().tool());
-	}
-
-	@Test
-	void roundTripPreservesAndRecompilesMultiSourceBehaviorBundle() {
-		String entrySource = """
-				package runtime.entry;
-				import com.yeyito.littlechemistry.behavior.DynamicBehavior;
-				import com.yeyito.littlechemistry.behavior.DynamicItemUseContext;
-				import com.yeyito.littlechemistry.behavior.UseAirBehavior;
-				import runtime.helpers.BundleHelper;
-				import net.minecraft.world.InteractionResult;
-				public final class PackagedBehavior implements DynamicBehavior, UseAirBehavior {
-				    public PackagedBehavior() {}
-				    public InteractionResult useAir(DynamicItemUseContext context) { return BundleHelper.result(); }
-				}
-				""";
-		DynamicBehaviorSourceBundle bundle = new DynamicBehaviorSourceBundle(
-				"runtime.entry.PackagedBehavior", "entry/PackagedBehavior.java", java.util.Map.of(
-						"entry/PackagedBehavior.java", entrySource,
-						"helpers/BundleHelper.java", """
-								package runtime.helpers;
-								import net.minecraft.world.InteractionResult;
-								public final class BundleHelper {
-								    private BundleHelper() {}
-								    public static InteractionResult result() { return InteractionResult.SUCCESS; }
-								}
-								"""));
-		DynamicContentDefinition legacy = definition("bundled_staff", DynamicItemProperties.DEFAULT);
-		DynamicContentDefinition definition = new DynamicContentDefinition(
-				legacy.type(), legacy.name(), legacy.displayName(), legacy.description(), legacy.rarityTier(),
-				legacy.textureSeed(), legacy.textureHash(), legacy.texture(), legacy.armorDisplayTextureHash(),
-				legacy.armorDisplayTexture(), legacy.block(), legacy.item(), legacy.armor(), entrySource,
-				legacy.blockModel(), legacy.customParticles(), legacy.workstation(), legacy.entity(),
-				legacy.entityModel(), legacy.itemVisuals(), bundle);
-
-		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 3, List.of(definition));
-		DynamicContentDefinition decoded = DynamicContentJson.decode(encoded).definitions().getFirst();
-
-		assertEquals(bundle, decoded.behaviorSourceBundle());
-		assertTrue(JsonParser.parseString(new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject()
-				.getAsJsonArray("definitions").get(0).getAsJsonObject().get("behaviorSource").isJsonObject());
-		assertEquals(java.util.Set.of(DynamicBehaviorCapability.USE_AIR),
-				DynamicBehaviorSource.capabilities(decoded.behaviorSource()));
-		DynamicBehaviorCompiler.compile(decoded.behaviorSourceBundle()).instantiate();
-		try {
-			DynamicBehaviorRegistry.replace(List.of(decoded));
-			assertEquals(java.util.Set.of(DynamicBehaviorCapability.USE_AIR),
-					DynamicBehaviorRegistry.capabilities(decoded.name()));
-		} finally {
-			DynamicBehaviorRegistry.clear();
-		}
-	}
-
-	@Test
-	void itemVisualStateLimitRoundTripsAtTheDomainBoundary() {
-		DynamicTextureSpec texture = rectangularTexture(16, 16, "00000000", "80D0FFFF");
-		List<DynamicItemTexture> states = java.util.stream.IntStream.range(0, DynamicItemVisuals.MAX_STATES)
-				.mapToObj(index -> new DynamicItemTexture("state_" + index,
-						String.format(java.util.Locale.ROOT, "%064x", index + 1), texture))
-				.toList();
-		DynamicContentDefinition legacy = definition("visual_staff", DynamicItemProperties.DEFAULT);
-		DynamicContentDefinition definition = new DynamicContentDefinition(
-				legacy.type(), legacy.name(), legacy.displayName(), legacy.description(), legacy.rarityTier(),
-				legacy.textureSeed(), legacy.textureHash(), legacy.texture(), legacy.armorDisplayTextureHash(),
-				legacy.armorDisplayTexture(), legacy.block(), legacy.item(), legacy.armor(), legacy.behaviorSource(),
-				legacy.blockModel(), legacy.customParticles(), legacy.workstation(), legacy.entity(),
-				legacy.entityModel(), new DynamicItemVisuals(states), legacy.behaviorSourceBundle());
-
-		DynamicContentDefinition decoded = DynamicContentJson.decode(
-				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition))).definitions().getFirst();
-
-		assertEquals(DynamicItemVisuals.MAX_STATES, decoded.itemVisuals().states().size());
-		assertEquals(states, decoded.itemVisuals().states());
-	}
-
-	@Test
-	void currentDecoderStillAcceptsLegacyStringBehaviorSource() {
-		DynamicContentDefinition definition = definition("legacy_string", DynamicItemProperties.DEFAULT);
-		JsonObject encoded = JsonParser.parseString(new String(
-				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)), StandardCharsets.UTF_8))
-				.getAsJsonObject();
-		encoded.getAsJsonArray("definitions").get(0).getAsJsonObject()
-				.addProperty("behaviorSource", definition.behaviorSource());
-
-		DynamicContentDefinition decoded = DynamicContentJson.decode(
-				encoded.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
-
-		assertEquals(DynamicBehaviorSourceBundle.legacy(definition.behaviorSource()),
-				decoded.behaviorSourceBundle());
-		DynamicBehaviorCompiler.compile(decoded.behaviorSourceBundle());
 	}
 
 	@Test
@@ -539,7 +444,7 @@ class DynamicContentJsonTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 9, List.of(workstation, entity));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(21, decoded.format());
+		assertEquals(19, decoded.format());
 		assertEquals(2, decoded.definitions().size());
 		assertEquals("separator", decoded.definitions().get(0).name());
 		assertTrue(decoded.definitions().get(0).workstation().recipeDataSchema()

@@ -16,11 +16,4 @@ public record DynamicEntityUseContext(
 		LivingEntity target,
 		DynamicContentDefinition definition
 ) {
-	public DynamicItemState state() {
-		return DynamicItemState.of(stack);
-	}
-
-	public DynamicActionInput actionInput() {
-		return DynamicActionInput.capture(player);
-	}
 }

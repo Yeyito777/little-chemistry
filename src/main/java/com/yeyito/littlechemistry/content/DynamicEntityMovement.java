@@ -3,10 +3,7 @@ package com.yeyito.littlechemistry.content;
 /** Native movement family used by a generated entity's registered carrier type. */
 public enum DynamicEntityMovement {
 	GROUND("ground"),
-	FLYING("flying"),
-	AQUATIC("aquatic"),
-	AMPHIBIOUS("amphibious"),
-	VEHICLE("vehicle");
+	FLYING("flying");
 
 	private final String serializedName;
 

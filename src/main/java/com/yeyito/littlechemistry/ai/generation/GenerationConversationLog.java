@@ -174,7 +174,8 @@ final class GenerationConversationLog implements AutoCloseable {
 		JsonObject toolResult = new JsonObject();
 		toolResult.addProperty("type", "tool_result");
 		toolResult.addProperty("tool_use_id", call.callId());
-		toolResult.add("content", result.exocortexContent());
+		toolResult.addProperty("content", string(replayItem, "output") == null
+				? GSON.toJson(result.output()) : replayItem.get("output").getAsString());
 		toolResult.addProperty("is_error", isErrorResult(result.output()));
 		JsonArray content = new JsonArray();
 		content.add(toolResult);

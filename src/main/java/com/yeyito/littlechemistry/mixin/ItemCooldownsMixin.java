@@ -2,8 +2,8 @@ package com.yeyito.littlechemistry.mixin;
 
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.content.DynamicCarrierBlockItem;
+import com.yeyito.littlechemistry.content.DynamicCarrierItem;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
-import com.yeyito.littlechemistry.content.DynamicItemCarrier;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemCooldowns;
@@ -20,7 +20,7 @@ public abstract class ItemCooldownsMixin {
 	@Inject(method = "getCooldownGroup", at = @At("HEAD"), cancellable = true)
 	private void littleChemistry$useDynamicContentGroup(ItemStack stack,
 			CallbackInfoReturnable<Identifier> callback) {
-		if (!(stack.getItem() instanceof DynamicItemCarrier)
+		if (!(stack.getItem() instanceof DynamicCarrierItem)
 				&& !(stack.getItem() instanceof DynamicCarrierBlockItem)) {
 			return;
 		}

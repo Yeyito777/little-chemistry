@@ -1,6 +1,5 @@
 package com.yeyito.littlechemistry.crafting;
 
-import com.yeyito.littlechemistry.ai.generation.ExocortexConversationExporter;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -29,8 +28,6 @@ public final class CraftingGenerationTestHarness {
 			throw new IOException("AI crafting is not available in this world yet");
 		}
 		CraftingGenerationTestSuite suite = CraftingGenerationTestSuite.load(suiteNumber);
-		ExocortexConversationExporter conversationExporter =
-				ExocortexConversationExporter.findExactLittleChemistryLogs().orElse(null);
 		ServerLevel level = player.level();
 		List<BlockPos> positions = linePositions(player.blockPosition(), player.getDirection(), suite.recipes().size());
 		List<List<ItemStack>> grids = resolveGrids(suite);
@@ -70,10 +67,10 @@ public final class CraftingGenerationTestHarness {
 			for (int slot = 0; slot < grid.size(); slot++) {
 				if (!grid.get(slot).isEmpty()) table.setItem(slot, grid.get(slot));
 			}
-			boolean started = manager.requestRecipe(player, table, conversationExporter);
+			boolean started = manager.requestRecipe(player, table);
 			cases.add(new CaseResult(recipe.label(), positions.get(index), started));
 		}
-		return new RunResult(suite.number(), suite.name(), List.copyOf(cases), conversationExporter != null);
+		return new RunResult(suite.number(), suite.name(), List.copyOf(cases));
 	}
 
 	static List<BlockPos> linePositions(BlockPos playerPosition, Direction facing, int count) {
@@ -113,8 +110,7 @@ public final class CraftingGenerationTestHarness {
 	public record CaseResult(String label, BlockPos position, boolean started) {
 	}
 
-	public record RunResult(int suiteNumber, String suiteName, List<CaseResult> cases,
-			boolean exocortexExportEnabled) {
+	public record RunResult(int suiteNumber, String suiteName, List<CaseResult> cases) {
 		public int placedCount() {
 			return cases.size();
 		}

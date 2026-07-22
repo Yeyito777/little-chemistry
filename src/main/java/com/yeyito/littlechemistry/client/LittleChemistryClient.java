@@ -40,14 +40,12 @@ public final class LittleChemistryClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		DynamicActionKeys.register();
 		MenuScreens.register(com.yeyito.littlechemistry.crafting.DynamicWorkstationMenu.TYPE,
 				DynamicWorkstationScreen::new);
 		ParticleProviderRegistry.getInstance().register(DynamicParticleRegistry.TYPE,
 				(options, level, x, y, z, velocityX, velocityY, velocityZ, random) ->
 						new RuntimeCustomParticle(level, options, x, y, z, velocityX, velocityY, velocityZ));
 		ClientTickEvents.END_CLIENT_TICK.register(RuntimeTextureStore::tick);
-		ClientTickEvents.END_CLIENT_TICK.register(DynamicActionKeys::tick);
 		SpecialModelRenderers.ID_MAPPER.put(
 				LittleChemistry.id("dynamic"),
 				DynamicSpecialItemRenderer.Unbaked.MAP_CODEC
@@ -60,12 +58,6 @@ public final class LittleChemistryClient implements ClientModInitializer {
 		EntityRendererRegistry.register(DynamicEntityObjects.GROUND_MONSTER, DynamicEntityRenderer::new);
 		EntityRendererRegistry.register(DynamicEntityObjects.FLYING_CREATURE, DynamicEntityRenderer::new);
 		EntityRendererRegistry.register(DynamicEntityObjects.FLYING_MONSTER, DynamicEntityRenderer::new);
-		EntityRendererRegistry.register(DynamicEntityObjects.AQUATIC_CREATURE, DynamicEntityRenderer::new);
-		EntityRendererRegistry.register(DynamicEntityObjects.AQUATIC_MONSTER, DynamicEntityRenderer::new);
-		EntityRendererRegistry.register(DynamicEntityObjects.AMPHIBIOUS_CREATURE, DynamicEntityRenderer::new);
-		EntityRendererRegistry.register(DynamicEntityObjects.AMPHIBIOUS_MONSTER, DynamicEntityRenderer::new);
-		EntityRendererRegistry.register(DynamicEntityObjects.VEHICLE_CREATURE, DynamicEntityRenderer::new);
-		EntityRendererRegistry.register(DynamicEntityObjects.VEHICLE_MONSTER, DynamicEntityRenderer::new);
 		ClientPlayNetworking.registerGlobalReceiver(DynamicContentPayload.TYPE,
 				(payload, context) -> apply(context.client(), payload));
 		ClientPlayNetworking.registerGlobalReceiver(DynamicAssetPayload.TYPE,
@@ -78,9 +70,8 @@ public final class LittleChemistryClient implements ClientModInitializer {
 				DynamicContentCatalog.clear();
 				RuntimeTextureStore.clear(client);
 				activeServer = null;
-					activeRevision = -1;
-					DynamicActionKeys.reset();
-				});
+				activeRevision = -1;
+			});
 	}
 
 	private static void apply(Minecraft client, DynamicContentPayload payload) {

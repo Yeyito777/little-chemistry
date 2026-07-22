@@ -7,20 +7,18 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
-import com.yeyito.littlechemistry.behavior.DynamicBehaviorSourceBundle;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Rarity;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.TreeMap;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 21;
+	public static final int CURRENT_FORMAT = 19;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -54,7 +52,6 @@ public final class DynamicContentJson {
 		}
 		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
 		if (definition.entityModel() != null) entry.add("entityModel", encodeEntityModel(definition.entityModel()));
-		if (!definition.itemVisuals().isEmpty()) entry.add("itemVisuals", encodeItemVisuals(definition.itemVisuals()));
 		entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
 		if (definition.workstation() != null) {
 			entry.add("workstation", DynamicWorkstationJson.encode(definition.workstation()));
@@ -65,13 +62,13 @@ public final class DynamicContentJson {
 			case ARMOR -> entry.add("armor", encodeArmor(definition.armor()));
 			case ENTITY -> entry.add("entity", encodeEntity(definition.entity()));
 		}
-		entry.add("behaviorSource", encodeBehaviorSource(definition.behaviorSourceBundle()));
+		entry.addProperty("behaviorSource", definition.behaviorSource());
 		return entry;
 	}
 
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
-		int format = root.get("format").getAsInt();
+		int format = storedFormat(root);
 		if (format < 1 || format > CURRENT_FORMAT) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
@@ -131,38 +128,31 @@ public final class DynamicContentJson {
 					? decodeBlockModel(entry.getAsJsonObject("blockModel")) : null;
 			DynamicEntityModel entityModel = type == DynamicContentType.ENTITY && entry.has("entityModel")
 					? decodeCompatibleEntityModel(entry.getAsJsonObject("entityModel")) : null;
-			DynamicItemVisuals itemVisuals = type == DynamicContentType.ITEM && entry.has("itemVisuals")
-					? decodeItemVisuals(entry.getAsJsonArray("itemVisuals")) : DynamicItemVisuals.NONE;
 			List<DynamicParticleDefinition> customParticles = entry.has("customParticles")
 					? decodeCustomParticles(entry.getAsJsonArray("customParticles")) : List.of();
 			DynamicWorkstationSpec workstation = format >= 18 && entry.has("workstation")
 					? DynamicWorkstationJson.decode(entry.getAsJsonObject("workstation")) : null;
-			DynamicBehaviorSourceBundle behaviorSourceBundle;
-			if (entry.has("behaviorSource") && entry.get("behaviorSource").isJsonObject()) {
-				behaviorSourceBundle = decodeBehaviorSource(entry.getAsJsonObject("behaviorSource"));
-			} else if (format >= 9) {
+			String behaviorSource;
+			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
 					throw new IllegalArgumentException("Dynamic content is missing required Java behavior source");
 				}
-				behaviorSourceBundle = DynamicBehaviorSourceBundle.legacy(
-						entry.get("behaviorSource").getAsString());
+				behaviorSource = entry.get("behaviorSource").getAsString();
 			} else if (format == 8) {
 				if (!entry.has("behaviorSource")) {
 					throw new IllegalArgumentException("Dynamic content is missing required Java behavior source");
 				}
-				behaviorSourceBundle = DynamicBehaviorSourceBundle.legacy(DynamicBehaviorSource.migrateMonolithicSource(
-						entry.get("behaviorSource").getAsString()));
+				behaviorSource = DynamicBehaviorSource.migrateMonolithicSource(
+						entry.get("behaviorSource").getAsString());
 			} else {
 				String legacySource = format >= 4 && entry.has("behaviorSource")
 						? entry.get("behaviorSource").getAsString() : null;
-				behaviorSourceBundle = DynamicBehaviorSourceBundle.legacy(
-						DynamicBehaviorSource.completeLegacySource(legacySource));
+				behaviorSource = DynamicBehaviorSource.completeLegacySource(legacySource);
 			}
-			String behaviorSource = behaviorSourceBundle.entrySource();
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
 					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-					customParticles, workstation, entity, entityModel, itemVisuals, behaviorSourceBundle
+					customParticles, workstation, entity, entityModel
 			));
 		}
 		validateUniqueNames(definitions);
@@ -170,30 +160,21 @@ public final class DynamicContentJson {
 		return new Decoded(format, serverId, revision, List.copyOf(definitions));
 	}
 
-	private static JsonObject encodeBehaviorSource(DynamicBehaviorSourceBundle bundle) {
-		JsonObject encoded = new JsonObject();
-		encoded.addProperty("entryClass", bundle.entryClass());
-		encoded.addProperty("entrySource", bundle.entrySourcePath());
-		JsonObject sources = new JsonObject();
-		new TreeMap<>(bundle.sources()).forEach(sources::addProperty);
-		encoded.add("sources", sources);
-		return encoded;
+	static int storedFormat(byte[] bytes) {
+		return storedFormat(JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject());
 	}
 
-	private static DynamicBehaviorSourceBundle decodeBehaviorSource(JsonObject encoded) {
-		if (!encoded.has("entryClass") || !encoded.has("entrySource") || !encoded.has("sources")
-				|| !encoded.get("sources").isJsonObject()) {
-			throw new IllegalArgumentException("Dynamic behavior source bundle is malformed");
+	private static int storedFormat(JsonObject root) {
+		if (root.get("format") == null || !root.get("format").isJsonPrimitive()
+				|| !root.getAsJsonPrimitive("format").isNumber()) {
+			throw new IllegalArgumentException("Dynamic content format is missing or invalid");
 		}
-		Map<String, String> sources = new TreeMap<>();
-		for (Map.Entry<String, JsonElement> source : encoded.getAsJsonObject("sources").entrySet()) {
-			if (!source.getValue().isJsonPrimitive() || !source.getValue().getAsJsonPrimitive().isString()) {
-				throw new IllegalArgumentException("Dynamic behavior source must be Java text: " + source.getKey());
-			}
-			sources.put(source.getKey(), source.getValue().getAsString());
+		try {
+			BigDecimal encoded = root.getAsJsonPrimitive("format").getAsBigDecimal();
+			return encoded.intValueExact();
+		} catch (ArithmeticException | NumberFormatException invalid) {
+			throw new IllegalArgumentException("Dynamic content format must be an exact integer", invalid);
 		}
-		return new DynamicBehaviorSourceBundle(
-				encoded.get("entryClass").getAsString(), encoded.get("entrySource").getAsString(), sources);
 	}
 
 	private static JsonObject encodeTexture(DynamicTextureSpec texture) {
@@ -213,31 +194,6 @@ public final class DynamicContentJson {
 		List<String> rows = new ArrayList<>();
 		encoded.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
 		return new DynamicTextureSpec(palette, rows);
-	}
-
-	private static JsonArray encodeItemVisuals(DynamicItemVisuals visuals) {
-		JsonArray encoded = new JsonArray();
-		for (DynamicItemTexture state : visuals.states()) {
-			JsonObject value = new JsonObject();
-			value.addProperty("id", state.id());
-			value.addProperty("hash", state.hash());
-			value.add("texture", encodeTexture(state.texture()));
-			encoded.add(value);
-		}
-		return encoded;
-	}
-
-	private static DynamicItemVisuals decodeItemVisuals(JsonArray encoded) {
-		if (encoded.size() > DynamicItemVisuals.MAX_STATES) {
-			throw new IllegalArgumentException("Too many dynamic item visual states");
-		}
-		List<DynamicItemTexture> states = new ArrayList<>();
-		for (JsonElement element : encoded) {
-			JsonObject value = element.getAsJsonObject();
-			states.add(new DynamicItemTexture(value.get("id").getAsString(), value.get("hash").getAsString(),
-					decodeTexture(value.getAsJsonObject("texture"))));
-		}
-		return new DynamicItemVisuals(states);
 	}
 
 	private static JsonArray encodeCustomParticles(List<DynamicParticleDefinition> particles) {
@@ -577,12 +533,12 @@ public final class DynamicContentJson {
 		encoded.addProperty("reach", item.reach());
 		encoded.addProperty("craftingUse", item.craftingUse().serializedName());
 		encoded.addProperty("fuelBurnTicks", item.fuelBurnTicks());
-		encoded.addProperty("durability", item.durability());
-		encoded.addProperty("attackDamage", item.attackDamage());
-		encoded.addProperty("attackSpeed", item.attackSpeed());
-		encoded.addProperty("damagePerAttack", item.damagePerAttack());
 		if (item.itemType() == DynamicItemType.TOOL) {
+			encoded.addProperty("attackDamage", item.attackDamage());
+			encoded.addProperty("attackSpeed", item.attackSpeed());
+			encoded.addProperty("durability", item.durability());
 			encoded.addProperty("damagePerBlock", item.damagePerBlock());
+			encoded.addProperty("damagePerAttack", item.damagePerAttack());
 		}
 		if (item.food() != null) {
 			JsonObject food = new JsonObject();
@@ -590,7 +546,6 @@ public final class DynamicContentJson {
 			food.addProperty("saturation", item.food().saturation());
 			food.addProperty("consumeSeconds", item.food().consumeSeconds());
 			food.addProperty("alwaysEdible", item.food().alwaysEdible());
-			food.addProperty("style", item.food().style().serializedName());
 			JsonArray effects = new JsonArray();
 			for (DynamicFoodEffect effect : item.food().effects()) {
 				JsonObject encodedEffect = new JsonObject();
@@ -637,7 +592,6 @@ public final class DynamicContentJson {
 				? DynamicCraftingUse.parse(encoded.get("craftingUse").getAsString())
 				: DynamicCraftingUse.CONSUME;
 		int fuelBurnTicks = encoded.has("fuelBurnTicks") ? encoded.get("fuelBurnTicks").getAsInt() : 0;
-		int durability = encoded.has("durability") ? encoded.get("durability").getAsInt() : 0;
 		JsonObject encodedFood = encoded.get("food") instanceof JsonObject value ? value
 				: encoded.get("consumable") instanceof JsonObject legacy ? legacy : null;
 		if (itemType == DynamicItemType.ITEM && encodedFood != null) itemType = DynamicItemType.FOOD;
@@ -661,9 +615,7 @@ public final class DynamicContentJson {
 				food = new DynamicFoodProperties(
 						encodedFood.has("hunger") ? encodedFood.get("hunger").getAsInt() : encodedFood.get("nutrition").getAsInt(),
 						encodedFood.get("saturation").getAsFloat(), encodedFood.get("consumeSeconds").getAsFloat(),
-					encodedFood.get("alwaysEdible").getAsBoolean(), effects,
-					encodedFood.has("style") ? DynamicConsumeStyle.parse(encodedFood.get("style").getAsString())
-							: DynamicConsumeStyle.EAT);
+						encodedFood.get("alwaysEdible").getAsBoolean(), effects);
 			}
 			DynamicPlacementProperties placement = null;
 			if (itemType == DynamicItemType.ITEM && encoded.get("placement") instanceof JsonObject value) {
@@ -675,11 +627,7 @@ public final class DynamicContentJson {
 						value.has("visuallyEmissive") && value.get("visuallyEmissive").getAsBoolean());
 			}
 			return new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
-					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F,
-					encoded.has("attackDamage") ? encoded.get("attackDamage").getAsDouble() : 0.0,
-					encoded.has("attackSpeed") ? encoded.get("attackSpeed").getAsDouble() : 4.0,
-					durability, 0,
-					encoded.has("damagePerAttack") ? encoded.get("damagePerAttack").getAsInt() : 0,
+					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
 					food, placement, craftingUse, fuelBurnTicks);
 		}
 		return new DynamicItemProperties(
@@ -709,7 +657,6 @@ public final class DynamicContentJson {
 		encoded.addProperty("toughness", armor.toughness());
 		encoded.addProperty("knockbackResistance", armor.knockbackResistance());
 		encoded.addProperty("durability", armor.durability());
-		encoded.addProperty("glider", armor.glider());
 		return encoded;
 	}
 
@@ -722,8 +669,7 @@ public final class DynamicContentJson {
 				encoded.get("defense").getAsDouble(),
 				encoded.get("toughness").getAsDouble(),
 				encoded.get("knockbackResistance").getAsDouble(),
-				encoded.get("durability").getAsInt(),
-				encoded.has("glider") && encoded.get("glider").getAsBoolean()
+				encoded.get("durability").getAsInt()
 		);
 	}
 

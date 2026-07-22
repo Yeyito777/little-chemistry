@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.serialization.JsonOps;
 import com.yeyito.littlechemistry.LittleChemistry;
+import com.yeyito.littlechemistry.LittleChemistrySettings;
 import com.yeyito.littlechemistry.ai.AuthConfig;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.ai.generation.GenerationModel;
@@ -91,6 +92,7 @@ public final class AiCraftingManager {
 	private static final int PARTICLE_INTERVAL_TICKS = 8;
 	private static final String REASONING_EFFORT = "medium";
 	private static final ExecutorService GENERATION_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+	private static final LittleChemistrySettings SETTINGS = new LittleChemistrySettings();
 	private static volatile AiCraftingManager active;
 
 	private final MinecraftServer server;
@@ -417,12 +419,6 @@ public final class AiCraftingManager {
 	}
 
 	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table) {
-		return requestRecipe(player, table, null);
-	}
-
-	/** Starts a normal recipe job with an optional terminal-conversation export used only by explicit test suites. */
-	public boolean requestRecipe(ServerPlayer player, SharedCraftingContainer table,
-			ExocortexConversationExporter conversationExporter) {
 		if (table.isLocked()) {
 			player.sendSystemMessage(error("This crafting grid is already waiting for the AI."));
 			return false;
@@ -456,7 +452,7 @@ public final class AiCraftingManager {
 		jobs.put(signature, job);
 		JsonObject context = signature.toAiContext();
 		try {
-			job.task = submitGeneration(job.promise, context, conversationExporter);
+			job.task = submitGeneration(job.promise, context);
 		} catch (Throwable submissionFailure) {
 			jobs.remove(signature);
 			table.unlock(signature);
@@ -1120,22 +1116,13 @@ public final class AiCraftingManager {
 
 	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
 			JsonObject context) {
-		return submitGeneration(promise, context, null, null, null);
-	}
-
-	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
-			JsonObject context, ExocortexConversationExporter conversationExporter) {
-		return submitGeneration(promise, context, null, null, conversationExporter);
+		return submitGeneration(promise, context, null, null);
 	}
 
 	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
 			JsonObject context, String workstationPolicy, JsonObject recipeDataSchema) {
-		return submitGeneration(promise, context, workstationPolicy, recipeDataSchema, null);
-	}
-
-	private Future<?> submitGeneration(CompletableFuture<RecipeGenerationAgent.GeneratedRecipe> promise,
-			JsonObject context, String workstationPolicy, JsonObject recipeDataSchema,
-			ExocortexConversationExporter conversationExporter) {
+		ExocortexConversationExporter conversationExporter = SETTINGS.exocortexLogging()
+				? ExocortexConversationExporter.findExactLittleChemistryLogs().orElse(null) : null;
 		return GENERATION_EXECUTOR.submit(() -> {
 			try {
 				OpenAiClient client = new OpenAiClient(new AuthConfig(), GenerationModel.SOL.modelId(), REASONING_EFFORT);

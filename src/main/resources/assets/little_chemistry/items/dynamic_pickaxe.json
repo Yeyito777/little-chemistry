@@ -1,9 +1,0 @@
-{
-  "model": {
-    "type": "minecraft:special",
-    "base": "minecraft:item/diamond_pickaxe",
-    "model": {
-      "type": "little_chemistry:dynamic"
-    }
-  }
-}

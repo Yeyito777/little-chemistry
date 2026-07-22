@@ -37,23 +37,7 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		Identifier contentId = blockEntity.contentId();
 		DynamicContentDefinition definition = DynamicContentCatalog.find(contentId);
 		state.textureHash = definition == null ? null : definition.textureHash();
-		state.textureTranslucent = definition != null && definition.texture() != null
-				&& definition.texture().hasTranslucentAlpha();
 		state.model = definition == null ? null : definition.blockModel();
-		state.visualTextureHash = null;
-		state.visualTextureTranslucent = false;
-		if (state.model != null) {
-			String visualTexture = blockEntity.generatedState("visual");
-			if (visualTexture != null) {
-				for (var texture : state.model.textures()) {
-					if (texture.id().equals(visualTexture)) {
-						state.visualTextureHash = texture.hash();
-						state.visualTextureTranslucent = texture.texture().hasTranslucentAlpha();
-						break;
-					}
-				}
-			}
-		}
 		if (state.textureHash != null && blockEntity.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
 			DynamicParticleTextures.remember(clientLevel, blockEntity.getBlockPos(), state.textureHash);
 		}
@@ -114,23 +98,12 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 				poseStack.rotateAround(
 						Axis.YP.rotationDegrees(180.0F - state.facing.toYRot()), 0.5F, 0.5F, 0.5F);
 			}
-				if (state.model == null) {
-					Identifier texture = RuntimeTextureStore.texture(state.textureHash);
-					nodes.order(0).submitCustomGeometry(
-							poseStack,
-							state.textureTranslucent
-									? RenderTypes.entityTranslucentCullItemTarget(texture)
-									: RenderTypes.entityCutout(texture),
-						(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
-				);
-			} else if (state.visualTextureHash != null) {
+			if (state.model == null) {
+				Identifier texture = RuntimeTextureStore.texture(state.textureHash);
 				nodes.order(0).submitCustomGeometry(
 						poseStack,
-						state.visualTextureTranslucent
-								? RenderTypes.entityTranslucentCullItemTarget(
-										RuntimeTextureStore.texture(state.visualTextureHash))
-								: RenderTypes.entityCutout(RuntimeTextureStore.texture(state.visualTextureHash)),
-						(pose, vertices) -> renderModelGeometry(state, null, pose, vertices)
+						RenderTypes.entityCutout(texture),
+						(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
 				);
 			} else {
 				int order = 0;
@@ -138,9 +111,7 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 					String textureId = texture.id();
 					nodes.order(order++).submitCustomGeometry(
 							poseStack,
-							texture.texture().hasTranslucentAlpha()
-									? RenderTypes.entityTranslucentCullItemTarget(RuntimeTextureStore.texture(texture.hash()))
-									: RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
+							RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
 							(pose, vertices) -> renderModelGeometry(state, textureId, pose, vertices)
 					);
 				}

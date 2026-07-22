@@ -7,7 +7,6 @@ import com.yeyito.littlechemistry.content.DynamicBlockProperties;
 import com.yeyito.littlechemistry.content.DynamicEntityModel;
 import com.yeyito.littlechemistry.content.DynamicEntityProperties;
 import com.yeyito.littlechemistry.content.DynamicItemProperties;
-import com.yeyito.littlechemistry.content.DynamicItemVisuals;
 import com.yeyito.littlechemistry.content.DynamicParticleDefinition;
 import com.yeyito.littlechemistry.content.DynamicRarity;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
@@ -30,7 +29,6 @@ public final class GeneratedContentBuilder {
 	private DynamicWorkstationSpec workstation;
 	private DynamicEntityProperties entity;
 	private DynamicEntityModel entityModel;
-	private DynamicItemVisuals itemVisuals = DynamicItemVisuals.NONE;
 
 	private GeneratedContentBuilder() {
 	}
@@ -54,10 +52,9 @@ public final class GeneratedContentBuilder {
 	public GeneratedContentBuilder workstation(DynamicWorkstationSpec value) { workstation = value; return this; }
 	public GeneratedContentBuilder entity(DynamicEntityProperties value) { entity = value; return this; }
 	public GeneratedContentBuilder entityModel(DynamicEntityModel value) { entityModel = value; return this; }
-	public GeneratedContentBuilder itemVisuals(DynamicItemVisuals value) { itemVisuals = value; return this; }
 
 	public GeneratedContentSpec build(String behaviorSource) {
 		return new GeneratedContentSpec(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarity, description, particles, workstation, entity, entityModel, itemVisuals);
+				rarity, description, particles, workstation, entity, entityModel);
 	}
 }

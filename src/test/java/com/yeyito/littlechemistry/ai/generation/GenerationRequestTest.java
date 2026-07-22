@@ -17,12 +17,8 @@ final class GenerationRequestTest {
 		assertTrue(prompt.startsWith("Please generate and code a Minecraft item named \"Moonlit Satchel\""));
 		assertTrue(prompt.contains("items/moonlit_satchel/C_moonlit_satchel_Content.java"));
 		assertTrue(prompt.contains("package `items.c_moonlit_satchel`"));
-		assertTrue(prompt.contains("`helpers/moonlit_satchel/`"));
 		assertTrue(prompt.contains("existing vanilla or modded textures"));
 		assertTrue(prompt.contains("palettes, pixel arrangements, silhouettes"));
-		assertTrue(prompt.endsWith("Also consider whether the result warrants native Minecraft sound design, custom "
-				+ "particles, runtime behavior helpers, or other reusable helpers, and create the appropriate source under "
-				+ "sounds/, particles/, or helpers/."));
 		assertFalse(prompt.contains("AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
 	}
@@ -44,8 +40,6 @@ final class GenerationRequestTest {
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
-		assertFalse(prompt.contains("special workstation"));
-		assertFalse(prompt.contains("workstation's output policy"));
 	}
 
 	@Test
@@ -53,7 +47,6 @@ final class GenerationRequestTest {
 		var recipe = JsonParser.parseString("""
 				{
 				  "recipeType":"workstation",
-				  "process":"little_chemistry:workstation/arcane_workbench/arcane_weaving",
 				  "workstation":{
 				    "contentId":"little_chemistry:arcane_workbench",
 				    "displayName":"Arcane Workbench",
@@ -80,24 +73,31 @@ final class GenerationRequestTest {
 		assertEquals(1, occurrences(prompt, "Arcane Workbench"));
 		assertEquals(1, occurrences(prompt, policy));
 		assertTrue(prompt.contains("The required recipe-data schema is:"));
-		assertTrue(prompt.contains("native Minecraft sound design"));
 		assertFalse(ContentGenerationAgent.SYSTEM_PROMPT.contains(policy));
 		assertFalse(workspaceMetadata.has("workstationPolicy"));
 		assertTrue(workspaceMetadata.has("recipeDataSchema"));
 	}
 
 	@Test
-	void systemPromptContainsStaticWorkspaceContractWithoutAgentsFileDirective() {
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.toLowerCase().contains("untrusted"));
-		assertFalse(ContentGenerationAgent.SYSTEM_PROMPT.contains("AGENTS.md"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("reference/API.md"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("GeneratedBehaviorImpl.java"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("inspect relevant indexed vanilla"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("Every request uses these same system instructions"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("declarative design data in the user request"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("deterministic input eligibility and consumption"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("sounds/<id>"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("helpers/<id>"));
+	void systemPromptStaysConciseAndLeavesDetailedContractsInWorkspaceDocumentation() {
+		String system = ContentGenerationAgent.SYSTEM_PROMPT;
+		String documentation = GenerationWorkspace.agents(
+				GenerationRequest.fixed(DynamicContentType.ITEM, null, "Moonlit Satchel", 1, null));
+
+		assertTrue(system.length() < 2_000);
+		assertTrue(system.toLowerCase().contains("untrusted"));
+		assertTrue(system.contains("AGENTS.md"));
+		assertTrue(system.contains("reference/API.md"));
+		assertFalse(system.contains("GeneratedBehaviorImpl.java"));
+		assertFalse(system.toLowerCase().contains("rejection"));
+		assertFalse(system.contains("workstation_too_weak"));
+
+		assertTrue(documentation.contains("## Source organization"));
+		assertTrue(documentation.contains("GeneratedBehaviorImpl.java"));
+		assertTrue(documentation.contains("reference/classes/INDEX.txt"));
+		assertTrue(documentation.contains("reference/API.md"));
+		assertTrue(documentation.contains("recipePolicy"));
+		assertFalse(documentation.toLowerCase().contains("rejection"));
 	}
 
 	@Test
@@ -118,11 +118,17 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("\"kind\":\"rejection\""));
 		assertTrue(prompt.contains("\"category\":\"workstation_too_weak\""));
 		assertTrue(prompt.contains("call `verify` immediately"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("only when the user request permits it"));
-		assertTrue(ContentGenerationAgent.SYSTEM_PROMPT.contains("category workstation_too_weak"));
+		assertFalse(ContentGenerationAgent.SYSTEM_PROMPT.toLowerCase().contains("rejection"));
+		assertFalse(GenerationWorkspace.agents(
+				GenerationRequest.recipe(recipe, "Shape an appropriate result.", schema))
+				.toLowerCase().contains("rejection"));
 	}
 
 	private static int occurrences(String text, String target) {
-		return (text.length() - text.replace(target, "").length()) / target.length();
+		int count = 0;
+		for (int index = text.indexOf(target); index >= 0; index = text.indexOf(target, index + target.length())) {
+			count++;
+		}
+		return count;
 	}
 }

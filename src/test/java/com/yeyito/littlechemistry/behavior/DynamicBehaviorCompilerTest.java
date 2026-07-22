@@ -82,43 +82,6 @@ final class DynamicBehaviorCompilerTest {
 	}
 
 	@Test
-	void compilesPackagedEntryAndHelperSourcesAsOneRuntimeBundle() {
-		String entry = """
-				package generated.behavior;
-				import com.yeyito.littlechemistry.behavior.*;
-				import net.minecraft.world.InteractionResult;
-				public final class PackagedBehavior implements DynamicBehavior, UseAirBehavior {
-				    public PackagedBehavior() {}
-				    public InteractionResult useAir(DynamicItemUseContext context) {
-				        return BehaviorHelper.result();
-				    }
-				}
-				""";
-		DynamicBehaviorSourceBundle bundle = new DynamicBehaviorSourceBundle(
-				"generated.behavior.PackagedBehavior",
-				"entry/PackagedBehavior.java",
-				java.util.Map.of(
-						"entry/PackagedBehavior.java", entry,
-						"helpers/BehaviorHelper.java", """
-								package generated.behavior;
-								import net.minecraft.world.InteractionResult;
-								public final class BehaviorHelper {
-								    private BehaviorHelper() {}
-								    public static InteractionResult result() { return InteractionResult.SUCCESS; }
-								}
-								"""));
-
-		DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(bundle);
-		DynamicBehavior behavior = compiled.instantiate();
-
-		assertEquals(InteractionResult.SUCCESS, ((UseAirBehavior) behavior).useAir(null));
-		assertEquals("generated.behavior.PackagedBehavior", behavior.getClass().getName());
-		assertEquals(bundle, compiled.sourceBundle());
-		assertEquals(java.util.Set.of(DynamicBehaviorCapability.USE_AIR),
-				DynamicBehaviorSource.capabilities(bundle));
-	}
-
-	@Test
 	void compilesInheritedInterfaceDefaultSuperCallsInAnonymousClasses() throws Exception {
 		String source = """
 				import com.yeyito.littlechemistry.behavior.DynamicBehavior;
@@ -217,104 +180,6 @@ final class DynamicBehaviorCompilerTest {
 	}
 
 	@Test
-	void entityPreHooksMustAlsoKeepPerInstanceDataInDynamicEntityState() {
-		String preHurt = """
-				import com.yeyito.littlechemistry.behavior.*;
-				public final class GeneratedBehaviorImpl implements DynamicBehavior, EntityPreHurtBehavior {
-					private float sharedDamage;
-					public GeneratedBehaviorImpl() {}
-					public float entityPreHurt(DynamicGeneratedEntityContext context,
-							net.minecraft.world.damagesource.DamageSource source, float amount) {
-						return sharedDamage = amount;
-					}
-				}
-				""";
-		String preAttack = """
-				import com.yeyito.littlechemistry.behavior.*;
-				public final class GeneratedBehaviorImpl implements DynamicBehavior, EntityPreAttackBehavior {
-					private boolean sharedDecision;
-					public GeneratedBehaviorImpl() {}
-					public boolean entityPreAttack(DynamicGeneratedEntityContext context,
-							net.minecraft.world.entity.Entity target) {
-						return sharedDecision = true;
-					}
-				}
-				""";
-
-		IllegalArgumentException hurtError = assertThrows(IllegalArgumentException.class,
-				() -> DynamicBehaviorCompiler.compile(preHurt));
-		IllegalArgumentException attackError = assertThrows(IllegalArgumentException.class,
-				() -> DynamicBehaviorCompiler.compile(preAttack));
-
-		assertTrue(hurtError.getMessage().contains("DynamicEntityState"), hurtError.getMessage());
-		assertTrue(attackError.getMessage().contains("DynamicEntityState"), attackError.getMessage());
-	}
-
-	@Test
-	void entityBehaviorRejectsMutableFieldsInheritedFromRuntimeHelpers() {
-		String entry = """
-				import com.yeyito.littlechemistry.behavior.*;
-				public final class GeneratedBehaviorImpl extends StatefulBase
-						implements DynamicBehavior, EntityTickBehavior {
-					public GeneratedBehaviorImpl() {}
-					public void entityTick(DynamicGeneratedEntityContext context) { sharedTicks++; }
-				}
-				""";
-		DynamicBehaviorSourceBundle bundle = new DynamicBehaviorSourceBundle(
-				"GeneratedBehaviorImpl", "entry/GeneratedBehaviorImpl.java", java.util.Map.of(
-						"entry/GeneratedBehaviorImpl.java", entry,
-						"helpers/StatefulBase.java", "class StatefulBase { protected int sharedTicks; }"));
-
-		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-				() -> DynamicBehaviorCompiler.compile(bundle));
-
-		assertTrue(error.getMessage().contains("StatefulBase.sharedTicks"), error.getMessage());
-		assertTrue(error.getMessage().contains("DynamicEntityState"), error.getMessage());
-	}
-
-	@Test
-	void workstationBehaviorRejectsMutableStaticHelperStateButAllowsConstants() {
-		String entry = """
-				import com.yeyito.littlechemistry.behavior.*;
-				public final class GeneratedBehaviorImpl implements DynamicBehavior,
-						WorkstationBehavior, WorkstationTickBehavior {
-					public GeneratedBehaviorImpl() {}
-					public WorkstationRecipeRequest createWorkstationRecipe(DynamicWorkstationContext context) {
-						return null;
-					}
-					public void workstationTick(DynamicWorkstationContext context) { StatefulHelper.tick(); }
-				}
-				""";
-		DynamicBehaviorSourceBundle mutable = new DynamicBehaviorSourceBundle(
-				"GeneratedBehaviorImpl", "entry/GeneratedBehaviorImpl.java", java.util.Map.of(
-						"entry/GeneratedBehaviorImpl.java", entry,
-						"helpers/StatefulHelper.java", """
-								final class StatefulHelper {
-								    static final String ID = "constant";
-								    static int ticks;
-								    static void tick() { ticks++; }
-								}
-								"""));
-
-		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-				() -> DynamicBehaviorCompiler.compile(mutable));
-
-		assertTrue(error.getMessage().contains("StatefulHelper.ticks"), error.getMessage());
-		assertTrue(error.getMessage().contains("DynamicWorkstationContext state"), error.getMessage());
-
-		DynamicBehaviorSourceBundle constantsOnly = new DynamicBehaviorSourceBundle(
-				"GeneratedBehaviorImpl", "entry/GeneratedBehaviorImpl.java", java.util.Map.of(
-						"entry/GeneratedBehaviorImpl.java", entry.replace("StatefulHelper.tick();",
-								"String ignored = StatefulHelper.ID;"),
-						"helpers/StatefulHelper.java", """
-								final class StatefulHelper {
-								    static final String ID = "constant";
-								}
-								"""));
-		assertTrue(DynamicBehaviorCompiler.compile(constantsOnly).instantiate() instanceof WorkstationBehavior);
-	}
-
-	@Test
 	void rejectsCallbackMethodsWithoutTheirCapabilityInterface() {
 		String ambiguous = """
 				public final class GeneratedBehaviorImpl implements com.yeyito.littlechemistry.behavior.DynamicBehavior {
@@ -370,13 +235,6 @@ final class DynamicBehaviorCompilerTest {
 				    @Override public InteractionResult useOnBlock(DynamicBlockUseContext context) {
 				        return InteractionResult.PASS;
 				    }
-				    @Override public InteractionResult beginUsing(DynamicItemUseContext context) {
-				        return InteractionResult.PASS;
-				    }
-				    @Override public void usingTick(DynamicItemUsingContext context) {}
-				    @Override public boolean releaseUsing(DynamicItemUsingContext context) {
-				        return false;
-				    }
 				    @Override public void crafted(net.minecraft.server.level.ServerLevel level,
 				            net.minecraft.server.level.ServerPlayer player,
 				            net.minecraft.world.item.ItemStack stack,
@@ -389,14 +247,8 @@ final class DynamicBehaviorCompilerTest {
 
 		assertTrue(behavior instanceof UseAirBehavior);
 		assertTrue(!(behavior instanceof UseOnBlockBehavior));
-		assertTrue(!(behavior instanceof BeginUsingBehavior));
-		assertTrue(!(behavior instanceof UsingTickBehavior));
-		assertTrue(!(behavior instanceof ReleaseUsingBehavior));
 		assertTrue(!(behavior instanceof CraftedBehavior));
 		assertTrue(!migrated.contains("useOnBlock("));
-		assertTrue(!migrated.contains("beginUsing("));
-		assertTrue(!migrated.contains("usingTick("));
-		assertTrue(!migrated.contains("releaseUsing("));
 		assertTrue(!migrated.contains("void crafted("));
 	}
 }

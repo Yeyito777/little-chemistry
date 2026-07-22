@@ -6,8 +6,6 @@ import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.content.DynamicEntityObjects;
-import com.yeyito.littlechemistry.behavior.DynamicActionInputState;
-import com.yeyito.littlechemistry.behavior.DynamicRuntimeStateComponents;
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.crafting.PortableCraftingComponents;
 import com.yeyito.littlechemistry.item.CraftingTableOnAStickItem;
@@ -18,7 +16,6 @@ import com.yeyito.littlechemistry.network.DeleteContentRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetPayload;
 import com.yeyito.littlechemistry.network.DynamicAssetRequestPayload;
 import com.yeyito.littlechemistry.network.DynamicContentPayload;
-import com.yeyito.littlechemistry.network.DynamicActionInputPayload;
 import com.yeyito.littlechemistry.network.OpenCreationScreenPayload;
 import com.yeyito.littlechemistry.network.OpenDeletionScreenPayload;
 import com.yeyito.littlechemistry.particle.DynamicParticleRegistry;
@@ -87,8 +84,12 @@ public final class LittleChemistry implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		try {
+			new LittleChemistrySettings().initialize();
+		} catch (java.io.IOException error) {
+			LOGGER.warn("Could not initialize Little Chemistry settings; safe defaults will be used", error);
+		}
 		PortableCraftingComponents.register();
-		DynamicRuntimeStateComponents.register();
 		DynamicContentObjects.register();
 		DynamicEntityObjects.register();
 		DynamicParticleRegistry.register();
@@ -106,7 +107,6 @@ public final class LittleChemistry implements ModInitializer {
 		PayloadTypeRegistry.clientboundPlay().register(OpenCreationScreenPayload.TYPE, OpenCreationScreenPayload.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(OpenDeletionScreenPayload.TYPE, OpenDeletionScreenPayload.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(DynamicAssetRequestPayload.TYPE, DynamicAssetRequestPayload.CODEC);
-		PayloadTypeRegistry.serverboundPlay().register(DynamicActionInputPayload.TYPE, DynamicActionInputPayload.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(CreateContentRequestPayload.TYPE, CreateContentRequestPayload.CODEC);
 		PayloadTypeRegistry.serverboundPlay().registerLarge(
 				DeleteContentRequestPayload.TYPE,
@@ -119,8 +119,6 @@ public final class LittleChemistry implements ModInitializer {
 				manager.sendAssets(context.player(), payload.hashes());
 			}
 		});
-		ServerPlayNetworking.registerGlobalReceiver(DynamicActionInputPayload.TYPE,
-				(payload, context) -> DynamicActionInputState.update(context.player(), payload.mask()));
 		ServerPlayNetworking.registerGlobalReceiver(CreateContentRequestPayload.TYPE, (payload, context) -> {
 			ItemStack mainHand = context.player().getMainHandItem();
 			ItemStack offHand = context.player().getOffhandItem();
@@ -161,8 +159,6 @@ public final class LittleChemistry implements ModInitializer {
 				manager.sendSnapshot(handler.getPlayer());
 			}
 		});
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
-				DynamicActionInputState.clear(handler.getPlayer()));
 
 		Registry.register(
 				BuiltInRegistries.CREATIVE_MODE_TAB,

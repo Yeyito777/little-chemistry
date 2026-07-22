@@ -11,17 +11,9 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.tags.BlockTags;
-import net.minecraft.tags.ItemTags;
-import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.item.MaceItem;
 import net.minecraft.world.item.Rarity;
-import net.minecraft.world.item.ToolMaterial;
-import net.minecraft.world.item.TridentItem;
-import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.component.Tool;
 import net.minecraft.world.item.component.Weapon;
@@ -30,8 +22,8 @@ import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.item.equipment.EquipmentAssets;
 import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.item.component.Consumables;
 import net.minecraft.world.item.consume_effects.ApplyStatusEffectsConsumeEffect;
-import net.minecraft.util.Unit;
 import net.minecraft.world.entity.EquipmentSlotGroup;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -44,18 +36,12 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.function.UnaryOperator;
 
 public final class DynamicContentObjects {
 	public static DataComponentType<Identifier> CONTENT_ID;
 	public static DynamicCarrierItem ITEM;
-	/** Saved stacks using this original catch-all tool ID remain valid and are delegated on use. */
 	public static DynamicCarrierItem TOOL_HELD_ITEM;
-	private static final Map<DynamicHeldType, Item> HELD_ITEMS = new EnumMap<>(DynamicHeldType.class);
-	private static final Map<DynamicTool, Item> TOOL_ITEMS = new EnumMap<>(DynamicTool.class);
-	private static final ToolMaterial CARRIER_TOOL_MATERIAL = new ToolMaterial(
-			BlockTags.INCORRECT_FOR_WOODEN_TOOL, 1, 1.0F, 0.0F, 1, ItemTags.WOODEN_TOOL_MATERIALS);
+	private static final Map<DynamicHeldType, DynamicCarrierItem> HELD_ITEMS = new EnumMap<>(DynamicHeldType.class);
 	public static DynamicCarrierItem ARMOR_HEAD;
 	public static DynamicCarrierItem ARMOR_CHEST;
 	public static DynamicCarrierItem ARMOR_LEGGINGS;
@@ -78,43 +64,13 @@ public final class DynamicContentObjects {
 						.build()
 		);
 
-		ITEM = registerHeldCarrier(DynamicHeldType.REGULAR, "dynamic_item",
-				DynamicCarrierItem::new, UnaryOperator.identity());
-		// Do not repurpose/remove this ID: old worlds store all generated tools under it.
-		TOOL_HELD_ITEM = registerHeldCarrier(DynamicHeldType.TOOL, "dynamic_tool",
-				DynamicCarrierItem::new, properties -> properties.stacksTo(1));
-		registerHeldCarrier(DynamicHeldType.ROD, "dynamic_rod", DynamicFishingRodCarrierItem::new,
-				properties -> properties.durability(64).enchantable(1));
-		registerHeldCarrier(DynamicHeldType.BOW, "dynamic_bow", DynamicBowCarrierItem::new,
-				properties -> properties.durability(384).enchantable(1));
-		registerHeldCarrier(DynamicHeldType.CROSSBOW, "dynamic_crossbow", DynamicCrossbowCarrierItem::new,
-				properties -> properties.durability(465)
-						.component(DataComponents.CHARGED_PROJECTILES, ChargedProjectiles.EMPTY).enchantable(1));
-		registerHeldCarrier(DynamicHeldType.MACE, "dynamic_mace", DynamicMaceCarrierItem::new,
-				properties -> properties.durability(500)
-						.component(DataComponents.TOOL, MaceItem.createToolProperties())
-						.attributes(MaceItem.createAttributes()).enchantable(15)
-						.component(DataComponents.WEAPON, new Weapon(1)));
-		registerHeldCarrier(DynamicHeldType.SPEAR, "dynamic_spear", DynamicCarrierItem::new,
-				properties -> properties.spear(CARRIER_TOOL_MATERIAL,
-						0.95F, 0.95F, 0.6F, 2.5F, 11.0F, 6.75F, 5.1F, 11.25F, 4.6F));
-		registerHeldCarrier(DynamicHeldType.SHIELD, "dynamic_shield", DynamicShieldCarrierItem::new,
-				DynamicContentObjects::shieldProperties);
-		registerHeldCarrier(DynamicHeldType.TRIDENT, "dynamic_trident", DynamicTridentCarrierItem::new,
-				properties -> properties.durability(250).attributes(TridentItem.createAttributes())
-						.component(DataComponents.TOOL, TridentItem.createToolProperties()).enchantable(1)
-						.component(DataComponents.WEAPON, new Weapon(1)));
-
-		registerToolCarrier(DynamicTool.PICKAXE, "dynamic_pickaxe", DynamicCarrierItem::new,
-				properties -> properties.pickaxe(CARRIER_TOOL_MATERIAL, 0.0F, -3.0F));
-		registerToolCarrier(DynamicTool.AXE, "dynamic_axe",
-				properties -> new DynamicAxeCarrierItem(CARRIER_TOOL_MATERIAL, properties), UnaryOperator.identity());
-		registerToolCarrier(DynamicTool.SHOVEL, "dynamic_shovel",
-				properties -> new DynamicShovelCarrierItem(CARRIER_TOOL_MATERIAL, properties), UnaryOperator.identity());
-		registerToolCarrier(DynamicTool.HOE, "dynamic_hoe",
-				properties -> new DynamicHoeCarrierItem(CARRIER_TOOL_MATERIAL, properties), UnaryOperator.identity());
-		registerToolCarrier(DynamicTool.SWORD, "dynamic_sword", DynamicCarrierItem::new,
-				properties -> properties.sword(CARRIER_TOOL_MATERIAL, 0.0F, -2.4F));
+		ITEM = registerHeldCarrier(DynamicHeldType.REGULAR, "dynamic_item", false);
+		TOOL_HELD_ITEM = registerHeldCarrier(DynamicHeldType.TOOL, "dynamic_tool", true);
+		registerHeldCarrier(DynamicHeldType.ROD, "dynamic_rod", false);
+		registerHeldCarrier(DynamicHeldType.BOW, "dynamic_bow", false);
+		registerHeldCarrier(DynamicHeldType.CROSSBOW, "dynamic_crossbow", false);
+		registerHeldCarrier(DynamicHeldType.MACE, "dynamic_mace", false);
+		registerHeldCarrier(DynamicHeldType.SPEAR, "dynamic_spear", false);
 
 		ARMOR_HEAD = registerArmorCarrier("dynamic_armor_head");
 		ARMOR_CHEST = registerArmorCarrier("dynamic_armor_chest");
@@ -160,7 +116,7 @@ public final class DynamicContentObjects {
 	public static ItemStack createStack(DynamicContentDefinition definition) {
 		Item carrier = switch (definition.type()) {
 			case BLOCK -> BLOCK_ITEM;
-			case ITEM -> heldCarrier(definition.item());
+			case ITEM -> heldCarrier(definition.item().heldType());
 			case ARMOR -> armorCarrier(definition.armor().slot());
 			case ENTITY -> ENTITY_SPAWNER;
 		};
@@ -171,41 +127,29 @@ public final class DynamicContentObjects {
 			DynamicItemProperties properties = definition.item();
 			stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
 			stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, properties.foil());
-			// Carrier constructor materials only establish safe unresolved defaults. Generated items do
-			// not inherit a fake repair ingredient from that implementation detail.
-			stack.remove(DataComponents.REPAIRABLE);
 			if (properties.enchantability() > 0) {
 				stack.set(DataComponents.ENCHANTABLE, new Enchantable(properties.enchantability()));
-			} else stack.remove(DataComponents.ENCHANTABLE);
+			}
 			if (properties.food() != null) {
 				DynamicFoodProperties food = properties.food();
 				stack.set(DataComponents.FOOD, new FoodProperties(food.hunger(), food.saturation(), food.alwaysEdible()));
-				var consumable = food.style().builder().consumeSeconds(food.consumeSeconds());
+				var consumable = Consumables.defaultFood().consumeSeconds(food.consumeSeconds());
 				for (DynamicFoodEffect effect : food.effects()) {
 					consumable.onConsume(new ApplyStatusEffectsConsumeEffect(effect.instance(), effect.probability()));
 				}
 				stack.set(DataComponents.CONSUMABLE, consumable.build());
-			}
-			if (properties.durability() > 0) {
-				stack.set(DataComponents.MAX_DAMAGE, properties.durability());
-				stack.set(DataComponents.DAMAGE, 0);
-			} else {
-				stack.remove(DataComponents.MAX_DAMAGE);
-				stack.remove(DataComponents.DAMAGE);
 			}
 			if (properties.tool() != DynamicTool.NONE) {
 				List<Tool.Rule> rules = new ArrayList<>();
 				rules.add(Tool.Rule.deniesDrops(BuiltInRegistries.BLOCK.getOrThrow(properties.breakingPower().incorrectBlocks())));
 				rules.add(Tool.Rule.minesAndDrops(BuiltInRegistries.BLOCK.getOrThrow(properties.tool().mineableBlocks()), properties.breakingSpeed()));
 				stack.set(DataComponents.TOOL, new Tool(List.copyOf(rules), 1.0F, properties.damagePerBlock(), true));
+				stack.set(DataComponents.MAX_DAMAGE, properties.durability());
+				stack.set(DataComponents.DAMAGE, 0);
+				stack.set(DataComponents.WEAPON, new Weapon(properties.damagePerAttack()));
 			}
-			if (requiresWeaponComponent(properties)) {
-				stack.set(DataComponents.WEAPON, new Weapon(properties.damagePerAttack(),
-						properties.tool() == DynamicTool.AXE ? Weapon.AXE_DISABLES_BLOCKING_FOR_SECONDS : 0.0F));
-			} else stack.remove(DataComponents.WEAPON);
 			ItemAttributeModifiers attributes = attributes(properties);
 			if (attributes != null) stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes);
-			else stack.remove(DataComponents.ATTRIBUTE_MODIFIERS);
 		}
 		if (definition.armor() != null) {
 			DynamicArmorProperties armor = definition.armor();
@@ -219,8 +163,6 @@ public final class DynamicContentObjects {
 			stack.set(DataComponents.EQUIPPABLE, Equippable.builder(armor.slot().equipmentSlot())
 					.setAsset(armorAsset(definition.effectiveArmorDisplayTextureHash()))
 					.build());
-			if (armor.glider()) stack.set(DataComponents.GLIDER, Unit.INSTANCE);
-			else stack.remove(DataComponents.GLIDER);
 			stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes(armor));
 		}
 		if (definition.entity() != null) {
@@ -239,52 +181,18 @@ public final class DynamicContentObjects {
 		if (definition == null) return;
 		Rarity currentRarity = stack.getOrDefault(DataComponents.RARITY, Rarity.COMMON);
 		if (currentRarity != definition.rarity()) stack.set(DataComponents.RARITY, definition.rarity());
-		if (definition.item() != null) {
-			DynamicItemProperties properties = definition.item();
-			if (stack.getOrDefault(DataComponents.MAX_STACK_SIZE, 1) != properties.maxStack()) {
-				stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
-			}
-			if (properties.enchantability() > 0) {
-				Enchantable expected = new Enchantable(properties.enchantability());
-				if (!expected.equals(stack.get(DataComponents.ENCHANTABLE))) {
-					stack.set(DataComponents.ENCHANTABLE, expected);
-				}
-			} else stack.remove(DataComponents.ENCHANTABLE);
-			if (properties.durability() > 0) {
-				if (stack.getOrDefault(DataComponents.MAX_DAMAGE, 0) != properties.durability()) {
-					stack.set(DataComponents.MAX_DAMAGE, properties.durability());
-				}
-				if (!stack.has(DataComponents.DAMAGE)) stack.set(DataComponents.DAMAGE, 0);
-			} else {
-				stack.remove(DataComponents.MAX_DAMAGE);
-				stack.remove(DataComponents.DAMAGE);
-			}
-			stack.remove(DataComponents.REPAIRABLE);
-			if (requiresWeaponComponent(properties)) {
-				Weapon expectedWeapon = new Weapon(properties.damagePerAttack(),
-						properties.tool() == DynamicTool.AXE
-								? Weapon.AXE_DISABLES_BLOCKING_FOR_SECONDS : 0.0F);
-				if (!expectedWeapon.equals(stack.get(DataComponents.WEAPON))) {
-					stack.set(DataComponents.WEAPON, expectedWeapon);
-				}
-			} else stack.remove(DataComponents.WEAPON);
-		}
 		ItemAttributeModifiers expected = definition.armor() != null
 				? attributes(definition.armor())
 				: definition.item() != null ? attributes(definition.item()) : null;
-		if (expected == null) {
-			stack.remove(DataComponents.ATTRIBUTE_MODIFIERS);
-			return;
-		}
-		ItemAttributeModifiers current = stack.getOrDefault(
-				DataComponents.ATTRIBUTE_MODIFIERS, ItemAttributeModifiers.EMPTY);
+		if (expected == null) return;
+		ItemAttributeModifiers current = stack.getOrDefault(DataComponents.ATTRIBUTE_MODIFIERS, ItemAttributeModifiers.EMPTY);
 		if (!expected.equals(current)) stack.set(DataComponents.ATTRIBUTE_MODIFIERS, expected);
 	}
 
 	private static ItemAttributeModifiers attributes(DynamicItemProperties properties) {
 		ItemAttributeModifiers.Builder builder = ItemAttributeModifiers.builder();
 		boolean hasAttributes = false;
-		if (properties.attackDamage() != 0.0 || properties.attackSpeed() != 4.0) {
+		if (properties.itemType() == DynamicItemType.TOOL) {
 			double baseAttackDamage = Attributes.ATTACK_DAMAGE.value().getDefaultValue();
 			double baseAttackSpeed = Attributes.ATTACK_SPEED.value().getDefaultValue();
 			builder
@@ -309,15 +217,6 @@ public final class DynamicContentObjects {
 		return hasAttributes ? builder.build() : null;
 	}
 
-	private static boolean requiresWeaponComponent(DynamicItemProperties properties) {
-		if (properties.itemType() == DynamicItemType.TOOL
-				|| properties.attackDamage() > 0.0 || properties.damagePerAttack() > 0) return true;
-		return switch (properties.heldType()) {
-			case MACE, SPEAR, TRIDENT -> true;
-			default -> false;
-		};
-	}
-
 	private static ItemAttributeModifiers attributes(DynamicArmorProperties armor) {
 		ItemAttributeModifiers.Builder builder = ItemAttributeModifiers.builder();
 		Identifier modifierId = LittleChemistry.id("armor." + armor.slot().serializedName());
@@ -339,80 +238,19 @@ public final class DynamicContentObjects {
 		return ResourceKey.create(EquipmentAssets.ROOT_ID, LittleChemistry.id("dynamic/" + textureHash));
 	}
 
-	private static <T extends Item> T registerHeldCarrier(DynamicHeldType heldType, String name,
-			Function<Item.Properties, T> factory, UnaryOperator<Item.Properties> configure) {
+	private static DynamicCarrierItem registerHeldCarrier(DynamicHeldType heldType, String name, boolean stacksToOne) {
 		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, LittleChemistry.id(name));
-		Item.Properties properties = configure.apply(new Item.Properties().setId(key));
-		T carrier = Registry.register(BuiltInRegistries.ITEM, key, factory.apply(properties));
+		Item.Properties properties = new Item.Properties().setId(key);
+		if (stacksToOne) properties.stacksTo(1);
+		DynamicCarrierItem carrier = Registry.register(BuiltInRegistries.ITEM, key, new DynamicCarrierItem(properties));
 		HELD_ITEMS.put(heldType, carrier);
 		return carrier;
 	}
 
-	private static <T extends Item> T registerToolCarrier(DynamicTool tool, String name,
-			Function<Item.Properties, T> factory, UnaryOperator<Item.Properties> configure) {
-		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, LittleChemistry.id(name));
-		T carrier = Registry.register(BuiltInRegistries.ITEM, key,
-				factory.apply(configure.apply(new Item.Properties().setId(key))));
-		TOOL_ITEMS.put(tool, carrier);
+	private static DynamicCarrierItem heldCarrier(DynamicHeldType heldType) {
+		DynamicCarrierItem carrier = HELD_ITEMS.get(heldType);
+		if (carrier == null) throw new IllegalStateException("No carrier registered for held type " + heldType);
 		return carrier;
-	}
-
-	private static Item heldCarrier(DynamicItemProperties properties) {
-		Item carrier = properties.tool() != DynamicTool.NONE
-				? TOOL_ITEMS.get(properties.tool()) : HELD_ITEMS.get(properties.heldType());
-		if (carrier == null) throw new IllegalStateException(
-				"No carrier registered for held type " + properties.heldType()
-						+ " and tool " + properties.tool());
-		return carrier;
-	}
-
-	private static Item.Properties shieldProperties(Item.Properties properties) {
-		return properties.durability(336)
-				.equippableUnswappable(EquipmentSlot.OFFHAND)
-				.component(DataComponents.BLOCKS_ATTACKS,
-						java.util.Objects.requireNonNull(Items.SHIELD.components().get(DataComponents.BLOCKS_ATTACKS)))
-				.component(DataComponents.BREAK_SOUND,
-						java.util.Objects.requireNonNull(Items.SHIELD.components().get(DataComponents.BREAK_SOUND)));
-	}
-
-	/** Delegates only saved catch-all tool stacks; fresh stacks always use their native carrier ID. */
-	static Item compatibilityToolFor(ItemStack stack, DynamicContentDefinition definition) {
-		if ((stack.getItem() != TOOL_HELD_ITEM && stack.getItem() != ITEM)
-				|| definition == null || definition.item() == null
-				|| compatibilityToolClassFor(definition.item()) == null) return null;
-		Item nativeCarrier = TOOL_ITEMS.get(definition.item().tool());
-		return nativeCarrier == TOOL_HELD_ITEM ? null : nativeCarrier;
-	}
-
-	/** Native use-on mechanics supplied to stacks saved under the original dynamic_tool ID. */
-	static Class<? extends Item> compatibilityToolClassFor(DynamicItemProperties properties) {
-		if (properties == null) return null;
-		return switch (properties.tool()) {
-			case AXE -> DynamicAxeCarrierItem.class;
-			case SHOVEL -> DynamicShovelCarrierItem.class;
-			case HOE -> DynamicHoeCarrierItem.class;
-			case NONE, PICKAXE, SWORD -> null;
-		};
-	}
-
-	static Class<? extends Item> carrierClassFor(DynamicHeldType heldType, DynamicTool tool) {
-		if (tool != DynamicTool.NONE) {
-			return switch (tool) {
-				case AXE -> DynamicAxeCarrierItem.class;
-				case SHOVEL -> DynamicShovelCarrierItem.class;
-				case HOE -> DynamicHoeCarrierItem.class;
-				case NONE, PICKAXE, SWORD -> DynamicCarrierItem.class;
-			};
-		}
-		return switch (heldType) {
-			case BOW -> DynamicBowCarrierItem.class;
-			case CROSSBOW -> DynamicCrossbowCarrierItem.class;
-			case ROD -> DynamicFishingRodCarrierItem.class;
-			case MACE -> DynamicMaceCarrierItem.class;
-			case SHIELD -> DynamicShieldCarrierItem.class;
-			case TRIDENT -> DynamicTridentCarrierItem.class;
-			case REGULAR, TOOL, SPEAR -> DynamicCarrierItem.class;
-		};
 	}
 
 	private static DynamicCarrierItem registerArmorCarrier(String name) {
@@ -449,7 +287,7 @@ public final class DynamicContentObjects {
 
 	/** Infrastructure carriers are never valid standalone item identities. */
 	public static boolean isCarrierItem(Item item) {
-		return item instanceof DynamicItemCarrier || item instanceof DynamicCarrierBlockItem
+		return item instanceof DynamicCarrierItem || item instanceof DynamicCarrierBlockItem
 				|| item instanceof DynamicEntitySpawnerItem;
 	}
 }

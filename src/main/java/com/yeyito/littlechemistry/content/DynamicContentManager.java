@@ -17,13 +17,18 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -34,10 +39,14 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
 
 public final class DynamicContentManager {
+	private static final Logger LOGGER = LoggerFactory.getLogger(DynamicContentManager.class);
 	private static final SecureRandom RANDOM = new SecureRandom();
 	private static final ExecutorService ASSET_IO = Executors.newVirtualThreadPerTaskExecutor();
+	private static final Pattern CATALOG_BACKUP_NAME = Pattern.compile(
+			"dynamic-content\\.format-(\\d+)\\.backup\\.json");
 	private static volatile DynamicContentManager active;
 
 	private final MinecraftServer server;
@@ -71,7 +80,7 @@ public final class DynamicContentManager {
 		try {
 			DynamicContentManager manager;
 			if (Files.isRegularFile(dataFile)) {
-				DynamicContentJson.Decoded decoded = DynamicContentJson.decode(Files.readAllBytes(dataFile));
+				DynamicContentJson.Decoded decoded = loadCompatibleCatalog(dataFile);
 				if (decoded.format() < DynamicContentJson.CURRENT_FORMAT) {
 					backupLegacyCatalog(dataFile, decoded.format());
 				}
@@ -80,10 +89,10 @@ public final class DynamicContentManager {
 				manager = new DynamicContentManager(server, dataFile, UUID.randomUUID(), 0, List.of());
 			}
 			manager.save(); // Also upgrades legacy slot-based catalogs to the virtual format.
-				manager.rebuildPayload();
-				active = manager;
-				DynamicContentCatalog.replace(manager.definitions);
-				loadServerBehaviors(manager.definitions);
+			manager.rebuildPayload();
+			active = manager;
+			DynamicContentCatalog.replace(manager.definitions);
+			DynamicBehaviorRegistry.replace(manager.definitions);
 			try {
 				GenerationWorkspace.initialize(manager.generationWorkspaceRoot(), manager.definitions);
 			} catch (IOException sourceFailure) {
@@ -95,18 +104,88 @@ public final class DynamicContentManager {
 		}
 	}
 
-	/** Reconstructs persisted behavior modules only from the authoritative server lifecycle. */
-	private static void loadServerBehaviors(List<DynamicContentDefinition> definitions) {
-		DynamicBehaviorRegistry.clear();
-		for (DynamicContentDefinition definition : definitions) {
+	/**
+	 * Reads the current catalog, falling back to the newest compatible migration backup when a later development build
+	 * already rewrote the world to a newer schema. The newer catalog is archived before the normal save restores this
+	 * version's format, so no rollback silently destroys the only copy of later-format data.
+	 */
+	static DynamicContentJson.Decoded loadCompatibleCatalog(Path dataFile) throws IOException {
+		byte[] bytes = Files.readAllBytes(dataFile);
+		final int storedFormat;
+		try {
+			storedFormat = DynamicContentJson.storedFormat(bytes);
+		} catch (RuntimeException invalid) {
+			throw new IOException("Could not read the dynamic content catalog format", invalid);
+		}
+		if (storedFormat <= DynamicContentJson.CURRENT_FORMAT) {
+			return DynamicContentJson.decode(bytes);
+		}
+
+		CatalogBackup backup = newestCompatibleBackup(dataFile);
+		if (backup == null) {
+			throw new IOException("Dynamic content format " + storedFormat + " is newer than supported format "
+					+ DynamicContentJson.CURRENT_FORMAT + " and no compatible migration backup exists");
+		}
+		DynamicContentJson.Decoded restored;
+		try {
+			restored = DynamicContentJson.decode(Files.readAllBytes(backup.path()));
+		} catch (RuntimeException invalid) {
+			throw new IOException("Could not read compatible dynamic content backup " + backup.path(), invalid);
+		}
+		if (restored.format() != backup.format()) {
+			throw new IOException("Dynamic content backup format does not match its filename: " + backup.path());
+		}
+
+		Path newerArchive = archiveNewerCatalog(dataFile, bytes, storedFormat);
+		LOGGER.warn(
+				"Dynamic content format {} is newer than supported format {}; restoring compatible backup {} and preserving the newer catalog at {}",
+				storedFormat, DynamicContentJson.CURRENT_FORMAT, backup.path(), newerArchive);
+		return restored;
+	}
+
+	private static Path archiveNewerCatalog(Path dataFile, byte[] bytes, int storedFormat) throws IOException {
+		String baseName = "dynamic-content.format-" + storedFormat + ".pre-v3.5-revert";
+		Path archive = dataFile.resolveSibling(baseName + ".json");
+		if (Files.isRegularFile(archive) && Arrays.equals(bytes, Files.readAllBytes(archive))) return archive;
+		if (Files.exists(archive)) {
+			do {
+				archive = dataFile.resolveSibling(baseName + "-" + UUID.randomUUID() + ".json");
+			} while (Files.exists(archive));
+		}
+
+		Path temporary = archive.resolveSibling(archive.getFileName() + ".tmp-" + UUID.randomUUID());
+		Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
+		try {
 			try {
-				DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(
-						definition.behaviorSourceBundle());
-				DynamicBehaviorRegistry.install(definition.name(), compiled, compiled.instantiate());
-			} catch (RuntimeException error) {
-				LittleChemistry.LOGGER.error("Could not load generated behavior for {}", definition.name(), error);
+				Files.move(temporary, archive, StandardCopyOption.ATOMIC_MOVE);
+			} catch (AtomicMoveNotSupportedException ignored) {
+				Files.move(temporary, archive);
+			}
+		} finally {
+			Files.deleteIfExists(temporary);
+		}
+		return archive;
+	}
+
+	private static CatalogBackup newestCompatibleBackup(Path dataFile) throws IOException {
+		Path directory = dataFile.getParent();
+		if (directory == null || !Files.isDirectory(directory)) return null;
+		CatalogBackup newest = null;
+		try (var paths = Files.list(directory)) {
+			for (Path candidate : paths.filter(Files::isRegularFile).toList()) {
+				var matcher = CATALOG_BACKUP_NAME.matcher(candidate.getFileName().toString());
+				if (!matcher.matches()) continue;
+				int format;
+				try {
+					format = Integer.parseInt(matcher.group(1));
+				} catch (NumberFormatException ignored) {
+					continue;
+				}
+				if (format < 1 || format > DynamicContentJson.CURRENT_FORMAT) continue;
+				if (newest == null || format > newest.format()) newest = new CatalogBackup(candidate, format);
 			}
 		}
+		return newest;
 	}
 
 	public static void stop(MinecraftServer server) {
@@ -188,14 +267,6 @@ public final class DynamicContentManager {
 				textureAssets.put(actualHash, bytes);
 			}
 		}
-		for (DynamicItemTexture itemTexture : generated.itemVisuals().states()) {
-			byte[] bytes = itemTexture.texture().renderPng();
-			String actualHash = DynamicTextureAsset.sha256(bytes);
-			if (!actualHash.equals(itemTexture.hash())) {
-				throw new IOException("Generated item visual texture hash mismatch for " + itemTexture.id());
-			}
-			textureAssets.put(actualHash, bytes);
-		}
 		for (DynamicParticleDefinition particle : generated.customParticles()) {
 			for (DynamicParticleFrame frame : particle.frames()) {
 				byte[] bytes = frame.texture().renderPng();
@@ -238,9 +309,7 @@ public final class DynamicContentManager {
 				generated.customParticles(),
 				generated.workstation(),
 				generated.entity(),
-				generated.entityModel(),
-				generated.itemVisuals(),
-				compiledBehavior.sourceBundle()
+				generated.entityModel()
 		);
 		GenerationWorkspace.bindPending(generated, definition);
 		DynamicContentDefinition committed = commit(
@@ -464,10 +533,6 @@ public final class DynamicContentManager {
 						definition.name() + " block model texture " + texture.id());
 			}
 		}
-		for (DynamicItemTexture texture : definition.itemVisuals().states()) {
-			ensureAsset(texture.hash(), texture.texture().renderPng(),
-					definition.name() + " item visual state " + texture.id());
-		}
 		if (definition.entityModel() != null) {
 			for (DynamicBlockTexture texture : definition.entityModel().textures()) {
 				if (texture.hash().equals(definition.textureHash())) continue;
@@ -564,6 +629,9 @@ public final class DynamicContentManager {
 			Files.copy(dataFile, backup);
 			LittleChemistry.LOGGER.info("Backed up legacy Little Chemistry catalog to {} before format migration", backup);
 		}
+	}
+
+	private record CatalogBackup(Path path, int format) {
 	}
 
 	private static DynamicArmorSlot requireArmorSlot(DynamicArmorSlot slot) {
