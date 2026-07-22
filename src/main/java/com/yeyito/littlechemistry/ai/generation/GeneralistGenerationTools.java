@@ -132,8 +132,7 @@ final class GeneralistGenerationTools {
 		if (Files.exists(Path.of("/lib64"))) {
 			sandbox.addAll(11, List.of("--ro-bind", "/lib64", "/lib64"));
 		}
-		for (String readOnly : List.of(
-				"existing", "reference", ".existing-sourcepath", "request.json", "AGENTS.md", "README.md")) {
+		for (String readOnly : List.of("existing", "reference", ".existing-sourcepath", "request.json")) {
 			Path source = workspace.root().resolve(readOnly);
 			if (Files.exists(source)) sandbox.addAll(List.of(
 					"--ro-bind", source.toString(), "/workspace/" + readOnly));

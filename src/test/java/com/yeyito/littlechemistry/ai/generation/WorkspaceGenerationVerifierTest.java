@@ -150,6 +150,21 @@ final class WorkspaceGenerationVerifierTest {
 	}
 
 	@Test
+	void finalBuildRejectsPartiallyTransparentInventoryIcons() throws Exception {
+		try (GenerationWorkspace workspace = itemWorkspace(64)) {
+			Path factory = workspace.root().resolve("items/prismatic_dust/C_prismatic_dust_Content.java");
+			Files.writeString(factory, Files.readString(factory).replace("202040FF", "20204080"));
+			GenerationRequest request = GenerationRequest.fixed(
+					DynamicContentType.ITEM, null, "Prismatic Dust", 1, null);
+
+			IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+					() -> WorkspaceGenerationVerifier.verify(workspace, request));
+
+			assertTrue(failure.getMessage().contains("fully transparent or fully opaque"));
+		}
+	}
+
+	@Test
 	void workstationTimingBelongsToProcessDescriptionRatherThanOutputPolicy() {
 		DynamicWorkstationSpec valid = workstation(
 				"Presses one result over 40 Minecraft ticks.",

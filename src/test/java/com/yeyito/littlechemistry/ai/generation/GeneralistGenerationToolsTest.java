@@ -30,15 +30,12 @@ final class GeneralistGenerationToolsTest {
 			Files.createDirectories(job.resolve("reference"));
 			Files.createDirectories(job.resolve(".existing-sourcepath"));
 			Files.writeString(job.resolve("request.json"), "immutable");
-			Files.writeString(job.resolve("AGENTS.md"), "immutable instructions");
-			Files.writeString(job.resolve("README.md"), "immutable readme");
 			GenerationRequest request = GenerationRequest.fixed(
 					DynamicContentType.ITEM, null, "Sandbox Item", 1, null);
 			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace, request);
 			JsonObject arguments = new JsonObject();
 			arguments.addProperty("command",
-					"printf ok > items/created.txt; ln -s /etc/passwd items/host-link; "
-							+ "printf changed > request.json; printf changed > AGENTS.md; printf changed > README.md");
+					"printf ok > items/created.txt; ln -s /etc/passwd items/host-link; printf changed > request.json");
 
 				var result = tools.execute("bash", arguments);
 				JsonObject readLink = new JsonObject();
@@ -52,8 +49,6 @@ final class GeneralistGenerationToolsTest {
 			assertEquals(1, result.output().get("exitCode").getAsInt());
 			assertEquals("ok", Files.readString(job.resolve("items/created.txt")));
 			assertEquals("immutable", Files.readString(job.resolve("request.json")));
-			assertEquals("immutable instructions", Files.readString(job.resolve("AGENTS.md")));
-			assertEquals("immutable readme", Files.readString(job.resolve("README.md")));
 				assertFalse(escapedRead.output().get("ok").getAsBoolean());
 				assertEquals(0, escapedGrep.output().get("matches").getAsInt());
 			}

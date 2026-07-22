@@ -57,6 +57,8 @@ record GenerationRequest(
 		return fixedType == null;
 	}
 
+	/* Keep this query request-specific. Shared API details belong in reference/API.md, and only workstation queries may
+	 * advertise rejection as a valid terminal result. */
 	String userPrompt() {
 		StringBuilder prompt = new StringBuilder();
 		if (flexible()) {
@@ -78,7 +80,7 @@ record GenerationRequest(
 						.append("\n\nBefore creating source, choose one terminal result and write it to "
 								+ "`.littlechemistry/result.json`. For an accepted result, use exactly:\n")
 						.append("`{\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\","
-								+ "\"displayName\":\"...\",\"outputCount\":1,\"recipeData\":{...}}`\n")
+								+ "\"displayName\":\"...\",\"outputCount\":<natural integer>,\"recipeData\":{...}}`\n")
 						.append("`recipeData` is required and must match the closed schema above. You may instead reject "
 								+ "this workstation recipe only if the workstation is too weak for the craft. For a rejection, "
 								+ "write exactly:\n")
@@ -97,13 +99,15 @@ record GenerationRequest(
 				prompt.append("Before creating source, choose the result and write exactly this shape to "
 						+ "`.littlechemistry/result.json`:\n")
 						.append("`{\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\","
-								+ "\"displayName\":\"...\",\"outputCount\":1}`\n")
+								+ "\"displayName\":\"...\",\"outputCount\":<natural integer>}`\n")
 						.append("Do not include `recipeData` for ordinary crafting or smelting.\n\n");
 			}
-			prompt.append("For an accepted result, armor output count is 1. Normalize `displayName` to a lowercase "
-						+ "underscore ID and create `<category>/<id>/C_<id>_Content.java` with package "
-						+ "`<category>.c_<id>`, plus the sibling `GeneratedBehaviorImpl.java`. The process and every "
-						+ "ingredient must materially influence identity, pixels, native properties, and behavior.\n\n");
+			prompt.append("For an accepted result, choose the natural output count from 1 to 64 based on the recipe and "
+						+ "result. Armor output count is always 1, and every count must fit both the destination and the "
+						+ "generated stack. Normalize `displayName` to a lowercase underscore ID and create "
+						+ "`<category>/<id>/C_<id>_Content.java` with package `<category>.c_<id>`, plus the sibling "
+						+ "`GeneratedBehaviorImpl.java`. The process and every ingredient must materially influence identity, "
+						+ "pixels, native properties, and behavior.\n\n");
 		} else {
 			String kind = switch (fixedType) {
 				case ITEM -> "item";
@@ -143,7 +147,7 @@ record GenerationRequest(
 			prompt.append("Implement the complete gameplay properties and behavior that naturally follow from the concept and recipe. ")
 					.append("Build and verify the finished content, repairing any diagnostics before finishing.");
 		}
-		return prompt.toString();
+		return prompt.toString().stripTrailing();
 	}
 
 	/** Extracts identity for the prose policy prefix and avoids repeating it in the rendered recipe JSON. */

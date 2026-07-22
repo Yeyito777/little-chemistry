@@ -147,7 +147,7 @@ final class MinecraftReferenceExporter {
 		return new DynamicTextureSpec(encodedPalette, rows);
 	}
 
-	private static int normalizeAlpha(int argb) {
+	static int normalizeAlpha(int argb) {
 		return ((argb >>> 24) & 0xFF) < 16 ? 0 : argb | 0xFF000000;
 	}
 
