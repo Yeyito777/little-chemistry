@@ -56,10 +56,12 @@ final class WorkspaceGenerationVerifier {
 		if (readRejection(workspace, request) != null) {
 			throw new IllegalArgumentException("A workstation recipe rejection is terminal and does not compile source");
 		}
-		Selection selection = request.flexible() ? readSelection(workspace, request) : new Selection(
-				request.fixedType(), request.fixedArmorSlot(),
+		Selection selection;
+		if (request.flexible()) selection = readSelection(workspace, request);
+		else if (request.fixedType() == DynamicContentType.BLOCK) selection = readFixedBlockSelection(workspace, request);
+		else selection = new Selection(request.fixedType(), request.fixedArmorSlot(),
 				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
-				new JsonObject());
+				null, new JsonObject());
 		if (selection.type() == DynamicContentType.ARMOR && selection.outputCount() != 1) {
 			throw new IllegalArgumentException("Armor recipe outputCount must be 1");
 		}
@@ -132,6 +134,22 @@ final class WorkspaceGenerationVerifier {
 		return WorkstationRecipeRejection.fromJson(encoded);
 	}
 
+	private static Selection readFixedBlockSelection(GenerationWorkspace workspace, GenerationRequest request)
+			throws IOException {
+		JsonObject result = readResult(workspace);
+		if (!result.keySet().equals(Set.of("kind")) || !result.get("kind").isJsonPrimitive()) {
+			throw new IllegalArgumentException("Fixed block classification requires exactly one kind field set to "
+					+ "block or workstation");
+		}
+		String kind = result.get("kind").getAsString();
+		if (!kind.equals("block") && !kind.equals("workstation")) {
+			throw new IllegalArgumentException("Fixed block result kind must be block or workstation");
+		}
+		return new Selection(DynamicContentType.BLOCK, null,
+				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
+				kind, new JsonObject());
+	}
+
 	private static Selection readSelection(GenerationWorkspace workspace, GenerationRequest request) throws IOException {
 		JsonObject result = readResult(workspace);
 		Set<String> allowed = request.recipeDataSchema() == null
@@ -158,7 +176,7 @@ final class WorkspaceGenerationVerifier {
 		DynamicArmorSlot slot = null;
 		switch (kind) {
 			case "item" -> type = DynamicContentType.ITEM;
-			case "block" -> type = DynamicContentType.BLOCK;
+			case "block", "workstation" -> type = DynamicContentType.BLOCK;
 			case "entity" -> type = DynamicContentType.ENTITY;
 			case "helmet" -> { type = DynamicContentType.ARMOR; slot = DynamicArmorSlot.HEAD; }
 			case "chestplate" -> { type = DynamicContentType.ARMOR; slot = DynamicArmorSlot.CHEST; }
@@ -182,7 +200,7 @@ final class WorkspaceGenerationVerifier {
 			}
 			new DynamicWorkstationRecipeDataSchema(request.recipeDataSchema()).validateValue(recipeData);
 		}
-		return new Selection(type, slot, displayName, count, recipeData);
+		return new Selection(type, slot, displayName, count, kind, recipeData);
 	}
 
 	private static JsonObject readResult(GenerationWorkspace workspace) throws IOException {
@@ -223,6 +241,7 @@ final class WorkspaceGenerationVerifier {
 			case ENTITY -> generated.entity() != null;
 		};
 		if (!typeMatches) throw new IllegalArgumentException("Factory property kind does not match the requested result");
+		validateWorkstationKind(selection.resultKind(), generated.workstation() != null);
 		if (generated.description().isBlank()) {
 			throw new IllegalArgumentException("Generated content requires a non-empty tooltip description");
 		}
@@ -259,6 +278,17 @@ final class WorkspaceGenerationVerifier {
 			}
 		}
 		if (generated.workstation() != null) validateWorkstationDesign(generated.workstation());
+	}
+
+	static void validateWorkstationKind(String resultKind, boolean hasWorkstationSpec) {
+		if ("workstation".equals(resultKind) && !hasWorkstationSpec) {
+			throw new IllegalArgumentException("Result kind workstation requires a non-null DynamicWorkstationSpec; "
+					+ "the spec enables the workstation runtime and AI Workstation tooltip");
+		}
+		if ("block".equals(resultKind) && hasWorkstationSpec) {
+			throw new IllegalArgumentException(
+					"A generated block with DynamicWorkstationSpec must use result kind workstation, not ordinary block");
+		}
 	}
 
 	static void validateWorkstationDesign(com.yeyito.littlechemistry.content.DynamicWorkstationSpec workstation) {
@@ -600,7 +630,7 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	private record Selection(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
-			int outputCount, JsonObject recipeData) {
+			int outputCount, String resultKind, JsonObject recipeData) {
 		private Selection {
 			recipeData = recipeData == null ? new JsonObject() : recipeData.deepCopy();
 		}

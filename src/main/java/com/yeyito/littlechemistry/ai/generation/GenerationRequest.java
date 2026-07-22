@@ -31,12 +31,15 @@ record GenerationRequest(
 			renders on the player's head instead of only in the inventory.
 			""";
 	private static final String WORKSTATION_DIRECTION = """
-			If the natural result is a workstation, select result kind `block` and code it as a complete generated block with a
-			non-null `DynamicWorkstationSpec`. Furnaces, powered processors, crafting benches, and workbenches should normally be
-			functional workstations rather than decorative blocks. Define its input/output slots, UI, Minecraft-tick
-			processDescription, concise third-person recipePolicy, and closed recipeDataSchema. Its `GeneratedBehaviorImpl` must
-			implement both `WorkstationBehavior` and `WorkstationTickBehavior`; a decorative furnace-like block without those APIs
-			is not a workstation. Inspect reference/API.md and the referenced Little Chemistry classes for exact constructors.
+			If the natural result is a workstation, code it as a complete generated block with a non-null
+			`DynamicWorkstationSpec`. When a result file is requested, classify it with kind `workstation`, not ordinary kind `block`;
+			verification binds that choice to the runtime capability. Furnaces, powered processors, crafting benches, and
+			workbenches should normally be functional workstations rather than decorative blocks. Define its input/output slots,
+			UI with exactly one Make Recipe button, Minecraft-tick processDescription, concise third-person recipePolicy, and
+			closed recipeDataSchema. Its `GeneratedBehaviorImpl` must implement both `WorkstationBehavior` and
+			`WorkstationTickBehavior`; a decorative furnace-like block without those APIs is not a workstation. The engine supplies
+			the persistent inventory, generic screen, recipe cache, opening behavior, and `AI Workstation` tooltip marker. Inspect
+			reference/API.md and the referenced Little Chemistry classes for exact constructors and callback contracts.
 			""";
 	private static final String PROJECTILE_WEAPON_DIRECTION = """
 			If the result is a bow or crossbow, make it an ordinary item with heldType `BOW` or `CROSSBOW`, maxStack 1,
@@ -100,7 +103,7 @@ record GenerationRequest(
 						.append(PRETTY_GSON.toJson(recipeDataSchema))
 						.append("\n\nBefore creating source, choose one terminal result and write it to "
 								+ "`.littlechemistry/result.json`. For an accepted result, use exactly:\n")
-						.append("`{\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\","
+						.append("`{\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\","
 								+ "\"displayName\":\"...\",\"outputCount\":<natural integer>,\"recipeData\":{...}}`\n")
 						.append("`recipeData` is required and must match the closed schema above. You may instead reject "
 								+ "this workstation recipe only if the workstation is too weak for the craft. For a rejection, "
@@ -119,7 +122,7 @@ record GenerationRequest(
 			} else {
 				prompt.append("Before creating source, choose the result and write exactly this shape to "
 						+ "`.littlechemistry/result.json`:\n")
-						.append("`{\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\","
+						.append("`{\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\","
 								+ "\"displayName\":\"...\",\"outputCount\":<natural integer>}`\n")
 						.append("Do not include `recipeData` for ordinary crafting or smelting.\n\n");
 			}
@@ -159,6 +162,12 @@ record GenerationRequest(
 						.append(factoryClass).append("`, and sibling behavior file `")
 						.append(category).append('/').append(identifier).append("/GeneratedBehaviorImpl.java`. ")
 						.append("The requested output count is ").append(fixedOutputCount).append(".\n\n");
+			if (fixedType == DynamicContentType.BLOCK) {
+				prompt.append("Before coding, explicitly classify the requested block by writing either ")
+						.append("`{\"kind\":\"block\"}` or `{\"kind\":\"workstation\"}` to `.littlechemistry/result.json`. Use ")
+						.append("`workstation` for a functional machine or crafting/processing bench and `block` only for ")
+						.append("an ordinary block without workstation inventory, UI, or processing.\n\n");
+			}
 			if (fixedType == DynamicContentType.ARMOR) prompt.append(ARMOR_DIRECTION).append('\n');
 			if (fixedType == DynamicContentType.BLOCK) prompt.append(WORKSTATION_DIRECTION).append('\n');
 			if (fixedType == DynamicContentType.ITEM) prompt.append(PROJECTILE_WEAPON_DIRECTION).append('\n');

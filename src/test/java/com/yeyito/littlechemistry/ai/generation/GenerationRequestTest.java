@@ -44,12 +44,13 @@ final class GenerationRequestTest {
 				 "grid":[{"itemId":"minecraft:leather"},{"itemId":"minecraft:string"}]}
 				""").getAsJsonObject();
 		String prompt = GenerationRequest.recipe(recipe, null, null).userPrompt();
+		String compactPrompt = prompt.replaceAll("\\s+", " ");
 
 		assertTrue(prompt.startsWith("Please generate and code the most natural piece of Minecraft content"));
 		assertTrue(prompt.contains("item, block, armor piece, entity, or workstation"));
 		assertTrue(prompt.contains("\"minecraft:leather\""));
 		assertTrue(prompt.contains("`.littlechemistry/result.json`"));
-		assertTrue(prompt.contains("\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\""));
+		assertTrue(prompt.contains("\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\""));
 		assertTrue(prompt.contains("\"outputCount\":<natural integer>"));
 		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
 		assertTrue(prompt.contains("Armor output count is always 1"));
@@ -58,14 +59,34 @@ final class GenerationRequestTest {
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
-		assertTrue(prompt.contains("select result kind `block`"));
-		assertTrue(prompt.contains("non-null `DynamicWorkstationSpec`"));
-		assertTrue(prompt.contains("Furnaces, powered processors, crafting benches, and workbenches"));
-		assertTrue(prompt.contains("functional workstations rather than decorative blocks"));
-		assertTrue(prompt.contains("`WorkstationBehavior` and `WorkstationTickBehavior`"));
+		assertTrue(prompt.contains("kind `workstation`, not ordinary kind `block`"));
+		assertTrue(prompt.contains("non-null\n`DynamicWorkstationSpec`"));
+		assertTrue(compactPrompt.contains("Furnaces, powered processors, crafting benches, and workbenches"));
+		assertTrue(compactPrompt.contains("functional workstations rather than decorative blocks"));
+		assertTrue(prompt.contains("`WorkstationBehavior` and\n`WorkstationTickBehavior`"));
+		assertTrue(prompt.contains("`AI Workstation` tooltip marker"));
 		assertTrue(prompt.contains("heldType `BOW` or `CROSSBOW`"));
 		assertTrue(prompt.contains("outputCount 1, and positive enchantability"));
 		assertTrue(prompt.contains("do not reimplement those mechanics"));
+	}
+
+	@Test
+	void fixedFurnaceBlockReceivesTheCompleteWorkstationCapabilityContract() {
+		GenerationRequest request = GenerationRequest.fixed(
+				DynamicContentType.BLOCK, null, "Twin Furnace", 1, null);
+		String prompt = request.userPrompt();
+		String compactPrompt = prompt.replaceAll("\\s+", " ");
+		var workspaceMetadata = GenerationWorkspace.encodeRequest(request);
+
+		assertTrue(prompt.contains("{\"kind\":\"block\"}"));
+		assertTrue(prompt.contains("{\"kind\":\"workstation\"}"));
+		assertTrue(prompt.contains("functional machine or crafting/processing bench"));
+		assertEquals("block, workstation", workspaceMetadata.get("allowedKinds").getAsString());
+		assertTrue(compactPrompt.contains("Furnaces, powered processors, crafting benches, and workbenches"));
+		assertTrue(prompt.contains("UI with exactly one Make Recipe button"));
+		assertTrue(prompt.contains("`WorkstationBehavior` and\n`WorkstationTickBehavior`"));
+		assertTrue(prompt.contains("persistent inventory, generic screen, recipe cache, opening behavior"));
+		assertTrue(prompt.contains("`AI Workstation` tooltip marker"));
 	}
 
 	@Test
@@ -103,6 +124,7 @@ final class GenerationRequestTest {
 		assertFalse(ContentGenerationAgent.SYSTEM_PROMPT.contains(policy));
 		assertFalse(workspaceMetadata.has("workstationPolicy"));
 		assertTrue(workspaceMetadata.has("recipeDataSchema"));
+		assertTrue(workspaceMetadata.get("allowedKinds").getAsString().contains("workstation"));
 	}
 
 	@Test

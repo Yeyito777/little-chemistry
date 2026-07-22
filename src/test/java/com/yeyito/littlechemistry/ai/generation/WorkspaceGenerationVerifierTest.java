@@ -167,6 +167,25 @@ final class WorkspaceGenerationVerifierTest {
 	}
 
 	@Test
+	void fixedBlocksRequireExplicitOrdinaryOrWorkstationClassification() throws Exception {
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(
+				temporaryDirectory.resolve("block-world"), temporaryDirectory.resolve("block-job"))) {
+			GenerationRequest request = GenerationRequest.fixed(
+					DynamicContentType.BLOCK, null, "Twin Furnace", 1, null);
+
+			IllegalArgumentException missing = assertThrows(IllegalArgumentException.class,
+					() -> WorkspaceGenerationVerifier.verify(workspace, request));
+			assertTrue(missing.getMessage().contains("Write .littlechemistry/result.json"));
+
+			Files.createDirectories(workspace.root().resolve(".littlechemistry"));
+			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"), "{\"kind\":\"item\"}");
+			IllegalArgumentException invalid = assertThrows(IllegalArgumentException.class,
+					() -> WorkspaceGenerationVerifier.verify(workspace, request));
+			assertTrue(invalid.getMessage().contains("must be block or workstation"));
+		}
+	}
+
+	@Test
 	void headArmorRequiresBothBaseAndOuterHeadUvArtwork() {
 		DynamicArmorDisplayTextureSpec missingOuterHead = headArmorTexture(false);
 		DynamicArmorDisplayTextureSpec completeHead = headArmorTexture(true);
@@ -175,6 +194,20 @@ final class WorkspaceGenerationVerifierTest {
 				() -> WorkspaceGenerationVerifier.validateArmorTexture(missingOuterHead, DynamicArmorSlot.HEAD));
 		assertTrue(failure.getMessage().contains("base-head and hat/outer-head"));
 		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateArmorTexture(completeHead, DynamicArmorSlot.HEAD));
+	}
+
+	@Test
+	void workstationResultKindIsBoundToTheRuntimeSpecThatDrivesItsTooltipAndMenu() {
+		IllegalArgumentException missingSpec = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateWorkstationKind("workstation", false));
+		IllegalArgumentException hiddenWorkstation = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateWorkstationKind("block", true));
+
+		assertTrue(missingSpec.getMessage().contains("workstation runtime and AI Workstation tooltip"));
+		assertTrue(hiddenWorkstation.getMessage().contains("must use result kind workstation"));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateWorkstationKind("workstation", true));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateWorkstationKind("block", false));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateWorkstationKind(null, true));
 	}
 
 	@Test

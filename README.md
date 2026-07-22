@@ -44,13 +44,16 @@ API keys are stored outside the world in Fabric's `config/little-chemistry/api-k
 
 ## Custom workstations
 
-Whenever the content AI creates a block, it must explicitly classify the block as ordinary or as a workstation. A
-workstation remains a normal runtime Little Chemistry block, but its definition additionally owns a persistent process
+Whenever the content AI creates a block, it must explicitly classify the block as ordinary or as a workstation. Recipe
+results use the distinct `workstation` result kind, and verification rejects either a workstation classification without a
+`DynamicWorkstationSpec` or an ordinary-block classification that secretly contains one. A workstation remains a normal
+runtime Little Chemistry block, but its definition additionally owns a persistent process
 description, a declarative output policy for every recipe invented inside it, a closed schema for process-specific
 recipe data, named inventory slots, and a complete declarative screen layout. The AI controls slot roles and positions,
 title and player-inventory placement, colors, labels, gauges, state channels, the **Make Recipe** control, and optional
 custom buttons. One fixed client screen renders every validated layout; clients never compile Java received from a
-server.
+server. A non-null workstation spec also makes the item tooltip show the aqua **AI Workstation** marker and its process
+description; generated code does not imitate that marker manually.
 
 The workstation's generated `GeneratedBehaviorImpl` supplies the mechanics. Its pure recipe callback captures exact
 named slots and decides required counts plus consume, retain, or damage semantics. Its server-tick callback

@@ -511,11 +511,15 @@ public final class GenerationWorkspace implements AutoCloseable {
 		encoded.addProperty("mode", request.flexible() ? "recipe" : "fixed");
 		if (request.flexible()) {
 			encoded.addProperty("resultFile", ".littlechemistry/result.json");
-			encoded.addProperty("allowedKinds", "item, block, helmet, chestplate, leggings, boots, entity");
+			encoded.addProperty("allowedKinds", "item, block, workstation, helmet, chestplate, leggings, boots, entity");
 		} else {
 			encoded.addProperty("requestedKind", request.fixedType().serializedName());
 			encoded.addProperty("requestedName", request.fixedDisplayName());
 			encoded.addProperty("requestedOutputCount", request.fixedOutputCount());
+			if (request.fixedType() == DynamicContentType.BLOCK) {
+				encoded.addProperty("resultFile", ".littlechemistry/result.json");
+				encoded.addProperty("allowedKinds", "block, workstation");
+			}
 			if (request.fixedArmorSlot() != null) {
 				encoded.addProperty("requestedArmorSlot", request.fixedArmorSlot().serializedName());
 			}
@@ -715,6 +719,24 @@ public final class GenerationWorkspace implements AutoCloseable {
 			`DynamicParticleDefinition`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
 			`DynamicTool`, `DynamicBlockShape`, `DynamicItemType`, `DynamicHeldType`, `DynamicArmorSlot`,
 			`DynamicEntityMovement`, and `DynamicEntityDisposition`.
+
+			## Generated workstation contract
+			A workstation is a generated block with a non-null `DynamicWorkstationSpec`; it is not a decorative block that merely
+			looks like a furnace or bench. Recipe results must select kind `workstation` rather than ordinary kind `block`, and
+			verification requires that classification to match the generated spec. Attach the spec with
+			`GeneratedContentBuilder.workstation(...)`. It needs at least one recipe-input slot, exactly one primary `OUTPUT`
+			slot, and a `DynamicWorkstationUi` containing exactly one `MAKE_RECIPE` button. Describe deterministic input capture
+			and ingredient uses in `WorkstationBehavior.createWorkstationRecipe`; implement processing, progress, fuel, and other
+			placement-local mechanics in `WorkstationTickBehavior.workstationTick` with bounded context state. The behavior entry
+			must implement both interfaces. Put Minecraft-tick timing in `processDescription`, declarative output character and
+			balance in third-person `recipePolicy`, and bounded per-recipe fields in the closed `recipeDataSchema`.
+
+			The engine automatically supplies persistent inventory, the generic generated screen, recipe locking/cache and
+			transactions, block opening, automation integration, and the aqua `AI Workstation` item-tooltip marker whenever the
+			persisted definition has a non-null workstation spec. Generated code must use that capability rather than imitating
+			a workstation through tooltip text or ordinary use callbacks. Read `DynamicWorkstationSpec`, its slot/UI records,
+			`WorkstationBehavior`, `WorkstationTickBehavior`, `DynamicWorkstationContext`, and `WorkstationRecipeRequest` from the
+			class index before constructing them.
 
 			A typical factory returns:
 			```
