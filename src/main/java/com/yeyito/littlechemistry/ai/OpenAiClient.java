@@ -8,11 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -24,7 +20,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.stream.Stream;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 public final class OpenAiClient {
 	public static final String DEFAULT_MODEL = "gpt-5.6-sol";
@@ -32,14 +30,14 @@ public final class OpenAiClient {
 
 	private static final Gson GSON = new Gson();
 	private static final Logger LOGGER = LoggerFactory.getLogger(OpenAiClient.class);
-	private static final URI SUBSCRIPTION_RESPONSES_URI = URI.create(
+	private static final URI SUBSCRIPTION_RESPONSES_URI = websocketUri(URI.create(
 			System.getProperty("littlechemistry.chatgptBaseUrl", "https://chatgpt.com").replaceAll("/+$", "")
 					+ "/backend-api/codex/responses"
-	);
-	private static final URI API_RESPONSES_URI = URI.create(
+	));
+	private static final URI API_RESPONSES_URI = websocketUri(URI.create(
 			System.getProperty("littlechemistry.apiBaseUrl", "https://api.openai.com").replaceAll("/+$", "")
 					+ "/v1/responses"
-	);
+	));
 	private static final String SYSTEM_PROMPT =
 			"You are Little Chemistry's in-game AI assistant. Answer the player's question directly and concisely. " +
 			"You have no tools and must not claim to have used tools.";
@@ -49,6 +47,10 @@ public final class OpenAiClient {
 			System.getProperty("os.name").toLowerCase() + " " + System.getProperty("os.version") + "; " +
 			System.getProperty("os.arch") + ") little-chemistry/1.2";
 	private static final int MAX_RETRIES = 8;
+	private static final String RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
+	private static final String WEBSOCKET_CONNECTION_LIMIT_CODE = "websocket_connection_limit_reached";
+	private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
+	private static final Duration STREAM_STALL_TIMEOUT = Duration.ofMinutes(5);
 	private static final Set<Integer> RETRIABLE_STATUS_CODES = Set.of(
 			429, 500, 502, 503, 504, 507, 520, 521, 522, 523, 524
 	);
@@ -62,36 +64,38 @@ public final class OpenAiClient {
 			"model_not_found", "organization_deactivated", "terms_of_use_violation",
 			"unsupported_country_region_territory", "unsupported_value"
 	);
-	private static final HttpClient HTTP = HttpClient.newBuilder()
-			.connectTimeout(Duration.ofSeconds(15))
-			.followRedirects(HttpClient.Redirect.NORMAL)
-			.build();
-
-	private final AuthConfig authConfig;
 	private final String model;
 	private final String reasoningEffort;
-	private final HttpClient http;
 	private final URI subscriptionResponsesUri;
 	private final URI apiResponsesUri;
 	private final RetrySleeper retrySleeper;
+	private final CredentialsProvider credentialsProvider;
 
 	public OpenAiClient(AuthConfig authConfig) {
 		this(authConfig, DEFAULT_MODEL, DEFAULT_REASONING_EFFORT);
 	}
 
 	public OpenAiClient(AuthConfig authConfig, String model, String reasoningEffort) {
-		this(authConfig, model, reasoningEffort, HTTP, SUBSCRIPTION_RESPONSES_URI, API_RESPONSES_URI, Thread::sleep);
+		this(authConfig, model, reasoningEffort, SUBSCRIPTION_RESPONSES_URI, API_RESPONSES_URI, Thread::sleep);
 	}
 
-	OpenAiClient(AuthConfig authConfig, String model, String reasoningEffort, HttpClient http,
+	OpenAiClient(AuthConfig authConfig, String model, String reasoningEffort,
 			URI subscriptionResponsesUri, URI apiResponsesUri, RetrySleeper retrySleeper) {
-		this.authConfig = Objects.requireNonNull(authConfig, "authConfig");
+		this(authConfig, model, reasoningEffort, subscriptionResponsesUri, apiResponsesUri, retrySleeper,
+				() -> credentialsFor(Objects.requireNonNull(authConfig, "authConfig")));
+	}
+
+	OpenAiClient(AuthConfig authConfig, String model, String reasoningEffort,
+			URI subscriptionResponsesUri, URI apiResponsesUri, RetrySleeper retrySleeper,
+			CredentialsProvider credentialsProvider) {
+		Objects.requireNonNull(authConfig, "authConfig");
 		this.model = Objects.requireNonNull(model, "model");
 		this.reasoningEffort = Objects.requireNonNull(reasoningEffort, "reasoningEffort");
-		this.http = Objects.requireNonNull(http, "http");
-		this.subscriptionResponsesUri = Objects.requireNonNull(subscriptionResponsesUri, "subscriptionResponsesUri");
-		this.apiResponsesUri = Objects.requireNonNull(apiResponsesUri, "apiResponsesUri");
+		this.subscriptionResponsesUri = websocketUri(Objects.requireNonNull(
+				subscriptionResponsesUri, "subscriptionResponsesUri"));
+		this.apiResponsesUri = websocketUri(Objects.requireNonNull(apiResponsesUri, "apiResponsesUri"));
 		this.retrySleeper = Objects.requireNonNull(retrySleeper, "retrySleeper");
+		this.credentialsProvider = Objects.requireNonNull(credentialsProvider, "credentialsProvider");
 	}
 
 	public String model() {
@@ -103,8 +107,8 @@ public final class OpenAiClient {
 	}
 
 	public String ask(String question) throws IOException, InterruptedException {
-		return sendWithRetries(credentials -> buildRequest(credentials, question), lines -> {
-			String answer = readServerSentEvents(lines);
+		return sendWithRetries(credentials -> requestBody(question, credentials.mode(), model, reasoningEffort), events -> {
+			String answer = readWebSocketEvents(events);
 			if (answer.isBlank()) {
 				throw new OpenAiRequestException("OpenAI returned an empty response.", false);
 			}
@@ -114,6 +118,17 @@ public final class OpenAiClient {
 
 	public ToolRound runToolRound(String instructions, JsonArray tools, JsonArray input)
 			throws IOException, InterruptedException {
+		try (ToolSession session = openToolSession()) {
+			return session.runToolRound(instructions, tools, input);
+		}
+	}
+
+	/** Opens one serialized Responses websocket session for a model/tool conversation. */
+	public ToolSession openToolSession() {
+		return new ToolSession();
+	}
+
+	private JsonObject toolRoundRequest(String instructions, JsonArray tools, JsonArray input) {
 		JsonObject body = new JsonObject();
 		body.addProperty("model", model);
 		body.addProperty("instructions", instructions);
@@ -131,22 +146,29 @@ public final class OpenAiClient {
 		body.add("reasoning", reasoning);
 		body.addProperty("stream", true);
 		body.addProperty("store", false);
-
-		return sendWithRetries(credentials -> buildJsonRequest(credentials, toolRequestBody(body, credentials.mode())),
-				OpenAiClient::readToolEvents);
+		return body;
 	}
 
-	private static JsonObject toolRequestBody(JsonObject base, AuthMode authMode) {
+	static JsonObject toolRequestBody(JsonObject base, AuthMode authMode) {
 		JsonObject body = base.deepCopy();
 		if (authMode == AuthMode.SUBSCRIPTION) {
 			JsonObject clientMetadata = new JsonObject();
 			clientMetadata.addProperty("x-codex-installation-id", CODEX_INSTALLATION_ID);
 			body.add("client_metadata", clientMetadata);
+			body.addProperty("stream", true);
+		} else {
+			// The public Responses websocket protocol is inherently streaming and rejects
+			// transport-only stream/background fields in response.create.
+			body.remove("stream");
 		}
 		return body;
 	}
 
 	private OpenAiCredentials credentialsForCurrentMode() throws IOException {
+		return credentialsProvider.load();
+	}
+
+	private static OpenAiCredentials credentialsFor(AuthConfig authConfig) throws IOException {
 		if (authConfig.mode() == AuthMode.API_KEY) {
 			return new OpenAiCredentials(AuthMode.API_KEY, authConfig.readApiKey(), null, "API key");
 		}
@@ -154,56 +176,67 @@ public final class OpenAiClient {
 		return SubscriptionCredentials.loadFresh();
 	}
 
-	private HttpRequest buildRequest(OpenAiCredentials credentials, String question) {
-		return buildJsonRequest(credentials,
-				GSON.fromJson(requestBody(question, credentials.mode(), model, reasoningEffort), JsonObject.class));
-	}
-
-	private HttpRequest buildJsonRequest(OpenAiCredentials credentials, JsonObject body) {
-		URI uri = credentials.mode() == AuthMode.SUBSCRIPTION ? subscriptionResponsesUri : apiResponsesUri;
-		HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
-				.header("Authorization", "Bearer " + credentials.secret())
-				.header("Content-Type", "application/json")
-				.header("Accept", "text/event-stream")
-					.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
+	Map<String, String> websocketHeaders(OpenAiCredentials credentials, String turnState) {
+		Map<String, String> headers = new HashMap<>();
+		headers.put("Authorization", "Bearer " + credentials.secret());
+		headers.put("Accept", "application/json");
 
 		if (credentials.mode() == AuthMode.SUBSCRIPTION) {
-			// Match the Codex HTTP/SSE request identity used by Exocortex. GPT-5.6
+			// Match the Codex websocket request identity used by Exocortex. GPT-5.6
 			// tier routing on the subscription backend depends on this request shape.
-			builder.header("originator", "codex_cli_rs");
-			builder.header("User-Agent", CODEX_USER_AGENT);
-			builder.header("x-codex-beta-features", "remote_compaction_v2");
-			builder.header("x-codex-installation-id", CODEX_INSTALLATION_ID);
+			headers.put("originator", "codex_cli_rs");
+			headers.put("User-Agent", CODEX_USER_AGENT);
+			headers.put("OpenAI-Beta", RESPONSES_WEBSOCKET_BETA);
+			headers.put("x-codex-beta-features", "remote_compaction_v2");
+			headers.put("x-codex-installation-id", CODEX_INSTALLATION_ID);
 			if (credentials.accountId() != null) {
-				builder.header("ChatGPT-Account-ID", credentials.accountId());
+				headers.put("ChatGPT-Account-ID", credentials.accountId());
 			}
 		} else {
-			builder.header("User-Agent", "little-chemistry/1.2");
+			headers.put("User-Agent", "little-chemistry/1.2");
 		}
-		return builder.build();
+		if (turnState != null) headers.put("x-codex-turn-state", turnState);
+		return Map.copyOf(headers);
 	}
 
 	private <T> T sendWithRetries(RequestFactory requestFactory, ResponseReader<T> responseReader)
 			throws IOException, InterruptedException {
+		try (WebSocketSession session = new WebSocketSession()) {
+			return sendWithRetries(requestFactory, responseReader, session);
+		}
+	}
+
+	private <T> T sendWithRetries(RequestFactory requestFactory, ResponseReader<T> responseReader,
+			WebSocketSession session) throws IOException, InterruptedException {
 		int retries = 0;
+		boolean retriedRefreshedAuthentication = false;
 		while (true) {
 			throwIfInterrupted();
+			session.throwIfClosed();
 			// Authentication failures are configuration errors, not transient transport
 			// failures. Re-read credentials before every actual request so an external
 			// Exocortex or Codex refresh is visible to each retry.
 			OpenAiCredentials credentials = credentialsForCurrentMode();
 			IOException failure;
 			try {
-				return sendOnce(requestFactory.create(credentials), responseReader);
+				return sendOnce(credentials, requestFactory.create(credentials), responseReader, session);
 			} catch (OpenAiRequestException requestFailure) {
+				if (Integer.valueOf(401).equals(requestFailure.statusCode())
+						&& !retriedRefreshedAuthentication) {
+					OpenAiCredentials refreshed = credentialsForCurrentMode();
+					if (!credentials.secret().equals(refreshed.secret())
+							&& sameReplayScope(credentials, refreshed)) {
+						retriedRefreshedAuthentication = true;
+						continue;
+					}
+				}
 				if (!requestFailure.retryable()) throw requestFailure;
 				failure = requestFailure;
-			} catch (UncheckedIOException unchecked) {
-				failure = unchecked.getCause();
 			} catch (IOException terminalFailure) {
 				throw terminalFailure;
 			}
 			throwIfInterrupted();
+			session.throwIfClosed();
 
 			if (retries >= MAX_RETRIES) {
 				throw new IOException("OpenAI request failed after " + MAX_RETRIES + " retries: "
@@ -220,20 +253,38 @@ public final class OpenAiClient {
 		}
 	}
 
-	private <T> T sendOnce(HttpRequest request, ResponseReader<T> responseReader)
-			throws IOException, InterruptedException {
-		HttpResponse<Stream<String>> response;
+	private <T> T sendOnce(OpenAiCredentials credentials, JsonObject fullRequestBody, ResponseReader<T> responseReader,
+			WebSocketSession session) throws IOException, InterruptedException {
+		OpenAiWebSocketConnection connection;
 		try {
-			response = http.send(request, HttpResponse.BodyHandlers.ofLines());
+			connection = session.connection(credentials);
+		} catch (OpenAiRequestException terminalSessionFailure) {
+			throw terminalSessionFailure;
+		} catch (OpenAiWebSocketConnection.HandshakeException handshake) {
+			throw handshakeFailure(handshake.statusCode());
 		} catch (IOException transportFailure) {
 			throw new OpenAiRequestException(transportFailure.getMessage(), true, transportFailure);
 		}
-		try (Stream<String> lines = response.body()) {
-			if (response.statusCode() < 200 || response.statusCode() >= 300) {
-				String body = lines.limit(20).reduce("", (left, right) -> left + right + "\n").trim();
-				throw httpFailure(response.statusCode(), body);
+		try {
+			JsonObject envelope = session.prepareRequestBody(fullRequestBody);
+			envelope.addProperty("type", "response.create");
+			connection.sendText(GSON.toJson(envelope));
+			return responseReader.read(new WebSocketEventReader(connection, session::recordEvent));
+		} catch (OpenAiRequestException requestFailure) {
+			boolean retryWithoutIncremental = session.requestUsedPreviousResponseId()
+					&& (Integer.valueOf(400).equals(requestFailure.statusCode())
+					|| Integer.valueOf(404).equals(requestFailure.statusCode()));
+			session.resetConnection();
+			if (retryWithoutIncremental) {
+				throw new OpenAiRequestException(requestFailure.getMessage(), true, requestFailure);
 			}
-			return responseReader.read(lines);
+			throw requestFailure;
+		} catch (IOException transportFailure) {
+			session.resetConnection();
+			throw new OpenAiRequestException(transportFailure.getMessage(), true, transportFailure);
+		} catch (InterruptedException interrupted) {
+			session.resetConnection();
+			throw interrupted;
 		}
 	}
 
@@ -245,7 +296,19 @@ public final class OpenAiClient {
 				|| (status == 403 && body.isBlank()));
 		String detail = body.isBlank() ? "<empty body>" : safeError(body);
 		return new OpenAiRequestException(
-				"OpenAI request failed (HTTP " + status + "): " + detail, retryable
+				"OpenAI request failed (HTTP " + status + "): " + detail, retryable, status
+		);
+	}
+
+	private static OpenAiRequestException handshakeFailure(int status) {
+		// Java-WebSocket exposes the rejected status but not the HTTP response body.
+		// Classify ambiguous 403/429 handshakes conservatively instead of treating a
+		// descriptive policy refusal or usage_limit_reached as a transient failure.
+		boolean retryable = status != 403 && status != 429 && RETRIABLE_STATUS_CODES.contains(status);
+		return new OpenAiRequestException(
+				"OpenAI websocket handshake failed (HTTP " + status + "; response body unavailable)",
+				retryable,
+				status
 		);
 	}
 
@@ -260,6 +323,15 @@ public final class OpenAiClient {
 		return exponential + ThreadLocalRandom.current().nextLong(1_001L);
 	}
 
+	private static boolean sameReplayScope(OpenAiCredentials left, OpenAiCredentials right) {
+		if (left.mode() != right.mode()) return false;
+		if (left.mode() == AuthMode.API_KEY) return left.secret().equals(right.secret());
+		if (left.accountId() == null || right.accountId() == null) {
+			return left.accountId() == null && right.accountId() == null && left.secret().equals(right.secret());
+		}
+		return left.accountId().equals(right.accountId());
+	}
+
 	private static boolean hasErrorType(String json, String expectedType) {
 		try {
 			JsonObject root = GSON.fromJson(json, JsonObject.class);
@@ -270,35 +342,21 @@ public final class OpenAiClient {
 		}
 	}
 
-	private static ToolRound readToolEvents(Stream<String> lines) throws IOException, InterruptedException {
+	private static ToolRound readToolEvents(WebSocketEventReader events) throws IOException, InterruptedException {
 		Map<Integer, JsonObject> outputItems = new HashMap<>();
 		Map<Integer, StringBuilder> argumentDeltas = new HashMap<>();
 		List<String> observedEventTypes = new ArrayList<>();
 		JsonObject responseMetadata = new JsonObject();
 		boolean responseCompleted = false;
-		for (String line : (Iterable<String>) lines::iterator) {
+		JsonObject event;
+		while ((event = events.nextEvent()) != null) {
 			throwIfInterrupted();
-			if (!line.startsWith("data:")) {
-				continue;
-			}
-			String data = line.substring(5).trim();
-			if (data.isEmpty()) {
-				continue;
-			}
-			if ("[DONE]".equals(data)) break;
-			JsonObject event;
-			try {
-				event = GSON.fromJson(data, JsonObject.class);
-			} catch (Exception ignored) {
-				continue;
-			}
-			if (event == null) {
-				continue;
-			}
 			String type = string(event, "type");
 			if (type != null && !observedEventTypes.contains(type)) observedEventTypes.add(type);
 			int outputIndex = event.has("output_index") ? event.get("output_index").getAsInt() : outputItems.size();
-			if ("response.output_item.added".equals(type) && event.get("item") instanceof JsonObject item) {
+			if ("response.created".equals(type) && event.get("response") instanceof JsonObject created) {
+				responseMetadata = created.deepCopy();
+			} else if ("response.output_item.added".equals(type) && event.get("item") instanceof JsonObject item) {
 				outputItems.put(outputIndex, item.deepCopy());
 				if ("function_call".equals(string(item, "type"))) {
 					argumentDeltas.put(outputIndex, new StringBuilder());
@@ -321,9 +379,13 @@ public final class OpenAiClient {
 				outputItems.put(outputIndex, completed);
 			} else if ("response.completed".equals(type) && event.get("response") instanceof JsonObject completed) {
 				responseCompleted = true;
+				JsonObject createdMetadata = responseMetadata;
 				responseMetadata = completed.deepCopy();
+				if (!responseMetadata.has("id") && createdMetadata.has("id")) {
+					responseMetadata.add("id", createdMetadata.get("id").deepCopy());
+				}
 				JsonArray canonicalOutput = array(completed, "output");
-				// The Codex SSE backend may leave response.completed.output empty after
+				// The Codex backend may leave response.completed.output empty after
 				// already delivering canonical response.output_item.done events.
 				if (canonicalOutput != null && !canonicalOutput.isEmpty()) {
 					outputItems.clear();
@@ -334,6 +396,8 @@ public final class OpenAiClient {
 					}
 				}
 				break;
+			} else if ("response.incomplete".equals(type)) {
+				throw incompleteResponse(event);
 			} else if ("response.failed".equals(type) || "error".equals(type)) {
 				throw eventFailure(event);
 			}
@@ -383,7 +447,7 @@ public final class OpenAiClient {
 		return new ToolRound(List.copyOf(calls), replayItems, responseMetadata);
 	}
 
-	private static String requestBody(String question, AuthMode authMode, String model, String reasoningEffort) {
+	private static JsonObject requestBody(String question, AuthMode authMode, String model, String reasoningEffort) {
 		JsonObject root = new JsonObject();
 		root.addProperty("model", model);
 		root.addProperty("instructions", SYSTEM_PROMPT);
@@ -418,37 +482,19 @@ public final class OpenAiClient {
 			JsonObject clientMetadata = new JsonObject();
 			clientMetadata.addProperty("x-codex-installation-id", CODEX_INSTALLATION_ID);
 			root.add("client_metadata", clientMetadata);
+			root.addProperty("stream", true);
 		}
 
-		root.addProperty("stream", true);
 		root.addProperty("store", false);
-		return GSON.toJson(root);
+		return root;
 	}
 
-	private static String readServerSentEvents(Stream<String> lines) throws IOException, InterruptedException {
+	private static String readWebSocketEvents(WebSocketEventReader events) throws IOException, InterruptedException {
 		StringBuilder text = new StringBuilder();
 		boolean responseCompleted = false;
-		for (String line : (Iterable<String>) lines::iterator) {
+		JsonObject event;
+		while ((event = events.nextEvent()) != null) {
 			throwIfInterrupted();
-			if (!line.startsWith("data:")) {
-				continue;
-			}
-			String data = line.substring(5).trim();
-			if (data.isEmpty()) {
-				continue;
-			}
-			if ("[DONE]".equals(data)) break;
-
-			JsonObject event;
-			try {
-				event = GSON.fromJson(data, JsonObject.class);
-			} catch (Exception ignored) {
-				continue;
-			}
-			if (event == null) {
-				continue;
-			}
-
 			String type = string(event, "type");
 			if ("response.output_text.delta".equals(type)) {
 				String delta = string(event, "delta");
@@ -464,6 +510,8 @@ public final class OpenAiClient {
 				responseCompleted = true;
 				if (text.isEmpty()) appendCompletedResponseText(text, event.get("response"));
 				break;
+			} else if ("response.incomplete".equals(type)) {
+				throw incompleteResponse(event);
 			} else if ("response.failed".equals(type) || "error".equals(type)) {
 				throw eventFailure(event);
 			}
@@ -514,24 +562,29 @@ public final class OpenAiClient {
 	}
 
 	private static OpenAiRequestException eventFailure(JsonObject event) {
-		String message = "OpenAI response failed: " + extractEventError(event);
 		Integer status = integer(event, "status");
 		if (status == null) status = integer(event, "status_code");
-		if (status != null) {
-			JsonObject error = eventError(event);
-			boolean usageLimit = status == 429 && error != null
-					&& "usage_limit_reached".equals(string(error, "type"));
-			boolean retryable = !usageLimit && RETRIABLE_STATUS_CODES.contains(status);
-			return new OpenAiRequestException(message, retryable);
-		}
-
 		JsonObject error = eventError(event);
+		if (error != null && WEBSOCKET_CONNECTION_LIMIT_CODE.equals(string(error, "code"))) {
+			return new OpenAiRequestException("OpenAI response failed: " + extractEventError(event), true, status);
+		}
+		if (status != null) return httpFailure(status, GSON.toJson(event));
+
+		String message = "OpenAI response failed: " + extractEventError(event);
 		String code = error == null ? null : string(error, "code");
 		String type = error == null ? null : string(error, "type");
 		boolean retryable = !isContextWindowError(message, code, type)
 				&& !containsIgnoreCase(TERMINAL_ERROR_TYPES, type)
 				&& !containsIgnoreCase(TERMINAL_ERROR_CODES, code);
 		return new OpenAiRequestException(message, retryable);
+	}
+
+	private static OpenAiRequestException incompleteResponse(JsonObject event) {
+		JsonObject response = object(event, "response");
+		JsonObject details = response == null ? null : object(response, "incomplete_details");
+		String reason = details == null ? null : string(details, "reason");
+		return new OpenAiRequestException("OpenAI returned an incomplete response"
+				+ (reason == null ? "" : ": " + safeError(reason)), false);
 	}
 
 	private static boolean containsIgnoreCase(Set<String> values, String candidate) {
@@ -591,36 +644,303 @@ public final class OpenAiClient {
 		}
 	}
 
+	static URI websocketUri(URI responsesUri) {
+		String scheme = responsesUri.getScheme();
+		if ("ws".equalsIgnoreCase(scheme) || "wss".equalsIgnoreCase(scheme)) return responsesUri;
+		String websocketScheme;
+		if ("http".equalsIgnoreCase(scheme)) websocketScheme = "ws";
+		else if ("https".equalsIgnoreCase(scheme)) websocketScheme = "wss";
+		else throw new IllegalArgumentException("Unsupported OpenAI Responses URI scheme: " + scheme);
+		String raw = responsesUri.toString();
+		return URI.create(websocketScheme + raw.substring(raw.indexOf(':')));
+	}
+
+	/**
+	 * A single-flight model/tool session. Provider rounds are serialized on one socket and use
+	 * previous_response_id only while the exact replay baseline remains valid.
+	 */
+	public final class ToolSession implements AutoCloseable {
+		private final WebSocketSession transport = new WebSocketSession();
+		private final ReentrantLock requestLock = new ReentrantLock();
+		private final AtomicBoolean closed = new AtomicBoolean();
+		private final AtomicBoolean inFlight = new AtomicBoolean();
+
+		private ToolSession() {
+		}
+
+		public ToolRound runToolRound(String instructions, JsonArray tools, JsonArray input)
+				throws IOException, InterruptedException {
+			requestLock.lockInterruptibly();
+			try {
+				if (closed.get()) throw new IllegalStateException("OpenAI tool session is closed");
+				inFlight.set(true);
+				if (closed.get()) {
+					transport.abortAndClose();
+					throw new IllegalStateException("OpenAI tool session is closed");
+				}
+				JsonObject base = toolRoundRequest(instructions, tools, input);
+				ToolRound round = sendWithRetries(credentials -> toolRequestBody(base, credentials.mode()),
+						OpenAiClient::readToolEvents, transport);
+				transport.recordSuccessfulRequest(base, round);
+				return round;
+			} finally {
+				inFlight.set(false);
+				requestLock.unlock();
+			}
+		}
+
+		@Override
+		public void close() {
+			if (!closed.compareAndSet(false, true)) return;
+			if (inFlight.get()) transport.abortAndClose();
+			else transport.close();
+		}
+	}
+
+	private final class WebSocketSession implements AutoCloseable {
+		private volatile OpenAiWebSocketConnection activeConnection;
+		private OpenAiCredentials connectedCredentials;
+		private OpenAiCredentials replayScopeCredentials;
+		private volatile boolean closed;
+		private String turnState;
+		private JsonObject lastFullRequestBody;
+		private JsonArray lastResponseOutputItems;
+		private String lastResponseId;
+		private boolean requestUsedPreviousResponseId;
+
+		private OpenAiWebSocketConnection connection(OpenAiCredentials credentials)
+				throws IOException, InterruptedException {
+			throwIfClosed();
+			if (replayScopeCredentials == null) {
+				replayScopeCredentials = credentials;
+			} else if (!sameReplayScope(replayScopeCredentials, credentials)) {
+				resetConnection();
+				turnState = null;
+				throw new OpenAiRequestException(
+						"OpenAI authentication account changed during the active generation session", false);
+			}
+			if (activeConnection != null && !credentials.equals(connectedCredentials)) {
+				resetConnection();
+			}
+			if (activeConnection == null) {
+				URI uri = credentials.mode() == AuthMode.SUBSCRIPTION ? subscriptionResponsesUri : apiResponsesUri;
+				OpenAiWebSocketConnection opening = new OpenAiWebSocketConnection(
+						uri, websocketHeaders(credentials, turnState), CONNECT_TIMEOUT);
+				activeConnection = opening;
+				connectedCredentials = credentials;
+				try {
+					opening.open(CONNECT_TIMEOUT);
+				} catch (IOException | InterruptedException failure) {
+					if (activeConnection == opening) resetConnection();
+					throw failure;
+				}
+				if (closed || activeConnection != opening) {
+					opening.abort();
+					throw new OpenAiRequestException("OpenAI tool session was closed while connecting", false);
+				}
+				String handshakeTurnState = opening.responseHeader("x-codex-turn-state");
+				if (turnState == null && handshakeTurnState != null && !handshakeTurnState.isBlank()) {
+					turnState = handshakeTurnState;
+				}
+			}
+			return activeConnection;
+		}
+
+		private void throwIfClosed() throws OpenAiRequestException {
+			if (closed) throw new OpenAiRequestException("OpenAI tool session is closed", false);
+		}
+
+		private JsonObject prepareRequestBody(JsonObject fullRequestBody) {
+			requestUsedPreviousResponseId = false;
+			JsonObject request = requestBodyWithTurnState(fullRequestBody);
+			if (lastFullRequestBody == null || lastResponseOutputItems == null || lastResponseId == null) {
+				return request;
+			}
+			if (!requestShape(lastFullRequestBody).equals(requestShape(fullRequestBody))) return request;
+			JsonArray previousInput = array(lastFullRequestBody, "input");
+			JsonArray currentInput = array(fullRequestBody, "input");
+			if (previousInput == null || currentInput == null) return request;
+
+			int baselineSize = previousInput.size() + lastResponseOutputItems.size();
+			if (currentInput.size() <= baselineSize) return request;
+			for (int index = 0; index < previousInput.size(); index++) {
+				if (!previousInput.get(index).equals(currentInput.get(index))) return request;
+			}
+			for (int index = 0; index < lastResponseOutputItems.size(); index++) {
+				if (!lastResponseOutputItems.get(index).equals(currentInput.get(previousInput.size() + index))) {
+					return request;
+				}
+			}
+
+			JsonArray incrementalInput = new JsonArray();
+			for (int index = baselineSize; index < currentInput.size(); index++) {
+				incrementalInput.add(currentInput.get(index).deepCopy());
+			}
+			request.addProperty("previous_response_id", lastResponseId);
+			request.add("input", incrementalInput);
+			requestUsedPreviousResponseId = true;
+			return request;
+		}
+
+		private boolean requestUsedPreviousResponseId() {
+			return requestUsedPreviousResponseId;
+		}
+
+		private JsonObject requestBodyWithTurnState(JsonObject fullRequestBody) {
+			JsonObject request = fullRequestBody.deepCopy();
+			if (turnState == null) return request;
+			JsonObject clientMetadata = object(request, "client_metadata");
+			if (clientMetadata == null) {
+				clientMetadata = new JsonObject();
+				request.add("client_metadata", clientMetadata);
+			}
+			clientMetadata.addProperty("x-codex-turn-state", turnState);
+			return request;
+		}
+
+		private JsonObject requestShape(JsonObject body) {
+			JsonObject shape = body.deepCopy();
+			shape.remove("input");
+			shape.remove("previous_response_id");
+			JsonObject clientMetadata = object(shape, "client_metadata");
+			if (clientMetadata != null) clientMetadata.remove("x-codex-turn-state");
+			return shape;
+		}
+
+		private void recordEvent(JsonObject event) {
+			if (turnState != null || !"response.metadata".equals(string(event, "type"))) return;
+			JsonObject headers = object(event, "headers");
+			if (headers == null) return;
+			for (Map.Entry<String, JsonElement> header : headers.entrySet()) {
+				if ("x-codex-turn-state".equalsIgnoreCase(header.getKey())
+						&& header.getValue().isJsonPrimitive()) {
+					String candidate = header.getValue().getAsString();
+					if (!candidate.isBlank()) turnState = candidate;
+					return;
+				}
+			}
+		}
+
+		private void recordSuccessfulRequest(JsonObject baseRequestBody, ToolRound round) {
+			if (connectedCredentials == null) throw new IllegalStateException("OpenAI websocket is not connected");
+			lastFullRequestBody = toolRequestBody(baseRequestBody, connectedCredentials.mode());
+			lastResponseOutputItems = round.outputItems();
+			lastResponseId = string(round.response(), "id");
+		}
+
+		private void resetConnection() {
+			if (activeConnection != null) activeConnection.abort();
+			activeConnection = null;
+			connectedCredentials = null;
+			lastFullRequestBody = null;
+			lastResponseOutputItems = null;
+			lastResponseId = null;
+			requestUsedPreviousResponseId = false;
+		}
+
+		@Override
+		public void close() {
+			closed = true;
+			OpenAiWebSocketConnection connection = activeConnection;
+			if (connection != null) connection.close();
+			activeConnection = null;
+			connectedCredentials = null;
+			replayScopeCredentials = null;
+		}
+
+		private void abortAndClose() {
+			closed = true;
+			OpenAiWebSocketConnection connection = activeConnection;
+			if (connection != null) connection.abort();
+			activeConnection = null;
+			connectedCredentials = null;
+			replayScopeCredentials = null;
+		}
+	}
+
+	private static final class WebSocketEventReader {
+		private final OpenAiWebSocketConnection connection;
+		private final Consumer<JsonObject> eventObserver;
+
+		private WebSocketEventReader(OpenAiWebSocketConnection connection, Consumer<JsonObject> eventObserver) {
+			this.connection = connection;
+			this.eventObserver = eventObserver;
+		}
+
+		private JsonObject nextEvent() throws IOException, InterruptedException {
+			while (true) {
+				OpenAiWebSocketConnection.IncomingMessage message = connection.nextMessage(STREAM_STALL_TIMEOUT);
+				if (message instanceof OpenAiWebSocketConnection.Closed closed) {
+					String reason = closed.reason() == null || closed.reason().isBlank()
+							? "" : ": " + safeError(closed.reason());
+					throw new IOException("OpenAI websocket closed before response.completed (code "
+							+ closed.statusCode() + ")" + reason);
+				}
+				if (message instanceof OpenAiWebSocketConnection.BinaryMessage) {
+					throw new IOException("OpenAI websocket returned an unexpected binary event");
+				}
+				String text = ((OpenAiWebSocketConnection.TextMessage) message).text();
+				JsonObject event = null;
+				try {
+					event = GSON.fromJson(text, JsonObject.class);
+				} catch (Exception ignored) {
+					// Ignore non-JSON websocket messages just as the previous SSE transport ignored malformed events.
+				}
+				if (event == null) continue;
+				eventObserver.accept(event);
+				return event;
+			}
+		}
+	}
+
 	@FunctionalInterface
 	interface RetrySleeper {
 		void sleep(long delayMillis) throws InterruptedException;
 	}
 
 	@FunctionalInterface
+	interface CredentialsProvider {
+		OpenAiCredentials load() throws IOException;
+	}
+
+	@FunctionalInterface
 	private interface RequestFactory {
-		HttpRequest create(OpenAiCredentials credentials);
+		JsonObject create(OpenAiCredentials credentials);
 	}
 
 	@FunctionalInterface
 	private interface ResponseReader<T> {
-		T read(Stream<String> lines) throws IOException, InterruptedException;
+		T read(WebSocketEventReader events) throws IOException, InterruptedException;
 	}
 
 	private static final class OpenAiRequestException extends IOException {
 		private final boolean retryable;
+		private final Integer statusCode;
 
 		private OpenAiRequestException(String message, boolean retryable) {
-			super(message);
-			this.retryable = retryable;
+			this(message, retryable, null, null);
 		}
 
 		private OpenAiRequestException(String message, boolean retryable, Throwable cause) {
+			this(message, retryable, cause, null);
+		}
+
+		private OpenAiRequestException(String message, boolean retryable, Integer statusCode) {
+			this(message, retryable, null, statusCode);
+		}
+
+		private OpenAiRequestException(String message, boolean retryable, Throwable cause, Integer statusCode) {
 			super(message, cause);
 			this.retryable = retryable;
+			this.statusCode = statusCode;
 		}
 
 		private boolean retryable() {
 			return retryable;
+		}
+
+		private Integer statusCode() {
+			return statusCode;
 		}
 	}
 

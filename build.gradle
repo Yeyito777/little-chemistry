@@ -16,6 +16,7 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	include implementation("org.eclipse.jdt:ecj:3.46.0")
 	include implementation("org.vineflower:vineflower:1.12.0")
+	include implementation("org.java-websocket:Java-WebSocket:1.6.0")
 	testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }

@@ -119,12 +119,12 @@ public final class ContentGenerationAgent {
 					conversationExporter)) {
 				LittleChemistry.LOGGER.info("{} generation conversation log: {}", openAi.model(),
 						conversation.directory());
-				try {
+				try (OpenAiClient.ToolSession modelSession = openAi.openToolSession()) {
 					for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
 						if (Thread.currentThread().isInterrupted()) {
 							throw new InterruptedException("Content generation was interrupted");
 						}
-						OpenAiClient.ToolRound response = openAi.runToolRound(SYSTEM_PROMPT, tools, history);
+						OpenAiClient.ToolRound response = modelSession.runToolRound(SYSTEM_PROMPT, tools, history);
 						response.outputItems().forEach(item -> history.add(item.deepCopy()));
 						conversation.recordModelRound(round, response, history);
 						if (response.calls().isEmpty()) {
