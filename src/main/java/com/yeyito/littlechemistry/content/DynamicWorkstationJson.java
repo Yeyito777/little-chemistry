@@ -22,13 +22,13 @@ public final class DynamicWorkstationJson {
 	public static JsonObject encode(DynamicWorkstationSpec workstation) {
 		if (workstation == null) throw new IllegalArgumentException("Workstation specification is required");
 		return encode(workstation.slots(), workstation.ui(), workstation.processDescription(),
-				workstation.recipeSystemPrompt(), workstation.recipeDataSchema());
+				workstation.recipePolicy(), workstation.recipeDataSchema());
 	}
 
 	static void validateSerializedSize(List<DynamicWorkstationSlot> slots, DynamicWorkstationUi ui,
-			String processDescription, String recipeSystemPrompt,
+			String processDescription, String recipePolicy,
 			DynamicWorkstationRecipeDataSchema recipeDataSchema) {
-		JsonObject encoded = encode(slots, ui, processDescription, recipeSystemPrompt, recipeDataSchema);
+		JsonObject encoded = encode(slots, ui, processDescription, recipePolicy, recipeDataSchema);
 		String json = encoded.toString();
 		if (json.length() > MAX_SERIALIZED_CHARACTERS
 				|| json.getBytes(StandardCharsets.UTF_8).length > MAX_SERIALIZED_UTF8_BYTES) {
@@ -38,11 +38,12 @@ public final class DynamicWorkstationJson {
 	}
 
 	private static JsonObject encode(List<DynamicWorkstationSlot> slots, DynamicWorkstationUi ui,
-			String processDescription, String recipeSystemPrompt,
+			String processDescription, String recipePolicy,
 			DynamicWorkstationRecipeDataSchema recipeDataSchema) {
 		JsonObject encoded = new JsonObject();
 		encoded.addProperty("processDescription", processDescription);
-		encoded.addProperty("recipeSystemPrompt", recipeSystemPrompt);
+		// Preserve the legacy key so existing definition digests, pending journals, saves, and clients remain compatible.
+		encoded.addProperty("recipeSystemPrompt", recipePolicy);
 		encoded.add("recipeDataSchema", recipeDataSchema.schema());
 		JsonArray encodedSlots = new JsonArray();
 		for (DynamicWorkstationSlot slot : slots) encodedSlots.add(encodeSlot(slot));
@@ -52,7 +53,10 @@ public final class DynamicWorkstationJson {
 	}
 
 	public static DynamicWorkstationSpec decode(JsonObject encoded) {
-		requireOnly(encoded, "processDescription", "recipeSystemPrompt", "recipeDataSchema", "slots", "ui");
+		requireOnly(encoded, "processDescription", "recipePolicy", "recipeSystemPrompt", "recipeDataSchema", "slots", "ui");
+		if (encoded.has("recipePolicy") && encoded.has("recipeSystemPrompt")) {
+			throw new IllegalArgumentException("Workstation JSON cannot contain both recipePolicy and recipeSystemPrompt");
+		}
 		JsonArray encodedSlots = requiredArray(encoded, "slots");
 		if (encodedSlots.size() > DynamicWorkstationSpec.MAX_SLOTS) {
 			throw new IllegalArgumentException("Workstation JSON contains too many slots");
@@ -63,7 +67,7 @@ public final class DynamicWorkstationJson {
 				slots,
 				decodeUi(requiredObject(encoded, "ui")),
 				requiredString(encoded, "processDescription"),
-				requiredString(encoded, "recipeSystemPrompt"),
+				requiredString(encoded, encoded.has("recipePolicy") ? "recipePolicy" : "recipeSystemPrompt"),
 				new DynamicWorkstationRecipeDataSchema(requiredObject(encoded, "recipeDataSchema"))
 		);
 	}

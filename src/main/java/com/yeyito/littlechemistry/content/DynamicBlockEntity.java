@@ -59,12 +59,15 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 			Codec.unboundedMap(Codec.STRING, Codec.LONG);
 	private static final Codec<Map<String, Integer>> UI_STATE_CODEC =
 			Codec.unboundedMap(Codec.STRING, Codec.INT);
+	private static final Codec<Map<String, String>> GENERATED_STATE_CODEC =
+			Codec.unboundedMap(Codec.STRING, Codec.STRING);
 	private static final Set<DynamicBlockEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 
 	private Identifier contentId;
 	private NonNullList<ItemStack> workstationItems = NonNullList.withSize(MAX_SLOTS, ItemStack.EMPTY);
 	private final Map<String, Long> persistentState = new LinkedHashMap<>();
 	private final Map<String, Integer> uiState = new LinkedHashMap<>();
+	private final Map<String, String> generatedState = new LinkedHashMap<>();
 	private @Nullable WorkstationRecipeRequest currentRequest;
 	private @Nullable WorkstationRecipeSignature currentSignature;
 	private @Nullable AiWorkstationRecipe currentRecipe;
@@ -351,6 +354,36 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		if (persistentState.getOrDefault(key, 0L) == value && persistentState.containsKey(key)) return;
 		persistentState.put(key, value);
 		setChanged();
+	}
+
+	public @Nullable String generatedState(String key) {
+		if (!validRuntimeKey(key)) throw new IllegalArgumentException("Invalid generated block state key");
+		return generatedState.get(key);
+	}
+
+	public Map<String, String> generatedStateSnapshot() {
+		return Map.copyOf(generatedState);
+	}
+
+	public void setGeneratedState(String key, @Nullable String value) {
+		assertRuntimeMutable();
+		if (!validRuntimeKey(key)) throw new IllegalArgumentException("Invalid generated block state key");
+		if (value != null && (value.length() > 1_024 || value.indexOf('\0') >= 0)) {
+			throw new IllegalArgumentException("Generated block state values may contain at most 1024 characters");
+		}
+		if (value != null && !generatedState.containsKey(key) && generatedState.size() >= MAX_PERSISTENT_KEYS) {
+			throw new IllegalArgumentException("Generated block state exceeds its key budget");
+		}
+		String previous = value == null ? generatedState.remove(key) : generatedState.put(key, value);
+		if (generatedState.toString().length() > 16_384) {
+			if (previous == null) generatedState.remove(key); else generatedState.put(key, previous);
+			throw new IllegalArgumentException("Generated block state exceeds its encoded size budget");
+		}
+		setChanged();
+		if (level != null) {
+			BlockState state = getBlockState();
+			level.sendBlockUpdated(worldPosition, state, state, 3);
+		}
 	}
 
 	@Override
@@ -711,6 +744,11 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		uiState.clear();
 		uiState.putAll(input.read("workstation_ui", UI_STATE_CODEC).orElse(Map.of()));
 		if (uiState.size() > DynamicWorkstationUi.MAX_STATE_CHANNELS) uiState.clear();
+		generatedState.clear();
+		generatedState.putAll(input.read("generated_state", GENERATED_STATE_CODEC).orElse(Map.of()));
+		if (generatedState.size() > MAX_PERSISTENT_KEYS || generatedState.toString().length() > 16_384) {
+			generatedState.clear();
+		}
 		currentRequest = null;
 		currentSignature = null;
 		currentRecipe = null;
@@ -725,6 +763,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		if (!isEmpty()) ContainerHelper.saveAllItems(output, workstationItems);
 		if (!persistentState.isEmpty()) output.store("workstation_state", LONG_STATE_CODEC, Map.copyOf(persistentState));
 		if (!uiState.isEmpty()) output.store("workstation_ui", UI_STATE_CODEC, Map.copyOf(uiState));
+		if (!generatedState.isEmpty()) output.store("generated_state", GENERATED_STATE_CODEC, Map.copyOf(generatedState));
 	}
 
 	@Override
@@ -749,7 +788,16 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	public CompoundTag getUpdateTag(HolderLookup.Provider lookup) {
 		CompoundTag tag = new CompoundTag();
 		if (contentId != null) tag.putString("content_id", contentId.toString());
+		appendGeneratedStateUpdate(tag, generatedState);
 		return tag;
+	}
+
+	/** Writes the same bounded map shape consumed by {@link #loadAdditional(ValueInput)} on tracking clients. */
+	static void appendGeneratedStateUpdate(CompoundTag tag, Map<String, String> state) {
+		if (state.isEmpty()) return;
+		CompoundTag encoded = new CompoundTag();
+		state.forEach(encoded::putString);
+		tag.put("generated_state", encoded);
 	}
 
 	@Override

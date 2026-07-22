@@ -594,7 +594,7 @@ public final class AiCraftingManager {
 
 		try {
 			JsonObject context = signature.toAiContext(definition, request.aiContext());
-			job.task = submitGeneration(job.promise, context, definition.workstation().recipeSystemPrompt(),
+			job.task = submitGeneration(job.promise, context, definition.workstation().recipePolicy(),
 					definition.workstation().recipeDataSchema().schema());
 		} catch (Throwable submissionFailure) {
 			removeWorkstationJob(job);

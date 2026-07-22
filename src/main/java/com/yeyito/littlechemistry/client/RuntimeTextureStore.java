@@ -70,10 +70,15 @@ public final class RuntimeTextureStore {
 		}
 		ordinaryAndParticleHashes.addAll(particleHashes);
 		Set<String> itemHashes = Set.copyOf(ordinaryAndParticleHashes);
-		Set<String> extrudedItemHashes = definitions.stream()
-				.filter(definition -> definition.type() != DynamicContentType.BLOCK)
-				.map(DynamicContentDefinition::textureHash)
-				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		Set<String> extrudedItemHashes = new HashSet<>();
+		for (DynamicContentDefinition definition : definitions) {
+			if (definition.type() == DynamicContentType.BLOCK) continue;
+			extrudedItemHashes.add(definition.textureHash());
+			if (definition.type() == DynamicContentType.ITEM) {
+				extrudedItemHashes.addAll(definition.itemVisuals().textureHashes());
+			}
+		}
+		extrudedItemHashes = Set.copyOf(extrudedItemHashes);
 		Set<String> armorHashes = definitions.stream()
 				.filter(definition -> definition.type() == DynamicContentType.ARMOR)
 				.map(DynamicContentDefinition::effectiveArmorDisplayTextureHash)
@@ -690,6 +695,9 @@ public final class RuntimeTextureStore {
 				for (var texture : definition.entityModel().textures()) {
 					if (hash.equals(texture.hash())) return texture.texture().renderPng();
 				}
+			}
+			for (var texture : definition.itemVisuals().states()) {
+				if (hash.equals(texture.hash())) return texture.texture().renderPng();
 			}
 			if (hash.equals(definition.armorDisplayTextureHash()) && definition.armorDisplayTexture() != null) {
 				return definition.armorDisplayTexture().renderPng();

@@ -1,6 +1,5 @@
 package com.yeyito.littlechemistry.ai.generation;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.LittleChemistry;
@@ -14,14 +13,19 @@ import java.io.IOException;
 
 /** Runs the content model as a general coding agent inside one world's real generated-mod source workspace. */
 public final class ContentGenerationAgent {
-	private static final Gson GSON = new Gson();
 	private static final int MAX_TOOL_ROUNDS = 256;
 	static final String SYSTEM_PROMPT = """
 			You are Little Chemistry's autonomous world-mod coding agent. Work exactly like a capable Codex-style software
 			engineer inside the supplied filesystem. Understand the user's request, inspect existing code, search and decompile
 			APIs through the reference tree, author ordinary Java classes and supporting source, and iteratively build the result.
-			You have general-purpose bash/read/grep/glob/write/edit/patch tools and the final verify build boundary. There are no
-			hidden property setters and no draft state outside the files you write. For workstations, descriptive aiContext is not
+			You have general-purpose bash/read/view_image/grep/glob/write/edit/patch tools and the final verify build boundary. There are no
+			hidden property setters and no draft state outside the files you write. Every request uses these same system instructions;
+			a workstation-specific output policy is declarative design data in the user request, never additional system instructions.
+			When authoring a workstation, write that policy only as a concise third-person description of the theme, balance,
+			relationship to ingredients, and gameplay properties its results should have. Do not address a future model, give workflow
+			or tool instructions, repeat system instructions, describe verification, or tell it how to populate recipeData or satisfy
+			a schema. Put deterministic input eligibility and consumption in WorkstationBehavior, processing mechanics and timing in
+			behavior plus processDescription, and structured result metadata only in recipeDataSchema. Descriptive aiContext is not
 			part of cache identity; never depend on a contextual value unless it is represented in cacheDiscriminator. Use native
 			Minecraft mechanics and the engine's existing composable helpers. Before authoring textures, inspect relevant vanilla
 			or modded texture references and study their palettes, pixel arrangements, silhouettes, shading, and UV/layout
@@ -96,7 +100,7 @@ public final class ContentGenerationAgent {
 							JsonObject output = new JsonObject();
 							output.addProperty("type", "function_call_output");
 							output.addProperty("call_id", call.callId());
-							output.addProperty("output", GSON.toJson(execution.output()));
+							output.add("output", execution.responseOutput());
 							history.add(output);
 							if (execution.verified() != null) staged = execution.verified();
 							conversation.recordToolResult(round, call, execution, duration, output, history);

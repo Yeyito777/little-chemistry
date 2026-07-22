@@ -15,7 +15,7 @@ public record DynamicEntityModel(
 			if (geometry == null || vanillaTexture != null) {
 				throw new IllegalArgumentException("A custom entity model requires cuboid geometry only");
 			}
-			geometry.validateFor(DynamicBlockShape.CUSTOM);
+			geometry.validateForEntity();
 		} else {
 			if (geometry != null || vanillaTexture == null) {
 				throw new IllegalArgumentException("A vanilla entity model profile requires one compatible skin only");

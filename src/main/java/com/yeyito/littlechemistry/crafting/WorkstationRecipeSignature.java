@@ -141,6 +141,7 @@ public final class WorkstationRecipeSignature {
 		JsonObject workstation = new JsonObject();
 		workstation.addProperty("contentId", LittleChemistry.MOD_ID + ":" + definition.name());
 		workstation.addProperty("displayName", definition.displayName());
+		workstation.addProperty("description", definition.description());
 		workstation.addProperty("processDescription", definition.workstation().processDescription());
 		DynamicWorkstationSlot primaryOutputSlot = definition.workstation().primaryOutputSlot();
 		JsonObject primaryOutput = new JsonObject();

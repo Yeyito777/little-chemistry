@@ -1,0 +1,22 @@
+{
+  "model": {
+    "type": "minecraft:condition",
+    "property": "minecraft:using_item",
+    "on_false": {
+      "type": "minecraft:special",
+      "base": "minecraft:item/shield",
+      "model": {
+        "type": "little_chemistry:dynamic",
+        "state": "runtime"
+      }
+    },
+    "on_true": {
+      "type": "minecraft:special",
+      "base": "minecraft:item/shield_blocking",
+      "model": {
+        "type": "little_chemistry:dynamic",
+        "state": "blocking"
+      }
+    }
+  }
+}

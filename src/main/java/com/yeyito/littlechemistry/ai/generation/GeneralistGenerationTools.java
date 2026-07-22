@@ -3,7 +3,13 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -14,8 +20,10 @@ import java.nio.file.PathMatcher;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -27,7 +35,8 @@ final class GeneralistGenerationTools {
 	private static final int MAX_TEXT_ARGUMENT = 512 * 1024;
 	private static final int MAX_TOOL_OUTPUT = 80 * 1024;
 	private static final int MAX_WALK_FILES = 50_000;
-	private static final Set<String> NAMES = Set.of("bash", "read", "grep", "glob", "write", "edit", "patch", "verify");
+	private static final Set<String> NAMES = Set.of(
+			"bash", "read", "view_image", "grep", "glob", "write", "edit", "patch", "verify");
 
 	private final GenerationWorkspace workspace;
 	private final GenerationRequest request;
@@ -45,6 +54,8 @@ final class GeneralistGenerationTools {
 		tools.add(tool("read", "Read a UTF-8 text file with line numbers. Runtime class-source paths under reference/classes are materialized on demand.",
 				objectSchema(new String[] {"path"}, property("path", stringSchema(1, 1_024)),
 						property("offset", integerSchema(1, 1_000_000)), property("limit", integerSchema(1, 2_000)))));
+		tools.add(tool("view_image", "Visually inspect a PNG in the workspace or an installed texture's virtual JSON path under reference/vanilla. The image is sent to your vision input, not reduced to prose.",
+				objectSchema(new String[] {"path"}, property("path", stringSchema(1, 1_024)))));
 		tools.add(tool("grep", "Search UTF-8 files recursively with a Java regular expression and optional glob filter.",
 				objectSchema(new String[] {"pattern"}, property("pattern", stringSchema(1, 4_096)),
 						property("path", stringSchema(0, 1_024)), property("glob", stringSchema(0, 512)),
@@ -70,9 +81,10 @@ final class GeneralistGenerationTools {
 		if (!NAMES.contains(name)) return failure("UNKNOWN_TOOL", "Unknown generalist tool: " + name);
 		try {
 			if (arguments.has("_malformed")) throw new IllegalArgumentException("Tool arguments were not valid JSON");
-			return switch (name) {
-				case "bash" -> bash(arguments);
-				case "read" -> read(arguments);
+				return switch (name) {
+					case "bash" -> bash(arguments);
+					case "read" -> read(arguments);
+					case "view_image" -> viewImage(arguments);
 				case "grep" -> grep(arguments);
 				case "glob" -> glob(arguments);
 				case "write" -> write(arguments);
@@ -188,6 +200,82 @@ final class GeneralistGenerationTools {
 		output.addProperty("totalLines", lines.size());
 		output.addProperty("content", truncate(selected.toString()));
 		return new ToolResult(output, null);
+	}
+
+	private ToolResult viewImage(JsonObject arguments) throws IOException {
+		requireOnly(arguments, "path");
+		String relative = requiredString(arguments, "path");
+		byte[] bytes;
+		String normalized = relative.replace('\\', '/');
+		String virtualPrefix = "reference/vanilla/";
+		if (normalized.startsWith(virtualPrefix) && normalized.endsWith(".json")) {
+			bytes = MinecraftReferenceExporter.previewPng(normalized.substring(virtualPrefix.length()));
+		} else {
+			Path path = workspace.resolve(relative);
+			if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+				throw new IllegalArgumentException("Image file does not exist: " + relative);
+			}
+			if (!normalized.toLowerCase(java.util.Locale.ROOT).endsWith(".png")) {
+				throw new IllegalArgumentException("view_image currently supports PNG files only");
+			}
+			if (Files.size(path) > 2L * 1024L * 1024L) {
+				throw new IllegalArgumentException("Image is too large for view_image: " + relative);
+			}
+			bytes = Files.readAllBytes(path);
+		}
+		BufferedImage image = decodeBoundedPng(bytes);
+		JsonObject output = success();
+		output.addProperty("path", relative);
+		output.addProperty("width", image.getWidth());
+		output.addProperty("height", image.getHeight());
+		output.addProperty("message", "The requested image is attached to this tool result for visual inspection.");
+		return new ToolResult(output, null, "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes));
+	}
+
+	/** Validates PNG dimensions from IHDR and ImageReader metadata before allowing any full raster allocation. */
+	private static BufferedImage decodeBoundedPng(byte[] bytes) throws IOException {
+		if (bytes.length < 24 || bytes[0] != (byte) 0x89 || bytes[1] != 'P' || bytes[2] != 'N'
+				|| bytes[3] != 'G' || bytes[4] != '\r' || bytes[5] != '\n' || bytes[6] != 0x1A
+				|| bytes[7] != '\n' || unsignedInt(bytes, 8) != 13L
+				|| bytes[12] != 'I' || bytes[13] != 'H' || bytes[14] != 'D' || bytes[15] != 'R') {
+			throw new IllegalArgumentException("Image must be a valid PNG no larger than 512x512");
+		}
+		long headerWidth = unsignedInt(bytes, 16);
+		long headerHeight = unsignedInt(bytes, 20);
+		requireImageBounds(headerWidth, headerHeight);
+		try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+			if (input == null) throw new IllegalArgumentException("Could not open PNG image input");
+			Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+			if (!readers.hasNext()) throw new IllegalArgumentException("Image must be a valid PNG");
+			ImageReader reader = readers.next();
+			try {
+				reader.setInput(input, true, true);
+				int width = reader.getWidth(0);
+				int height = reader.getHeight(0);
+				requireImageBounds(width, height);
+				if (width != headerWidth || height != headerHeight) {
+					throw new IllegalArgumentException("PNG dimensions changed while reading image metadata");
+				}
+				BufferedImage image = reader.read(0);
+				if (image == null || image.getWidth() != width || image.getHeight() != height) {
+					throw new IllegalArgumentException("PNG decoder returned inconsistent dimensions");
+				}
+				return image;
+			} finally {
+				reader.dispose();
+			}
+		}
+	}
+
+	private static void requireImageBounds(long width, long height) {
+		if (width < 1 || height < 1 || width > 512 || height > 512 || width * height > 512L * 512L) {
+			throw new IllegalArgumentException("Image must be a valid PNG no larger than 512x512");
+		}
+	}
+
+	private static long unsignedInt(byte[] bytes, int offset) {
+		return (long) (bytes[offset] & 0xFF) << 24 | (long) (bytes[offset + 1] & 0xFF) << 16
+				| (long) (bytes[offset + 2] & 0xFF) << 8 | bytes[offset + 3] & 0xFFL;
 	}
 
 	private ToolResult grep(JsonObject arguments) throws IOException {
@@ -480,6 +568,43 @@ final class GeneralistGenerationTools {
 		return schema;
 	}
 
-	record ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified) {
+	record ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified,
+			String imageDataUrl) {
+		ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified) {
+			this(output, verified, null);
+		}
+
+		JsonElement responseOutput() {
+			if (imageDataUrl == null) return new JsonPrimitive(output.toString());
+			JsonArray parts = new JsonArray();
+			JsonObject text = new JsonObject();
+			text.addProperty("type", "input_text");
+			text.addProperty("text", output.toString());
+			parts.add(text);
+			JsonObject image = new JsonObject();
+			image.addProperty("type", "input_image");
+			image.addProperty("image_url", imageDataUrl);
+			image.addProperty("detail", "high");
+			parts.add(image);
+			return parts;
+		}
+
+		JsonElement exocortexContent() {
+			if (imageDataUrl == null) return new JsonPrimitive(output.toString());
+			JsonArray parts = new JsonArray();
+			JsonObject text = new JsonObject();
+			text.addProperty("type", "text");
+			text.addProperty("text", output.toString());
+			parts.add(text);
+			JsonObject source = new JsonObject();
+			source.addProperty("type", "base64");
+			source.addProperty("media_type", "image/png");
+			source.addProperty("data", imageDataUrl.substring(imageDataUrl.indexOf(',') + 1));
+			JsonObject image = new JsonObject();
+			image.addProperty("type", "image");
+			image.add("source", source);
+			parts.add(image);
+			return parts;
+		}
 	}
 }

@@ -8,6 +8,8 @@
     "BlockBehaviourMixin",
     "CraftingMenuMixin",
     "CreativeModeTabsAccessor",
+    "DynamicItemPresentationMixin",
+    "DynamicItemStackMixin",
     "FurnaceMenuMixin",
     "FuelValuesMixin",
     "ItemCooldownsMixin",

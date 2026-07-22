@@ -47,14 +47,13 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		super.appendHoverText(stack, context, display, builder, flag);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			definition.description().lines().forEach(line ->
-					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
+			DynamicTooltipText.appendWrapped(builder, definition.description(), ChatFormatting.GRAY);
 		}
 		if (definition != null && definition.workstation() != null) {
 			builder.accept(Component.translatable("tooltip.little_chemistry.workstation")
 					.withStyle(ChatFormatting.AQUA));
-			definition.workstation().processDescription().lines().limit(3).forEach(line ->
-					builder.accept(Component.literal(line).withStyle(ChatFormatting.DARK_GRAY)));
+			DynamicTooltipText.appendWrapped(builder, definition.workstation().processDescription(),
+					ChatFormatting.DARK_GRAY, 3);
 		}
 		if (definition != null && definition.block() != null) {
 			for (int index = 0; index < definition.block().drops().entries().size(); index++) {
@@ -165,7 +164,7 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 	public InteractionResult useOn(UseOnContext context) {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(context.getItemInHand());
 		if (definition != null && DynamicBehaviorSource.supports(
-				definition.behaviorSource(), DynamicBehaviorCapability.USE_ON_BLOCK)) {
+				definition.behaviorSourceBundle(), DynamicBehaviorCapability.USE_ON_BLOCK)) {
 			if (context.getLevel().isClientSide()) return InteractionResult.SUCCESS;
 			if (context.getLevel() instanceof ServerLevel serverLevel
 					&& context.getPlayer() instanceof ServerPlayer serverPlayer) {
@@ -182,7 +181,7 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		ItemStack stack = player.getItemInHand(hand);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && DynamicBehaviorSource.supports(
-				definition.behaviorSource(), DynamicBehaviorCapability.USE_AIR)) {
+				definition.behaviorSourceBundle(), DynamicBehaviorCapability.USE_AIR)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult behaviorResult = DynamicBehaviorRegistry.useAir(
@@ -198,7 +197,7 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 			InteractionHand hand) {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && DynamicBehaviorSource.supports(
-				definition.behaviorSource(), DynamicBehaviorCapability.INTERACT_LIVING_ENTITY)) {
+				definition.behaviorSourceBundle(), DynamicBehaviorCapability.INTERACT_LIVING_ENTITY)) {
 			if (player.level().isClientSide()) return InteractionResult.SUCCESS;
 			if (player instanceof ServerPlayer serverPlayer && player.level() instanceof ServerLevel serverLevel) {
 				InteractionResult result = DynamicBehaviorRegistry.interactLivingEntity(

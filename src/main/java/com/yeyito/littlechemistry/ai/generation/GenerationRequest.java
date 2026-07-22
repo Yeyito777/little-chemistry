@@ -59,13 +59,18 @@ record GenerationRequest(
 	String userPrompt() {
 		StringBuilder prompt = new StringBuilder();
 		if (flexible()) {
+			JsonObject displayedRecipe = recipeContext.deepCopy();
+			JsonObject workstation = workstationPolicy == null ? null : workstationIdentity(displayedRecipe);
 			prompt.append("Please generate and code the most natural piece of Minecraft content for the following recipe. ")
 					.append("Infer whether the result should be an item, block, armor piece, entity, or workstation from the ")
 					.append("ingredients, their arrangement, and the crafting process.\n\nRecipe:\n")
-					.append(PRETTY_GSON.toJson(recipeContext))
+					.append(PRETTY_GSON.toJson(displayedRecipe))
 					.append("\n\n");
 			if (workstationPolicy != null) {
-				prompt.append("The workstation's recipe policy is:\n")
+				prompt.append("This recipe is being created in the following special workstation:\n")
+						.append("Name: ").append(workstationName(workstation)).append('\n')
+						.append("Description: ").append(workstationDescription(workstation)).append("\n\n")
+						.append("The workstation's output policy is:\n")
 						.append(workstationPolicy)
 						.append("\n\nThe required recipe-data schema is:\n")
 						.append(PRETTY_GSON.toJson(recipeDataSchema))
@@ -92,8 +97,35 @@ record GenerationRequest(
 		}
 		prompt.append(TEXTURE_DIRECTION)
 				.append("Implement the complete gameplay properties and behavior that naturally follow from the concept and recipe. ")
-				.append("Build and verify the finished content, repairing any diagnostics before finishing.");
+				.append("Build and verify the finished content, repairing any diagnostics before finishing. ")
+				.append("Also consider whether the result warrants native Minecraft sound design, custom particles, runtime behavior ")
+				.append("helpers, or other reusable helpers, and create the appropriate source under sounds/, particles/, or helpers/.");
 		return prompt.toString();
+	}
+
+	/** Extracts identity for the prose policy prefix and avoids repeating it in the rendered recipe JSON. */
+	private static JsonObject workstationIdentity(JsonObject displayedRecipe) {
+		if (!(displayedRecipe.get("workstation") instanceof JsonObject workstation)) {
+			return null;
+		}
+		JsonObject identity = new JsonObject();
+		if (workstation.has("displayName")) {
+			identity.add("displayName", workstation.remove("displayName"));
+		}
+		if (workstation.has("description")) {
+			identity.add("description", workstation.remove("description"));
+		}
+		return identity;
+	}
+
+	private static String workstationName(JsonObject identity) {
+		return identity != null && identity.has("displayName")
+				? identity.get("displayName").getAsString() : "Unnamed Workstation";
+	}
+
+	private static String workstationDescription(JsonObject identity) {
+		return identity != null && identity.has("description")
+				? identity.get("description").getAsString() : "No workstation description was supplied.";
 	}
 
 	@Override public JsonObject recipeContext() {

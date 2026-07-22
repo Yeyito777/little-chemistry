@@ -67,6 +67,9 @@ public record DynamicBlockModel(
 			throw new IllegalArgumentException("Cuboid elements are used only with shape=custom");
 		}
 		for (DynamicBlockTexture texture : textures) {
+			if (shape == DynamicBlockShape.TRANSLUCENT_CUBE || shape == DynamicBlockShape.NO_COLLISION) {
+				continue;
+			}
 			if (shape == DynamicBlockShape.STAR || shape == DynamicBlockShape.CROSS
 					|| shape == DynamicBlockShape.TORCH || shape == DynamicBlockShape.CUSTOM) {
 				texture.texture().requireBinaryAlpha();
@@ -74,6 +77,11 @@ public record DynamicBlockModel(
 				texture.texture().requireOpaque();
 			}
 		}
+	}
+
+	/** Entity cuboids share this model format but may use translucent textures and never define block collision. */
+	public void validateForEntity() {
+		if (elements.isEmpty()) throw new IllegalArgumentException("Custom entity models require at least one cuboid element");
 	}
 
 	private static void validateTextureReference(DynamicBlockModelFace face, Set<String> textureIds) {

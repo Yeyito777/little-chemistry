@@ -106,7 +106,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			Player player, InteractionHand hand, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && DynamicBehaviorSource.supports(
-				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
+				definition.behaviorSourceBundle(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 				if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 					InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
@@ -125,7 +125,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			Player player, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && DynamicBehaviorSource.supports(
-				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
+				definition.behaviorSourceBundle(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
 				if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				InteractionResult result = DynamicBehaviorRegistry.usePlacedBlock(
@@ -160,7 +160,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		}
 		if (definition == null || definition.block() == null) return Shapes.block();
 		return switch (definition.block().shape()) {
-			case FULL_CUBE, NO_COLLISION -> Shapes.block();
+			case FULL_CUBE, TRANSLUCENT_CUBE, NO_COLLISION -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
 			case STAR, CROSS -> Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
 			case TORCH -> Shapes.box(7.0 / 16.0, 0, 7.0 / 16.0, 9.0 / 16.0, 10.0 / 16.0, 9.0 / 16.0);
@@ -180,7 +180,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		if (definition != null && definition.item() != null && definition.item().placement() != null) return Shapes.empty();
 		if (definition == null || definition.block() == null) return Shapes.block();
 		return switch (definition.block().shape()) {
-			case FULL_CUBE -> Shapes.block();
+			case FULL_CUBE, TRANSLUCENT_CUBE -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
 			case NO_COLLISION, STAR, CROSS, TORCH -> Shapes.empty();
 			case FENCE -> fenceShape(level, position, 1.5);

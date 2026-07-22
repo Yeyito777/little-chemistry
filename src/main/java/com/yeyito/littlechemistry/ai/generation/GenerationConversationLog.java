@@ -173,8 +173,7 @@ final class GenerationConversationLog implements AutoCloseable {
 		JsonObject toolResult = new JsonObject();
 		toolResult.addProperty("type", "tool_result");
 		toolResult.addProperty("tool_use_id", call.callId());
-		toolResult.addProperty("content", string(replayItem, "output") == null
-				? GSON.toJson(result.output()) : replayItem.get("output").getAsString());
+		toolResult.add("content", result.exocortexContent());
 		toolResult.addProperty("is_error", isErrorResult(result.output()));
 		JsonArray content = new JsonArray();
 		content.add(toolResult);
@@ -427,7 +426,9 @@ final class GenerationConversationLog implements AutoCloseable {
 
 	private String initialTitle() {
 		if (request.has("requestedName")) return "Generate " + request.get("requestedName").getAsString();
-		return request.has("workstationPolicy") ? "Generate workstation recipe" : "Generate recipe";
+		JsonObject recipe = request.get("recipe") instanceof JsonObject value ? value : null;
+		return recipe != null && recipe.get("workstation") instanceof JsonObject
+				? "Generate workstation recipe" : "Generate recipe";
 	}
 
 	private JsonObject baseEvent(String type) {
