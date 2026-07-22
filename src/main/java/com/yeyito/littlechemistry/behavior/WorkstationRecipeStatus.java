@@ -8,6 +8,8 @@ public enum WorkstationRecipeStatus {
 	GENERATING,
 	/** A generated recipe is available to process. */
 	READY,
+	/** The current recipe signature was intentionally rejected and has a non-craftable explanation. */
+	REJECTED,
 	/** Processing finished but the result cannot currently be inserted. */
 	BLOCKED,
 	/** Recipe generation or validation failed without disabling the workstation behavior. */

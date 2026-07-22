@@ -22,7 +22,17 @@ final class WorkstationSlot extends Slot {
 	}
 
 	@Override
+	public ItemStack getItem() {
+		if (container instanceof DynamicBlockEntity workstation) {
+			ItemStack rejection = workstation.rejectionDisplayStack(index);
+			if (!rejection.isEmpty()) return rejection;
+		}
+		return super.getItem();
+	}
+
+	@Override
 	public boolean mayPlace(ItemStack stack) {
+		if (WorkstationRecipeRejection.isDisplayStack(getItem())) return false;
 		if (container instanceof DynamicBlockEntity workstation) {
 			return owner instanceof ServerPlayer serverPlayer
 					&& workstation.mayUseSlot(index, stack, WorkstationSlotAction.INSERT, serverPlayer, null);
@@ -31,7 +41,13 @@ final class WorkstationSlot extends Slot {
 	}
 
 	@Override
+	public ItemStack safeClone(Player player) {
+		return WorkstationRecipeRejection.isDisplayStack(getItem()) ? ItemStack.EMPTY : super.safeClone(player);
+	}
+
+	@Override
 	public boolean mayPickup(Player player) {
+		if (WorkstationRecipeRejection.isDisplayStack(getItem())) return false;
 		if (container instanceof DynamicBlockEntity workstation) {
 			return player instanceof ServerPlayer serverPlayer
 					&& workstation.mayUseSlot(index, getItem(), WorkstationSlotAction.EXTRACT, serverPlayer, null);

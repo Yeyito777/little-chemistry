@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.ai.OpenAiClient;
+import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -145,6 +146,39 @@ final class GenerationConversationLogTest {
 			String logsReadme = Files.readString(world.resolve("logs/README.md"));
 			assertTrue(logsReadme.contains("native Exocortex v17 conversation file"));
 			assertTrue(logsReadme.contains("copy or import that file directly"));
+		}
+	}
+
+	@Test
+	void recordsARecipeRejectionAsATerminalConversationOutcome() throws Exception {
+		Path world = temporaryDirectory.resolve("rejected-world");
+		Path job = temporaryDirectory.resolve("rejected-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			Files.writeString(job.resolve("request.json"), """
+					{"mode":"recipe","workstationPolicy":"Reject invalid recipes."}
+					""");
+			JsonArray history = initialHistory();
+			WorkstationRecipeRejection rejection = new WorkstationRecipeRejection(
+					WorkstationRecipeRejection.Category.WORKSTATION_TOO_WEAK,
+					"This workstation is too weak for the requested transformation.");
+			Path logDirectory;
+			try (GenerationConversationLog log = GenerationConversationLog.open(
+					workspace, "gpt-test", "medium", "test prompt",
+					GeneralistGenerationTools.definitions(), history)) {
+				logDirectory = log.directory();
+				log.recordRejected(rejection, history);
+			}
+
+			JsonObject conversation = JsonParser.parseString(
+					Files.readString(logDirectory.resolve("conversation.json"))).getAsJsonObject();
+			assertEquals("Reject workstation recipe", conversation.get("title").getAsString());
+			JsonArray messages = conversation.getAsJsonArray("messages");
+			assertTrue(messages.get(messages.size() - 1).getAsJsonObject()
+					.get("content").getAsString().contains(rejection.description()));
+			JsonObject replay = JsonParser.parseString(
+					Files.readString(logDirectory.resolve("responses-replay.json"))).getAsJsonObject();
+			assertEquals("rejected", replay.get("status").getAsString());
+			assertTrue(Files.readString(logDirectory.resolve("events.jsonl")).contains("generation.rejected"));
 		}
 	}
 

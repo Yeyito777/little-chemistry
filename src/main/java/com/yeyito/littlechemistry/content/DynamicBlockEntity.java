@@ -174,7 +174,8 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 			currentSignature = WorkstationRecipeSignature.capture(definition, currentRequest, this);
 			AiCraftingManager manager = AiCraftingManager.active();
 			currentRecipe = manager == null ? null : manager.findWorkstationRecipe(currentSignature);
-			recipeStatus = currentRecipe == null ? WorkstationRecipeStatus.NONE : WorkstationRecipeStatus.READY;
+			recipeStatus = currentRecipe == null ? WorkstationRecipeStatus.NONE
+					: currentRecipe.isRejected() ? WorkstationRecipeStatus.REJECTED : WorkstationRecipeStatus.READY;
 		} catch (IllegalArgumentException invalid) {
 			currentRequest = null;
 			currentSignature = null;
@@ -213,6 +214,14 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		return currentRecipe == null ? ItemStack.EMPTY : currentRecipe.outputStack();
 	}
 
+	/** Returns the virtual barrier preview shown only in the primary output menu slot for a rejected recipe. */
+	public ItemStack rejectionDisplayStack(int slot) {
+		if (slot < 0 || slot >= workstationItems.size()
+				|| currentRecipe == null || !currentRecipe.isRejected() || !workstationItems.get(slot).isEmpty()
+				|| slot != firstSlotWithRole(DynamicWorkstationSlotRole.OUTPUT)) return ItemStack.EMPTY;
+		return currentRecipe.outputStack();
+	}
+
 	@Override
 	public JsonObject recipeData() {
 		return currentRecipe == null ? new JsonObject() : currentRecipe.recipeData();
@@ -227,7 +236,8 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	public boolean tryCompleteRecipe(Map<String, ItemStack> additionalOutputs) {
 		assertRuntimeMutable();
 		refreshRecipe();
-		if (currentRecipe == null || currentRequest == null || currentSignature == null) return false;
+		if (currentRecipe == null || currentRecipe.isRejected()
+				|| currentRequest == null || currentSignature == null) return false;
 		WorkstationRecipeSignature fresh = WorkstationRecipeSignature.capture(
 				workstationDefinition(), currentRequest, this);
 		if (!currentSignature.equals(fresh)) return false;

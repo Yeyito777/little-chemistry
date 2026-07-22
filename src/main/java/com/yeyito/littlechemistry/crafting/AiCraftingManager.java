@@ -85,7 +85,7 @@ import java.util.concurrent.Future;
 /** Owns physical and portable crafting grids, persistent AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 2;
-	private static final int RECIPES_FORMAT = 4;
+	private static final int RECIPES_FORMAT = 5;
 	// This is the canonical server-wide limit for concurrent crafts of every supported kind.
 	private static final int MAX_ACTIVE_JOBS = 32;
 	private static final int PARTICLE_INTERVAL_TICKS = 8;
@@ -671,7 +671,7 @@ public final class AiCraftingManager {
 				|| entry.getKey().referencesDynamicContent(outputNames));
 		Map<WorkstationRecipeSignature, AiWorkstationRecipe> updatedWorkstations =
 				new LinkedHashMap<>(workstationRecipes);
-		updatedWorkstations.entrySet().removeIf(entry -> outputNames.contains(entry.getValue().outputName())
+		updatedWorkstations.entrySet().removeIf(entry -> entry.getValue().referencesOutput(outputNames)
 				|| entry.getKey().referencesDynamicContent(outputNames));
 		if (updated.size() == recipes.size() && updatedSmelting.size() == smeltingRecipes.size()
 				&& updatedWorkstations.size() == workstationRecipes.size()) return;
@@ -943,6 +943,15 @@ public final class AiCraftingManager {
 						error("The workstation or one of its ingredients was deleted while its recipe was being made."));
 				return;
 			}
+			if (generated.isRejected()) {
+				installWorkstationRejection(job.signature, generated.rejection());
+				notifyRequesters(job.requesters,
+						Component.literal("[Little Chemistry] Recipe rejected: ").withStyle(ChatFormatting.RED)
+								.append(Component.literal(generated.rejection().description())
+										.withStyle(ChatFormatting.GRAY)));
+				recipeReady = true;
+				return;
+			}
 			int outputCapacity = workstationDefinition.workstation().slots().stream()
 					.filter(slot -> slot.role() == com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole.OUTPUT)
 					.findFirst().orElseThrow(() -> new IllegalStateException("Workstation has no primary output slot"))
@@ -1001,13 +1010,25 @@ public final class AiCraftingManager {
 			int outputCount, JsonObject recipeData) throws IOException {
 		Map<WorkstationRecipeSignature, AiWorkstationRecipe> updated = new LinkedHashMap<>(workstationRecipes);
 		updated.put(signature, new AiWorkstationRecipe(signature, outputName, outputCount, recipeData));
+		installWorkstationRecipes(updated);
+	}
+
+	private void installWorkstationRejection(WorkstationRecipeSignature signature,
+			WorkstationRecipeRejection rejection) throws IOException {
+		Map<WorkstationRecipeSignature, AiWorkstationRecipe> updated = new LinkedHashMap<>(workstationRecipes);
+		updated.put(signature, AiWorkstationRecipe.rejected(signature, rejection));
+		installWorkstationRecipes(updated);
+	}
+
+	private void installWorkstationRecipes(Map<WorkstationRecipeSignature, AiWorkstationRecipe> updated)
+			throws IOException {
 		saveRecipes(recipes, smeltingRecipes, updated);
 		workstationRecipes.clear();
 		workstationRecipes.putAll(updated);
 	}
 
 	private static void discardPendingSource(RecipeGenerationAgent.GeneratedRecipe generated) {
-		if (generated != null) GenerationWorkspace.discardPending(generated.content());
+		if (generated != null && generated.content() != null) GenerationWorkspace.discardPending(generated.content());
 	}
 
 	private Path beginRecipeTransaction(String displayName) throws IOException {
@@ -1055,7 +1076,8 @@ public final class AiCraftingManager {
 				}
 				boolean recipeCommitted = recipes.values().stream().anyMatch(recipe -> recipe.outputName().equals(contentId))
 						|| smeltingRecipes.values().stream().anyMatch(recipe -> recipe.outputName().equals(contentId))
-						|| workstationRecipes.values().stream().anyMatch(recipe -> recipe.outputName().equals(contentId));
+						|| workstationRecipes.values().stream().anyMatch(recipe ->
+							recipe.outputName() != null && recipe.outputName().equals(contentId));
 				if (!recipeCommitted && contentManager != null && contentManager.containsName(contentId)) {
 					try {
 						contentManager.delete(List.of(contentId));
@@ -1276,16 +1298,22 @@ public final class AiCraftingManager {
 		var ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
 		for (JsonElement element : encodedRecipes) {
 			if (!(element instanceof JsonObject encoded)) throw new IOException("Invalid AI recipe entry");
-			String output = encoded.get("output").getAsString();
-			if (!output.matches("[a-z0-9_]{1,64}")) throw new IOException("Invalid AI recipe output identifier");
-			double rawOutputCount = format >= 2 && encoded.has("outputCount")
-					? encoded.get("outputCount").getAsDouble() : 1.0;
+			String type = format >= 3 ? encoded.get("type").getAsString() : "crafting";
+			boolean rejected = format >= 5 && "workstation".equals(type) && encoded.has("rejection");
+			if (rejected && (encoded.has("output") || encoded.has("outputCount") || encoded.has("recipeData"))) {
+				throw new IOException("Rejected AI workstation recipe cannot contain an output");
+			}
+			String output = rejected ? null : encoded.get("output").getAsString();
+			if (!rejected && !output.matches("[a-z0-9_]{1,64}")) {
+				throw new IOException("Invalid AI recipe output identifier");
+			}
+			double rawOutputCount = rejected ? 1.0
+					: format >= 2 && encoded.has("outputCount") ? encoded.get("outputCount").getAsDouble() : 1.0;
 			if (!Double.isFinite(rawOutputCount) || rawOutputCount != Math.rint(rawOutputCount)
 					|| rawOutputCount < 1 || rawOutputCount > 64) {
 				throw new IOException("Invalid AI recipe output count");
 			}
 			int outputCount = (int) rawOutputCount;
-			String type = format >= 3 ? encoded.get("type").getAsString() : "crafting";
 			switch (type) {
 				case "crafting" -> {
 					int width = encoded.get("width").getAsInt();
@@ -1346,14 +1374,23 @@ public final class AiCraftingManager {
 					}
 					WorkstationRecipeSignature signature = new WorkstationRecipeSignature(
 							workstation, process, discriminator, ingredients);
-					JsonObject recipeData = encoded.get("recipeData") instanceof JsonObject data
-							? data.deepCopy() : new JsonObject();
-					DynamicContentDefinition workstationDefinition = DynamicContentCatalog.find(workstation);
-					if (workstationDefinition != null && workstationDefinition.workstation() != null) {
-						workstationDefinition.workstation().recipeDataSchema().validateValue(recipeData);
+					if (rejected) {
+						try {
+							workstationRecipes.put(signature, AiWorkstationRecipe.rejected(signature,
+									WorkstationRecipeRejection.fromJson(encoded.getAsJsonObject("rejection"))));
+						} catch (RuntimeException invalid) {
+							throw new IOException("Invalid AI workstation recipe rejection", invalid);
+						}
+					} else {
+						JsonObject recipeData = encoded.get("recipeData") instanceof JsonObject data
+								? data.deepCopy() : new JsonObject();
+						DynamicContentDefinition workstationDefinition = DynamicContentCatalog.find(workstation);
+						if (workstationDefinition != null && workstationDefinition.workstation() != null) {
+							workstationDefinition.workstation().recipeDataSchema().validateValue(recipeData);
+						}
+						workstationRecipes.put(signature,
+								new AiWorkstationRecipe(signature, output, outputCount, recipeData));
 					}
-					workstationRecipes.put(signature,
-							new AiWorkstationRecipe(signature, output, outputCount, recipeData));
 				}
 				default -> throw new IOException("Unknown AI recipe type: " + type);
 			}
@@ -1616,9 +1653,13 @@ public final class AiCraftingManager {
 				ingredients.add(value);
 			}
 			encoded.add("ingredients", ingredients);
-			encoded.addProperty("output", recipe.outputName());
-			encoded.addProperty("outputCount", recipe.outputCount());
-			encoded.add("recipeData", recipe.recipeData());
+			if (recipe.isRejected()) {
+				encoded.add("rejection", recipe.rejection().toJson());
+			} else {
+				encoded.addProperty("output", recipe.outputName());
+				encoded.addProperty("outputCount", recipe.outputCount());
+				encoded.add("recipeData", recipe.recipeData());
+			}
 			encodedRecipes.add(encoded);
 		}
 		root.add("recipes", encodedRecipes);

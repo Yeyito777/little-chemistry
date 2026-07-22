@@ -47,11 +47,11 @@ final class GenerationConversationLog implements AutoCloseable {
 			copy or import that file directly as a conversation. `conversation.json`
 			contains the same native conversation as a stable human-friendly alias. Both include the system instructions,
 			user request, visible reasoning summaries, assistant messages, tool calls, exact tool results, timing/token
-			metadata, OpenAI response IDs, encrypted reasoning continuation records, and terminal verification or failure.
+			metadata, OpenAI response IDs, encrypted reasoning continuation records, and terminal verification, rejection, or failure.
 
 			`responses-replay.json` is an auxiliary exact Responses-API replay with the generation request and tool schemas.
 			`events.jsonl` is append-only and adds precise event timestamps, exact output items, tool durations, verification,
-			and failures. `transcript.md` is a bounded human-readable projection. Use the native `<job-id>.json` file when
+			rejections, and failures. `transcript.md` is a bounded human-readable projection. Use the native `<job-id>.json` file when
 			dropping a generation into Exocortex; use the auxiliary files only for lower-level debugging.
 
 			Reasoning records preserve every summary/raw reasoning field and `encrypted_content` returned by OpenAI. The API
@@ -166,6 +166,7 @@ final class GenerationConversationLog implements AutoCloseable {
 		event.add("arguments", call.arguments().deepCopy());
 		event.add("result", result.output().deepCopy());
 		event.addProperty("verified", result.verified() != null);
+		event.addProperty("rejected", result.rejection() != null);
 		appendEvent(event);
 		appendConversationItem("tool", round, replayItem);
 		long endedAt = System.currentTimeMillis();
@@ -204,6 +205,24 @@ final class GenerationConversationLog implements AutoCloseable {
 		conversationTitle = "Generate " + verified.displayName();
 		terminal = true;
 		writeSnapshots("verified", history, terminalData);
+		exportTerminalConversation();
+	}
+
+	void recordRejected(com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection rejection,
+			JsonArray history) throws IOException {
+		JsonObject terminalData = rejection.toJson();
+		terminalData.addProperty("logDirectory", directory.toString());
+		JsonObject event = baseEvent("generation.rejected");
+		for (var entry : terminalData.entrySet()) event.add(entry.getKey(), entry.getValue().deepCopy());
+		appendEvent(event);
+		appendTranscript("## Workstation recipe rejected\n\n~~~json\n"
+				+ PRETTY_GSON.toJson(terminalData) + "\n~~~\n");
+		long now = System.currentTimeMillis();
+		appendStoredMessage("system", "Little Chemistry workstation recipe rejected.\n\n"
+				+ PRETTY_GSON.toJson(terminalData), metadata(now, now, 0), null);
+		conversationTitle = "Reject workstation recipe";
+		terminal = true;
+		writeSnapshots("rejected", history, terminalData);
 		exportTerminalConversation();
 	}
 

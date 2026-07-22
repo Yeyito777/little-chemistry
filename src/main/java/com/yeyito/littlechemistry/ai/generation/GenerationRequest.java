@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
+import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 
 /** Immutable request metadata written into each isolated world-source job. */
@@ -66,11 +67,37 @@ record GenerationRequest(
 					.append("\n\n");
 			if (workstationPolicy != null) {
 				prompt.append("The workstation's recipe policy is:\n")
-						.append(workstationPolicy)
-						.append("\n\nThe required recipe-data schema is:\n")
-						.append(PRETTY_GSON.toJson(recipeDataSchema))
-						.append("\n\n");
+							.append(workstationPolicy)
+							.append("\n\nThe required recipe-data schema is:\n")
+							.append(PRETTY_GSON.toJson(recipeDataSchema))
+							.append("\n\nBefore creating source, choose one terminal result and write it to "
+									+ "`.littlechemistry/result.json`. For an accepted result, use exactly:\n")
+							.append("`{\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\","
+									+ "\"displayName\":\"...\",\"outputCount\":1,\"recipeData\":{...}}`\n")
+							.append("`recipeData` is required and must match the closed schema above. You may instead reject "
+									+ "this workstation recipe only if the workstation is too weak for the craft. For a rejection, "
+									+ "write exactly:\n")
+							.append("`{\"kind\":\"rejection\",\"category\":\"workstation_too_weak\","
+									+ "\"description\":\"...\"}`\n")
+							.append("The description must be one or two short, complete sentences that specifically explain "
+									+ "the rejection. Do not create source for a rejection; call `verify` immediately after writing "
+									+ "the rejection result.\n\n")
+							.append("`workstationContext` and behavior `aiContext` are descriptive prompt material and are "
+									+ "excluded from cache identity. Every contextual value that can change output identity, count, "
+									+ "recipeData, visuals, properties, or behavior must already be represented in the deterministic "
+									+ "canonical `cacheDiscriminator`. Never make a result depend on descriptive context absent from "
+									+ "that discriminator.\n\n");
+			} else {
+				prompt.append("Before creating source, choose the result and write exactly this shape to "
+							+ "`.littlechemistry/result.json`:\n")
+							.append("`{\"kind\":\"item|block|helmet|chestplate|leggings|boots|entity\","
+									+ "\"displayName\":\"...\",\"outputCount\":1}`\n")
+							.append("Do not include `recipeData` for ordinary crafting or smelting.\n\n");
 			}
+			prompt.append("For an accepted result, armor output count is 1. Normalize `displayName` to a lowercase "
+						+ "underscore ID and create `<category>/<id>/C_<id>_Content.java` with package "
+						+ "`<category>.c_<id>`, plus the sibling `GeneratedBehaviorImpl.java`. The process and every "
+						+ "ingredient must materially influence identity, pixels, native properties, and behavior.\n\n");
 		} else {
 			String kind = switch (fixedType) {
 				case ITEM -> "item";
@@ -86,13 +113,30 @@ record GenerationRequest(
 					.append("\" for Little Chemistry.\n\n");
 			if (recipeContext != null) {
 				prompt.append("Base it on this recipe:\n")
-						.append(PRETTY_GSON.toJson(recipeContext))
-						.append("\n\n");
+							.append(PRETTY_GSON.toJson(recipeContext))
+							.append("\n\n");
 			}
+			String identifier = DynamicContentManager.normalizeIdentifier(
+						DynamicContentManager.normalizeDisplayName(fixedDisplayName));
+			String category = GenerationWorkspace.category(fixedType);
+			String factoryClass = GenerationWorkspace.className(identifier);
+			prompt.append("Keep this exact generated-source identity: factory file `")
+						.append(category).append('/').append(identifier).append('/').append(factoryClass)
+						.append(".java`, package `").append(category).append('.')
+						.append(GenerationWorkspace.javaPackageSegment(identifier)).append("`, public factory class `")
+						.append(factoryClass).append("`, and sibling behavior file `")
+						.append(category).append('/').append(identifier).append("/GeneratedBehaviorImpl.java`. ")
+						.append("The requested output count is ").append(fixedOutputCount).append(".\n\n");
 		}
-		prompt.append(TEXTURE_DIRECTION)
-				.append("Implement the complete gameplay properties and behavior that naturally follow from the concept and recipe. ")
-				.append("Build and verify the finished content, repairing any diagnostics before finishing.");
+		prompt.append(TEXTURE_DIRECTION);
+		if (workstationPolicy != null) {
+			prompt.append("If accepting the recipe, implement the complete gameplay properties and behavior that naturally follow "
+					+ "from the concept and recipe. For either an accepted result or a rejection, call `verify` and repair any "
+					+ "diagnostics before finishing.");
+		} else {
+			prompt.append("Implement the complete gameplay properties and behavior that naturally follow from the concept and recipe. ")
+					.append("Build and verify the finished content, repairing any diagnostics before finishing.");
+		}
 		return prompt.toString();
 	}
 

@@ -2,7 +2,9 @@ package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -28,7 +30,6 @@ final class GeneralistGenerationToolsTest {
 			Files.createDirectories(job.resolve("reference"));
 			Files.createDirectories(job.resolve(".existing-sourcepath"));
 			Files.writeString(job.resolve("request.json"), "immutable");
-			Files.writeString(job.resolve("AGENTS.md"), "immutable");
 			GenerationRequest request = GenerationRequest.fixed(
 					DynamicContentType.ITEM, null, "Sandbox Item", 1, null);
 			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace, request);
@@ -73,5 +74,54 @@ final class GeneralistGenerationToolsTest {
 		assertTrue(definitions.asList().stream().map(element -> element.getAsJsonObject())
 				.filter(tool -> tool.get("name").getAsString().equals("verify"))
 				.findFirst().orElseThrow().get("description").getAsString().contains("Compile"));
+	}
+
+	@Test
+	void verifyAcceptsACompleteWorkstationRejectionWithoutGeneratedSource() throws Exception {
+		Path world = temporaryDirectory.resolve("rejection-world");
+		Path job = temporaryDirectory.resolve("rejection-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			Files.createDirectories(job.resolve(".littlechemistry"));
+			Files.writeString(job.resolve(".littlechemistry/result.json"), """
+					{"kind":"rejection","category":"workstation_too_weak",
+					 "description":"This workstation is too weak to shape that spell safely."}
+					""");
+			JsonObject context = JsonParser.parseString("""
+					{"workstation":{"primaryOutput":{"id":"result","capacity":64}}}
+					""").getAsJsonObject();
+			JsonObject schema = JsonParser.parseString("""
+					{"type":"object","properties":{},"required":[],"additionalProperties":false}
+					""").getAsJsonObject();
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(context, "Use the correct workstation.", schema));
+
+			var result = tools.execute("verify", new JsonObject());
+
+			assertTrue(result.output().get("ok").getAsBoolean());
+			assertEquals("rejection", result.output().get("kind").getAsString());
+			assertEquals(WorkstationRecipeRejection.Category.WORKSTATION_TOO_WEAK,
+					result.rejection().category());
+			assertTrue(result.verified() == null);
+		}
+	}
+
+	@Test
+	void ordinaryRecipeCannotUseAWorkstationRejection() throws Exception {
+		Path world = temporaryDirectory.resolve("ordinary-world");
+		Path job = temporaryDirectory.resolve("ordinary-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			Files.createDirectories(job.resolve(".littlechemistry"));
+			Files.writeString(job.resolve(".littlechemistry/result.json"), """
+					{"kind":"rejection","category":"workstation_too_weak",
+					 "description":"This workstation is too weak for the requested transformation."}
+					""");
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(new JsonObject(), null, null));
+
+			var result = tools.execute("verify", new JsonObject());
+
+			assertFalse(result.output().get("ok").getAsBoolean());
+			assertTrue(result.output().get("message").getAsString().contains("Only workstation recipes"));
+		}
 	}
 }

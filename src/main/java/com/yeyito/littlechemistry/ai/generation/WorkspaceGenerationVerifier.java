@@ -22,6 +22,7 @@ import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
+import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 
@@ -43,6 +44,9 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	static VerifiedGeneration verify(GenerationWorkspace workspace, GenerationRequest request) throws Exception {
+		if (readRejection(workspace, request) != null) {
+			throw new IllegalArgumentException("A workstation recipe rejection is terminal and does not compile source");
+		}
 		Selection selection = request.flexible() ? readSelection(workspace, request) : new Selection(
 				request.fixedType(), request.fixedArmorSlot(),
 				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
@@ -101,17 +105,26 @@ final class WorkspaceGenerationVerifier {
 		}
 	}
 
+	static WorkstationRecipeRejection readRejection(GenerationWorkspace workspace, GenerationRequest request)
+			throws IOException {
+		if (!request.flexible()) return null;
+		JsonObject result = readResult(workspace);
+		if (!result.has("kind") || !result.get("kind").isJsonPrimitive()
+				|| !"rejection".equals(result.get("kind").getAsString())) return null;
+		if (request.workstationPolicy() == null) {
+			throw new IllegalArgumentException("Only workstation recipes may be rejected");
+		}
+		if (!result.keySet().equals(Set.of("kind", "category", "description"))) {
+			throw new IllegalArgumentException("Rejection requires exactly kind, category, and description");
+		}
+		JsonObject encoded = new JsonObject();
+		encoded.add("category", result.get("category").deepCopy());
+		encoded.add("description", result.get("description").deepCopy());
+		return WorkstationRecipeRejection.fromJson(encoded);
+	}
+
 	private static Selection readSelection(GenerationWorkspace workspace, GenerationRequest request) throws IOException {
-		Path resultFile = workspace.root().resolve(".littlechemistry/result.json");
-		if (!Files.isRegularFile(resultFile)) {
-			throw new IllegalArgumentException("Write .littlechemistry/result.json before verification");
-		}
-		JsonObject result;
-		try {
-			result = JsonParser.parseString(Files.readString(resultFile, StandardCharsets.UTF_8)).getAsJsonObject();
-		} catch (RuntimeException invalid) {
-			throw new IllegalArgumentException("Result file is not a JSON object", invalid);
-		}
+		JsonObject result = readResult(workspace);
 		Set<String> allowed = request.recipeDataSchema() == null
 				? Set.of("kind", "displayName", "outputCount")
 				: Set.of("kind", "displayName", "outputCount", "recipeData");
@@ -161,6 +174,18 @@ final class WorkspaceGenerationVerifier {
 			new DynamicWorkstationRecipeDataSchema(request.recipeDataSchema()).validateValue(recipeData);
 		}
 		return new Selection(type, slot, displayName, count, recipeData);
+	}
+
+	private static JsonObject readResult(GenerationWorkspace workspace) throws IOException {
+		Path resultFile = workspace.root().resolve(".littlechemistry/result.json");
+		if (!Files.isRegularFile(resultFile)) {
+			throw new IllegalArgumentException("Write .littlechemistry/result.json before verification");
+		}
+		try {
+			return JsonParser.parseString(Files.readString(resultFile, StandardCharsets.UTF_8)).getAsJsonObject();
+		} catch (RuntimeException invalid) {
+			throw new IllegalArgumentException("Result file is not a JSON object", invalid);
+		}
 	}
 
 	private static int primaryOutputCapacity(JsonObject recipeContext) {

@@ -6,12 +6,15 @@ import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import net.minecraft.world.item.ItemStack;
 
-/** One persistent generated result and process-data payload for an AI-defined workstation signature. */
+import java.util.Set;
+
+/** One persistent generated result or rejection and process-data payload for an AI-defined workstation signature. */
 public final class AiWorkstationRecipe {
 	private final WorkstationRecipeSignature signature;
 	private final String outputName;
 	private final int outputCount;
 	private final JsonObject recipeData;
+	private final WorkstationRecipeRejection rejection;
 
 	public AiWorkstationRecipe(WorkstationRecipeSignature signature, String outputName, int outputCount,
 			JsonObject recipeData) {
@@ -26,6 +29,22 @@ public final class AiWorkstationRecipe {
 		this.outputName = outputName;
 		this.outputCount = outputCount;
 		this.recipeData = recipeData == null ? new JsonObject() : recipeData.deepCopy();
+		this.rejection = null;
+	}
+
+	private AiWorkstationRecipe(WorkstationRecipeSignature signature, WorkstationRecipeRejection rejection) {
+		if (signature == null) throw new IllegalArgumentException("Workstation recipe signature is required");
+		if (rejection == null) throw new IllegalArgumentException("Workstation recipe rejection is required");
+		this.signature = signature;
+		this.outputName = null;
+		this.outputCount = 1;
+		this.recipeData = new JsonObject();
+		this.rejection = rejection;
+	}
+
+	public static AiWorkstationRecipe rejected(WorkstationRecipeSignature signature,
+			WorkstationRecipeRejection rejection) {
+		return new AiWorkstationRecipe(signature, rejection);
 	}
 
 	public WorkstationRecipeSignature signature() {
@@ -44,11 +63,24 @@ public final class AiWorkstationRecipe {
 		return recipeData.deepCopy();
 	}
 
+	public boolean isRejected() {
+		return rejection != null;
+	}
+
+	public WorkstationRecipeRejection rejection() {
+		return rejection;
+	}
+
+	public boolean referencesOutput(Set<String> outputNames) {
+		return outputName != null && outputNames.contains(outputName);
+	}
+
 	public boolean outputAvailable() {
-		return !outputStack().isEmpty();
+		return isRejected() || DynamicContentCatalog.find(outputName) != null;
 	}
 
 	public ItemStack outputStack() {
+		if (rejection != null) return rejection.displayStack();
 		DynamicContentDefinition definition = DynamicContentCatalog.find(outputName);
 		if (definition == null) return ItemStack.EMPTY;
 		ItemStack stack = DynamicContentObjects.createStack(definition);

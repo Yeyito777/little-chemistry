@@ -132,7 +132,7 @@ final class GeneralistGenerationTools {
 		if (Files.exists(Path.of("/lib64"))) {
 			sandbox.addAll(11, List.of("--ro-bind", "/lib64", "/lib64"));
 		}
-		for (String readOnly : List.of("existing", "reference", ".existing-sourcepath", "request.json", "AGENTS.md")) {
+		for (String readOnly : List.of("existing", "reference", ".existing-sourcepath", "request.json")) {
 			Path source = workspace.root().resolve(readOnly);
 			if (Files.exists(source)) sandbox.addAll(List.of(
 					"--ro-bind", source.toString(), "/workspace/" + readOnly));
@@ -322,6 +322,16 @@ final class GeneralistGenerationTools {
 
 	private ToolResult verify(JsonObject arguments) throws Exception {
 		requireOnly(arguments);
+		var rejection = WorkspaceGenerationVerifier.readRejection(workspace, request);
+		if (rejection != null) {
+			JsonObject output = success();
+			output.addProperty("verified", true);
+			output.addProperty("kind", "rejection");
+			output.addProperty("category", rejection.category().serializedName());
+			output.addProperty("description", rejection.description());
+			output.addProperty("message", "The workstation recipe rejection was accepted.");
+			return new ToolResult(output, null, rejection);
+		}
 		WorkspaceGenerationVerifier.VerifiedGeneration verified = WorkspaceGenerationVerifier.verify(workspace, request);
 		workspace.stage(verified);
 		JsonObject output = success();
@@ -480,6 +490,10 @@ final class GeneralistGenerationTools {
 		return schema;
 	}
 
-	record ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified) {
+	record ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified,
+			com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection rejection) {
+		ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified) {
+			this(output, verified, null);
+		}
 	}
 }
