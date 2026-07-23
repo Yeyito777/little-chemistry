@@ -783,11 +783,15 @@ public final class GenerationWorkspace implements AutoCloseable {
 			`DynamicItemVisuals` with `GeneratedContentBuilder.itemVisuals(...)`; create each state with
 			`GeneratedContentApi.itemTexture(id, texture)`. Bows require `pulling_0`, `pulling_1`, and `pulling_2`. Crossbows require
 			those plus `charged` and `charged_firework`. Every 16x16 frame must be visibly distinct from the base and every other
-			frame. Inspect vanilla state textures with `view_image` rather than guessing their silhouettes.
+			frame. Read vanilla state textures with `read_texture` and work directly from their palettes and indexed rows rather
+			than guessing their silhouettes.
 
-			## Equipped armor preview
-			Use `view_image` to inspect installed references. For generated armor, `preview_armor` compiles the current source and
-			attaches the authored 64x32 sheet plus front/back/side mappings on Minecraft's humanoid armor cuboids. Inspect and revise
-			the result. `verify` accepts armor only when `preview_armor` was called after the final source edit.
+			## Text-only texture inspection
+			All model-facing texture data is deliberately textual. `read_texture` returns installed artwork as the exact RRGGBBAA
+			palette and hexadecimal row format used by `DynamicTextureSpec`; no PNG or vision attachment is available. For generated
+			armor, `inspect_armor_texture` compiles the current source and returns the authored 64x32 palette/rows plus faithful
+			front/back/side mappings in that same indexed format. Inspect and revise those rows. `verify` accepts armor only when
+			`inspect_armor_texture` was called after the final source edit, and accepts any generated content only after at least one
+			relevant texture was actually read through the textual reference interface.
 			""";
 }

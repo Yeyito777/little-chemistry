@@ -19,18 +19,20 @@ record GenerationRequest(
 ) {
 	private static final Gson PRETTY_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String TEXTURE_DIRECTION = """
-			Always base the visual design on existing vanilla or modded textures. Before creating any texture, use the
-			available tools to inspect relevant reference textures and study their palettes, pixel arrangements, silhouettes,
-			shading, and UV or layout conventions. Then create an original texture grounded in those references.
+			Always base the visual design on installed vanilla textures. Before creating any texture, search the
+			reference indexes and call read_texture on relevant virtual JSON paths. Study the exact RRGGBBAA palette and hexadecimal
+			pixel rows directly, then create original indexed artwork grounded in those references. Final verification requires a
+			real texture-reference read. Texture inputs are deliberately text-only and use the same palette/rows representation your
+			generated Java must submit; do not infer art from filenames.
 			""";
 	private static final String ARMOR_DIRECTION = """
-			If the result is armor, inspect reference/vanilla/TEXTURES.txt and use view_image on at least one relevant vanilla
-			armor item icon and humanoid equipment texture before coding. Author both the original 16x16 inventory icon and the
-			required 64x32 equipment sheet using Minecraft's actual armor UV layout. For head armor, explicitly study and paint
+			If the result is armor, inspect reference/vanilla/TEXTURES.txt and use read_texture on at least one relevant vanilla
+			armor item icon and its matching humanoid equipment layer before coding. Author both the original 16x16 inventory icon
+			and the required 64x32 equipment sheet using Minecraft's actual armor UV layout. For head armor, explicitly study and paint
 			the base-head UV region at x=0..31, y=0..15 and hat/outer-head region at x=32..63, y=0..15 so the worn helmet
-			renders on the player's head instead of only in the inventory. After the texture is complete, call preview_armor and
-			inspect its front, back, and side equipped views. Revise misplaced, sparse, noisy, or incoherent artwork and call
-			preview_armor again after the final source edit; final verify rejects armor that was not previewed at that exact digest.
+			renders on the player's head instead of only in the inventory. After the texture is complete, call inspect_armor_texture
+			and inspect its textual front, back, and side palette/row mappings. Revise misplaced, sparse, noisy, or incoherent artwork
+			and call inspect_armor_texture again after the final source edit; final verify rejects armor not inspected at that digest.
 			Remember that texture-only vanilla armor cannot create a broad hat brim or a backpack with real depth, so design a
 			coherent texture for the available humanoid shell rather than implying unsupported geometry.
 			""";
@@ -48,8 +50,9 @@ record GenerationRequest(
 	private static final String PROJECTILE_WEAPON_DIRECTION = """
 			If the result is a bow or crossbow, make it an ordinary item with heldType `BOW` or `CROSSBOW`, maxStack 1,
 			outputCount 1, and positive enchantability. Inspect the matching vanilla standby, pulling, and charged textures with
-			view_image. Supply complete, visibly distinct `DynamicItemVisuals`: bows require `pulling_0`, `pulling_1`, and
-			`pulling_2`; crossbows additionally require `charged` and `charged_firework`. Create each state with
+			read_texture so their exact indexed rows guide every state. Supply complete, visibly distinct `DynamicItemVisuals`:
+			bows require `pulling_0`, `pulling_1`, and `pulling_2`; crossbows additionally require `charged` and
+			`charged_firework`. Create each state with
 			`GeneratedContentApi.itemTexture` so its persisted hash is exact.
 			The registered native carrier supplies vanilla drawing, charging, ammunition, firing, sounds, enchantments, and
 			standard durability; do not reimplement those mechanics in generated behavior.

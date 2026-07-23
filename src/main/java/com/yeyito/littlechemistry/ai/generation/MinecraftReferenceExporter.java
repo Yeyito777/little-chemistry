@@ -12,7 +12,6 @@ import net.minecraft.resources.Identifier;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -26,7 +25,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Builds a real searchable index and lazily materialized indexed-pixel mirror of installed vanilla artwork. */
+/**
+ * Builds a searchable, lazily materialized indexed-pixel mirror of installed vanilla artwork.
+ *
+ * PNG decoding is strictly an internal import step. The generation model must receive textures only through
+ * {@link #materialize(String)} as the same RRGGBBAA palette and hexadecimal rows that generated source authors; never add
+ * a PNG preview or model-facing raster method here.
+ */
 final class MinecraftReferenceExporter {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String TEXTURE_ROOT = "assets/minecraft/textures/";
@@ -56,11 +61,12 @@ final class MinecraftReferenceExporter {
 		write(vanillaRoot.resolve("README.md"), """
 				# Installed vanilla artwork mirror
 
-				Search TEXTURES.txt, then read the matching virtual JSON path under this directory. Item and block PNGs are
+				Search TEXTURES.txt, then use read_texture on the matching virtual JSON path under this directory. Installed
+				source PNGs are decoded only inside the game and are never sent to the model. Item and block textures are
 				normalized to an indexed 16x16 first frame. Entity/equipment artwork keeps its installed dimensions when they
 				fit Little Chemistry's 1-64 pixel representation. The materialized JSON contains an RRGGBBAA palette and rows
-				of hexadecimal palette indices, ready to adapt in Java texture helpers. Preserve UV island positions when
-				reusing an animated entity profile or humanoid equipment sheet.
+				of hexadecimal palette indices: exactly the representation generated Java must author. Preserve UV island
+				positions when reusing an animated entity profile or humanoid equipment sheet.
 				""");
 	}
 
@@ -92,26 +98,6 @@ final class MinecraftReferenceExporter {
 		indexed.rows().forEach(rows::add);
 		output.add("rows", rows);
 		return GSON.toJson(output);
-	}
-
-	/** Returns the same first-frame image represented by {@link #materialize(String)} for visual inspection. */
-	static byte[] previewPng(String virtualPath) throws IOException {
-		String normalized = virtualPath.replace('\\', '/');
-		if (normalized.startsWith("/") || normalized.contains("../") || !normalized.endsWith(".json")) {
-			throw new IOException("Invalid vanilla texture reference path");
-		}
-		String pngRelative = TEXTURE_ROOT + normalized.substring(0, normalized.length() - 5) + ".png";
-		BufferedImage source = read(pngRelative);
-		BufferedImage preview = normalized.startsWith("item/") || normalized.startsWith("block/")
-				? sample16(source) : source;
-		if (preview.getWidth() < 1 || preview.getWidth() > 256
-				|| preview.getHeight() < 1 || preview.getHeight() > 256) {
-			throw new IOException("Installed texture is outside the previewable 1-256 pixel dimensions: "
-					+ preview.getWidth() + "x" + preview.getHeight());
-		}
-		ByteArrayOutputStream output = new ByteArrayOutputStream();
-		if (!ImageIO.write(preview, "PNG", output)) throw new IOException("The Java runtime has no PNG writer");
-		return output.toByteArray();
 	}
 
 	private static ModContainer minecraft() throws IOException {

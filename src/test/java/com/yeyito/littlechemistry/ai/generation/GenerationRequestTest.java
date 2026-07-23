@@ -17,8 +17,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.startsWith("Please generate and code a Minecraft item named \"Moonlit Satchel\""));
 		assertTrue(prompt.contains("items/moonlit_satchel/C_moonlit_satchel_Content.java"));
 		assertTrue(prompt.contains("package `items.c_moonlit_satchel`"));
-		assertTrue(prompt.contains("existing vanilla or modded textures"));
-		assertTrue(prompt.contains("palettes, pixel arrangements, silhouettes"));
+		assertTrue(prompt.contains("installed vanilla textures"));
+		assertTrue(prompt.contains("RRGGBBAA palette and hexadecimal"));
+		assertTrue(prompt.contains("read_texture"));
+		assertTrue(prompt.contains("text-only"));
 		assertFalse(prompt.contains("AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
 	}
@@ -35,6 +37,8 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("base-head UV region at x=0..31, y=0..15"));
 		assertTrue(prompt.contains("hat/outer-head region at x=32..63, y=0..15"));
 		assertTrue(prompt.contains("renders on the player's head"));
+		assertTrue(prompt.contains("inspect_armor_texture"));
+		assertFalse(prompt.contains("view_image"));
 	}
 
 	@Test
@@ -55,7 +59,7 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
 		assertTrue(prompt.contains("Armor output count is always 1"));
 		assertFalse(prompt.contains("\"outputCount\":1"));
-		assertTrue(prompt.contains("Always base the visual design on existing vanilla or modded textures"));
+		assertTrue(prompt.contains("Always base the visual design on installed vanilla textures"));
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
@@ -138,6 +142,9 @@ final class GenerationRequestTest {
 		assertFalse(system.contains("GeneratedBehaviorImpl.java"));
 		assertFalse(system.toLowerCase().contains("rejection"));
 		assertFalse(system.contains("workstation_too_weak"));
+		assertTrue(system.contains("RRGGBBAA palette plus hexadecimal rows"));
+		assertFalse(system.contains("view_image"));
+		assertFalse(system.contains("input_image"));
 	}
 
 	@Test

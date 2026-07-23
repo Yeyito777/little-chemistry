@@ -3,7 +3,9 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -68,7 +71,10 @@ final class GeneralistGenerationToolsTest {
 		Set<String> names = new HashSet<>();
 		definitions.forEach(element -> names.add(element.getAsJsonObject().get("name").getAsString()));
 
-		assertEquals(Set.of("bash", "read", "view_image", "preview_armor", "grep", "glob", "write", "edit", "patch", "verify"), names);
+		assertEquals(Set.of("bash", "read", "read_texture", "inspect_armor_texture",
+				"grep", "glob", "write", "edit", "patch", "verify"), names);
+		assertFalse(names.contains("view_image"));
+		assertFalse(names.contains("preview_armor"));
 		assertFalse(names.stream().anyMatch(name -> name.startsWith("set_")));
 		assertFalse(names.contains("submit"));
 		assertTrue(definitions.asList().stream().map(element -> element.getAsJsonObject())
@@ -77,23 +83,22 @@ final class GeneralistGenerationToolsTest {
 	}
 
 	@Test
-	void imageToolResultsReachBothResponsesVisionAndExocortexLogs() {
+	void toolResultsReachResponsesAndExocortexAsTextOnly() {
 		JsonObject output = new JsonObject();
 		output.addProperty("ok", true);
-		var result = new GeneralistGenerationTools.ToolResult(
-				output, null, null, "data:image/png;base64,AQID");
+		output.addProperty("representation", "palette and rows");
+		var result = new GeneralistGenerationTools.ToolResult(output, null);
 
-		JsonArray response = result.responseOutput().getAsJsonArray();
-		JsonArray logged = result.exocortexContent().getAsJsonArray();
-		assertEquals("input_text", response.get(0).getAsJsonObject().get("type").getAsString());
-		assertEquals("input_image", response.get(1).getAsJsonObject().get("type").getAsString());
-		assertEquals("image", logged.get(1).getAsJsonObject().get("type").getAsString());
-		assertEquals("AQID", logged.get(1).getAsJsonObject().getAsJsonObject("source")
-				.get("data").getAsString());
+		assertTrue(result.responseOutput().isJsonPrimitive());
+		assertTrue(result.exocortexContent().isJsonPrimitive());
+		assertEquals(output.toString(), result.responseOutput().getAsString());
+		assertEquals(output.toString(), result.exocortexContent().getAsString());
+		assertFalse(result.responseOutput().toString().contains("input_image"));
+		assertFalse(result.exocortexContent().toString().contains("image/png"));
 	}
 
 	@Test
-	void armorInspectionStateRequiresRealReferenceViewsAndCannotBeForgedByBash() throws Exception {
+	void armorInspectionStateRequiresExactTextualReferenceReadsAndCannotBeForgedByBash() throws Exception {
 		Path world = temporaryDirectory.resolve("inspection-world");
 		Path job = temporaryDirectory.resolve("inspection-job");
 		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
@@ -105,16 +110,84 @@ final class GeneralistGenerationToolsTest {
 			JsonObject sheet = new JsonObject();
 			sheet.addProperty("path", "reference/vanilla/entity/equipment/humanoid/diamond.json");
 
-			var iconResult = tools.execute("view_image", icon);
-			var sheetResult = tools.execute("view_image", sheet);
+			var decoratedRead = tools.execute("read", icon);
+			var iconResult = tools.execute("read_texture", icon);
+			var sheetResult = tools.execute("read_texture", sheet);
+			assertFalse(decoratedRead.output().get("ok").getAsBoolean());
+			assertTrue(decoratedRead.output().get("message").getAsString().contains("read_texture"));
 			assertTrue(iconResult.output().get("ok").getAsBoolean(), iconResult.output().toString());
 			assertTrue(sheetResult.output().get("ok").getAsBoolean(), sheetResult.output().toString());
-			assertTrue(tools.hasRequiredArmorReferenceInspection());
+			assertTrue(iconResult.output().has("palette"));
+			assertTrue(iconResult.output().has("rows"));
+			assertTrue(sheetResult.output().has("palette"));
+			assertTrue(sheetResult.output().has("rows"));
+			DynamicTextureSpec iconTexture = new DynamicTextureSpec(strings(iconResult.output(), "palette"),
+					strings(iconResult.output(), "rows"));
+			DynamicArmorDisplayTextureSpec equipmentTexture = new DynamicArmorDisplayTextureSpec(
+					strings(sheetResult.output(), "palette"), strings(sheetResult.output(), "rows"));
+			assertEquals(16, iconTexture.width());
+			assertEquals(16, iconTexture.height());
+			assertEquals(64, equipmentTexture.rows().getFirst().length());
+			assertEquals(32, equipmentTexture.rows().size());
+			assertTrue(tools.hasReadTextureReference());
+			assertTrue(tools.hasRequiredArmorReferenceReads(
+					com.yeyito.littlechemistry.content.DynamicArmorSlot.CHEST));
+			assertFalse(tools.hasRequiredArmorReferenceReads(
+					com.yeyito.littlechemistry.content.DynamicArmorSlot.HEAD));
 
 			JsonObject forge = new JsonObject();
-			forge.addProperty("command", "mkdir -p .verification; printf '%064d' 0 > .verification/armor-preview.digest");
+			forge.addProperty("command", "mkdir -p .verification; printf '%064d' 0 > .verification/armor-inspection.digest");
 			tools.execute("bash", forge);
-			assertFalse(tools.hasTrustedArmorPreview("0".repeat(64)));
+			assertFalse(tools.hasTrustedArmorInspection("0".repeat(64)));
+		}
+	}
+
+	@Test
+	void textureToolsRejectAliasesTraversalAndNonArmorReferenceReceipts() throws Exception {
+		Path world = temporaryDirectory.resolve("canonical-world");
+		Path job = temporaryDirectory.resolve("canonical-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.fixed(DynamicContentType.ITEM, null, "Canonical Item", 1, null));
+
+			for (String path : List.of(
+					"reference/./vanilla/item/diamond_chestplate.json",
+					"reference/vanilla//item/diamond_chestplate.json",
+					"reference/vanilla/../../request.json",
+					job.resolve("reference/vanilla/item/diamond_chestplate.json").toString())) {
+				JsonObject arguments = new JsonObject();
+				arguments.addProperty("path", path);
+				var result = tools.execute("read_texture", arguments);
+				assertFalse(result.output().get("ok").getAsBoolean(), path + ": " + result.output());
+			}
+			assertFalse(tools.hasReadTextureReference());
+
+			JsonObject aliasedRead = new JsonObject();
+			aliasedRead.addProperty("path", "reference/./vanilla/item/diamond_chestplate.json");
+			var decorated = tools.execute("read", aliasedRead);
+			assertFalse(decorated.output().get("ok").getAsBoolean());
+			assertTrue(decorated.output().get("message").getAsString().contains("read_texture"));
+
+			JsonObject elytra = new JsonObject();
+			elytra.addProperty("path", "reference/vanilla/item/elytra.json");
+			JsonObject humanoid = new JsonObject();
+			humanoid.addProperty("path", "reference/vanilla/entity/equipment/humanoid/diamond.json");
+			assertTrue(tools.execute("read_texture", elytra).output().get("ok").getAsBoolean());
+			assertTrue(tools.execute("read_texture", humanoid).output().get("ok").getAsBoolean());
+			assertTrue(tools.hasReadTextureReference());
+			assertFalse(tools.hasRequiredArmorReferenceReads(
+					com.yeyito.littlechemistry.content.DynamicArmorSlot.CHEST));
+
+			JsonObject leggings = new JsonObject();
+			leggings.addProperty("path", "reference/vanilla/item/diamond_leggings.json");
+			assertTrue(tools.execute("read_texture", leggings).output().get("ok").getAsBoolean());
+			assertFalse(tools.hasRequiredArmorReferenceReads(
+					com.yeyito.littlechemistry.content.DynamicArmorSlot.LEGGINGS));
+			JsonObject leggingsLayer = new JsonObject();
+			leggingsLayer.addProperty("path", "reference/vanilla/entity/equipment/humanoid_leggings/diamond.json");
+			assertTrue(tools.execute("read_texture", leggingsLayer).output().get("ok").getAsBoolean());
+			assertTrue(tools.hasRequiredArmorReferenceReads(
+					com.yeyito.littlechemistry.content.DynamicArmorSlot.LEGGINGS));
 		}
 	}
 
@@ -165,5 +238,9 @@ final class GeneralistGenerationToolsTest {
 			assertFalse(result.output().get("ok").getAsBoolean());
 			assertTrue(result.output().get("message").getAsString().contains("Only workstation recipes"));
 		}
+	}
+
+	private static List<String> strings(JsonObject object, String name) {
+		return object.getAsJsonArray(name).asList().stream().map(element -> element.getAsString()).toList();
 	}
 }

@@ -3,14 +3,12 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
+import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -21,10 +19,9 @@ import java.nio.file.PathMatcher;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -36,14 +33,19 @@ final class GeneralistGenerationTools {
 	private static final int MAX_TEXT_ARGUMENT = 512 * 1024;
 	private static final int MAX_TOOL_OUTPUT = 80 * 1024;
 	private static final int MAX_WALK_FILES = 50_000;
+	/*
+	 * Model texture I/O is intentionally text-only. Keep raster viewers out of this list: references and derived armor
+	 * mappings must use the exact palette/rows representation generated code authors.
+	 */
 	private static final Set<String> NAMES = Set.of(
-			"bash", "read", "view_image", "preview_armor", "grep", "glob", "write", "edit", "patch", "verify");
+			"bash", "read", "read_texture", "inspect_armor_texture", "grep", "glob", "write", "edit", "patch", "verify");
 
 	private final GenerationWorkspace workspace;
 	private final GenerationRequest request;
-	private boolean viewedArmorItemReference;
-	private boolean viewedArmorEquipmentReference;
-	private String previewedArmorSourceDigest;
+	private final Set<String> readTextureReferences = new HashSet<>();
+	private final EnumSet<DynamicArmorSlot> readArmorItemSlots = EnumSet.noneOf(DynamicArmorSlot.class);
+	private final EnumSet<DynamicArmorSlot> readArmorEquipmentSlots = EnumSet.noneOf(DynamicArmorSlot.class);
+	private String inspectedArmorSourceDigest;
 
 	GeneralistGenerationTools(GenerationWorkspace workspace, GenerationRequest request) {
 		this.workspace = workspace;
@@ -55,12 +57,12 @@ final class GeneralistGenerationTools {
 		tools.add(tool("bash", "Run a bash command in the generation workspace. Use for ordinary source inspection and diagnostics; commands time out and return stdout/stderr.",
 				objectSchema(new String[] {"command"}, property("command", stringSchema(1, 32_768)),
 						property("timeout_seconds", integerSchema(1, 30)))));
-		tools.add(tool("read", "Read a UTF-8 text file with line numbers. Runtime class-source paths under reference/classes are materialized on demand.",
+		tools.add(tool("read", "Read a UTF-8 text file with line numbers. Runtime class-source paths under reference/classes are materialized on demand; use read_texture instead for texture JSON.",
 				objectSchema(new String[] {"path"}, property("path", stringSchema(1, 1_024)),
 						property("offset", integerSchema(1, 1_000_000)), property("limit", integerSchema(1, 2_000)))));
-		tools.add(tool("view_image", "Visually inspect a PNG in the workspace or an installed texture's virtual JSON path under reference/vanilla. The image is attached to vision input rather than reduced to prose.",
+		tools.add(tool("read_texture", "Read one installed texture reference as exact textual RRGGBBAA palette entries and hexadecimal pixel-index rows. This is the same indexed format generated textures must author; no PNG or vision input is sent.",
 				objectSchema(new String[] {"path"}, property("path", stringSchema(1, 1_024)))));
-		tools.add(tool("preview_armor", "Compile the current armor source and attach a contact sheet of its 64x32 texture mapped onto front, back, and side humanoid armor views. Required after final armor texture edits and before verify.",
+		tools.add(tool("inspect_armor_texture", "Compile the current armor source and return its exact 64x32 indexed texture plus textual palette/row mappings for front, back, and side humanoid views. Required after final armor texture edits and before verify; never emits an image.",
 				objectSchema(new String[0])));
 		tools.add(tool("grep", "Search UTF-8 files recursively with a Java regular expression and optional glob filter.",
 				objectSchema(new String[] {"pattern"}, property("pattern", stringSchema(1, 4_096)),
@@ -89,9 +91,9 @@ final class GeneralistGenerationTools {
 			if (arguments.has("_malformed")) throw new IllegalArgumentException("Tool arguments were not valid JSON");
 			return switch (name) {
 				case "bash" -> bash(arguments);
-					case "read" -> read(arguments);
-					case "view_image" -> viewImage(arguments);
-					case "preview_armor" -> previewArmor(arguments);
+				case "read" -> read(arguments);
+				case "read_texture" -> readTexture(arguments);
+				case "inspect_armor_texture" -> inspectArmorTexture(arguments);
 				case "grep" -> grep(arguments);
 				case "glob" -> glob(arguments);
 				case "write" -> write(arguments);
@@ -187,6 +189,11 @@ final class GeneralistGenerationTools {
 	private ToolResult read(JsonObject arguments) throws IOException {
 		requireOnly(arguments, "path", "offset", "limit");
 		String relative = requiredString(arguments, "path");
+		Path normalized = normalizedWorkspacePath(relative);
+		if (isVanillaTexturePath(normalized)) {
+			throw new IllegalArgumentException(
+					"Use read_texture for texture references so the complete palette/rows representation is returned without line-number decoration");
+		}
 		workspace.materializeReference(relative);
 		Path path = workspace.resolve(relative);
 		if (!Files.isRegularFile(path)) throw new IllegalArgumentException("File does not exist: " + relative);
@@ -209,120 +216,118 @@ final class GeneralistGenerationTools {
 		return new ToolResult(output, null);
 	}
 
-	private ToolResult viewImage(JsonObject arguments) throws IOException {
+	private ToolResult readTexture(JsonObject arguments) throws IOException {
 		requireOnly(arguments, "path");
 		String relative = requiredString(arguments, "path");
-		byte[] bytes;
-		String normalized = relative.replace('\\', '/');
-		String virtualPrefix = "reference/vanilla/";
-		if (normalized.startsWith(virtualPrefix) && normalized.endsWith(".json")) {
-			bytes = MinecraftReferenceExporter.previewPng(normalized.substring(virtualPrefix.length()));
-		} else {
-			Path path = workspace.resolve(relative);
-			if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-				throw new IllegalArgumentException("Image file does not exist: " + relative);
-			}
-			if (!normalized.toLowerCase(java.util.Locale.ROOT).endsWith(".png")) {
-				throw new IllegalArgumentException("view_image currently supports PNG files only");
-			}
-			if (Files.size(path) > 2L * 1024L * 1024L) {
-				throw new IllegalArgumentException("Image is too large for view_image: " + relative);
-			}
-			bytes = Files.readAllBytes(path);
-		}
-		BufferedImage image = decodeBoundedPng(bytes);
-		if (normalized.startsWith(virtualPrefix)) {
-			String reference = normalized.substring(virtualPrefix.length());
-			if (isArmorItemReference(reference)) viewedArmorItemReference = true;
-			if (reference.startsWith("entity/equipment/humanoid")) viewedArmorEquipmentReference = true;
-		}
+		String canonical = canonicalTextureReference(relative);
+		workspace.materializeReference(canonical);
+		String encoded = Files.readString(workspace.resolve(canonical), StandardCharsets.UTF_8);
 		JsonObject output = success();
-		output.addProperty("path", relative);
-		output.addProperty("width", image.getWidth());
-		output.addProperty("height", image.getHeight());
-		output.addProperty("message", "The requested image is attached to this tool result for visual inspection.");
-		return new ToolResult(output, null, null,
-				"data:image/png;base64," + Base64.getEncoder().encodeToString(bytes));
+		output.addProperty("path", canonical);
+		JsonObject texture = JsonParser.parseString(encoded).getAsJsonObject();
+		// Parse through the same record generated Java uses. This prevents arbitrary JSON from satisfying the mandatory
+		// reference-read receipt and proves every successful result really is the model's palette/rows format.
+		new DynamicTextureSpec(stringList(texture, "palette"), stringList(texture, "rows"));
+		for (var entry : texture.entrySet()) output.add(entry.getKey(), entry.getValue().deepCopy());
+		output.addProperty("representation", "text-only indexed texture: RRGGBBAA palette plus hexadecimal rows");
+		recordTextureReferenceRead(canonical);
+		return new ToolResult(output, null);
 	}
 
-	private ToolResult previewArmor(JsonObject arguments) throws Exception {
+	private ToolResult inspectArmorTexture(JsonObject arguments) throws Exception {
 		requireOnly(arguments);
-		if (!hasRequiredArmorReferenceInspection()) {
-			throw new IllegalArgumentException("Use view_image on both a vanilla armor item icon and a relevant entity/equipment/humanoid sheet before preview_armor");
-		}
-		previewedArmorSourceDigest = null;
+		inspectedArmorSourceDigest = null;
 		WorkspaceGenerationVerifier.VerifiedGeneration verified = WorkspaceGenerationVerifier.verify(workspace, request);
 		try {
 			if (verified.type() != DynamicContentType.ARMOR || verified.content().armorDisplayTexture() == null) {
-				throw new IllegalArgumentException("preview_armor is only available for a complete generated armor result");
+				throw new IllegalArgumentException(
+						"inspect_armor_texture is only available for a complete generated armor result");
 			}
-			byte[] bytes = EquippedArmorPreviewRenderer.render(
-					verified.content().armorDisplayTexture(), verified.content().armor().slot());
-			previewedArmorSourceDigest = verified.sourceDigest();
+			DynamicArmorSlot slot = verified.content().armor().slot();
+			if (!hasRequiredArmorReferenceReads(slot)) {
+				throw new IllegalArgumentException("Use read_texture on both a relevant vanilla "
+						+ slot.serializedName() + " armor item icon and its matching humanoid equipment layer before inspect_armor_texture");
+			}
+			inspectedArmorSourceDigest = verified.sourceDigest();
 			JsonObject output = success();
-			output.addProperty("kind", "equipped_armor_preview");
+			output.addProperty("kind", "equipped_armor_text_inspection");
 			output.addProperty("sourceDigest", verified.sourceDigest());
-			output.addProperty("width", EquippedArmorPreviewRenderer.WIDTH);
-			output.addProperty("height", EquippedArmorPreviewRenderer.HEIGHT);
-			output.addProperty("message", "Inspect the attached equipped views. Revise bad placement or shading, then call preview_armor again after the final edit before verify.");
-			return new ToolResult(output, null, null,
-					"data:image/png;base64," + Base64.getEncoder().encodeToString(bytes));
+			JsonObject inspection = EquippedArmorTextureInspector.inspect(
+					verified.content().armorDisplayTexture(), verified.content().armor().slot());
+			for (var entry : inspection.entrySet()) output.add(entry.getKey(), entry.getValue().deepCopy());
+			output.addProperty("message", "Inspect the exact palette keys and mapped rows. Revise bad placement or shading, then call inspect_armor_texture again after the final edit before verify.");
+			return new ToolResult(output, null);
 		} finally {
 			workspace.deleteSnapshot(verified.sourceSnapshot());
 		}
 	}
 
-	/** Validates PNG dimensions before allowing a full raster allocation. */
-	private static BufferedImage decodeBoundedPng(byte[] bytes) throws IOException {
-		if (bytes.length < 24 || bytes[0] != (byte) 0x89 || bytes[1] != 'P' || bytes[2] != 'N'
-				|| bytes[3] != 'G' || bytes[4] != '\r' || bytes[5] != '\n' || bytes[6] != 0x1A
-				|| bytes[7] != '\n' || unsignedInt(bytes, 8) != 13L
-				|| bytes[12] != 'I' || bytes[13] != 'H' || bytes[14] != 'D' || bytes[15] != 'R') {
-			throw new IllegalArgumentException("Image must be a valid PNG no larger than 512x512");
+	private static Path normalizedWorkspacePath(String relative) {
+		if (relative.indexOf('\\') >= 0) {
+			throw new IllegalArgumentException("Workspace paths must use forward slashes");
 		}
-		long headerWidth = unsignedInt(bytes, 16);
-		long headerHeight = unsignedInt(bytes, 20);
-		requireImageBounds(headerWidth, headerHeight);
-		try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
-			if (input == null) throw new IllegalArgumentException("Could not open PNG image input");
-			Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
-			if (!readers.hasNext()) throw new IllegalArgumentException("Image must be a valid PNG");
-			ImageReader reader = readers.next();
-			try {
-				reader.setInput(input, true, true);
-				int width = reader.getWidth(0);
-				int height = reader.getHeight(0);
-				requireImageBounds(width, height);
-				if (width != headerWidth || height != headerHeight) {
-					throw new IllegalArgumentException("PNG dimensions changed while reading image metadata");
-				}
-				BufferedImage image = reader.read(0);
-				if (image == null || image.getWidth() != width || image.getHeight() != height) {
-					throw new IllegalArgumentException("PNG decoder returned inconsistent dimensions");
-				}
-				return image;
-			} finally {
-				reader.dispose();
+		Path path = Path.of(relative);
+		if (path.isAbsolute()) throw new IllegalArgumentException("Path escapes the generation workspace");
+		Path normalized = path.normalize();
+		if (normalized.startsWith("..")) throw new IllegalArgumentException("Path escapes the generation workspace");
+		return normalized;
+	}
+
+	private static boolean isVanillaTexturePath(Path path) {
+		return path.getNameCount() >= 3
+				&& path.getName(0).toString().equals("reference")
+				&& path.getName(1).toString().equals("vanilla")
+				&& path.toString().endsWith(".json");
+	}
+
+	private static String canonicalTextureReference(String relative) {
+		Path normalized = normalizedWorkspacePath(relative);
+		String canonical = normalized.toString().replace(java.io.File.separatorChar, '/');
+		if (!relative.equals(canonical) || !isVanillaTexturePath(normalized)) {
+			throw new IllegalArgumentException(
+					"read_texture requires a canonical virtual JSON path under reference/vanilla with no '.', '..', or repeated separators");
+		}
+		return canonical;
+	}
+
+	private static List<String> stringList(JsonObject object, String name) {
+		if (!(object.get(name) instanceof JsonArray values)) {
+			throw new IllegalArgumentException("Texture reference is missing the " + name + " array");
+		}
+		List<String> strings = new ArrayList<>(values.size());
+		for (var value : values) {
+			if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+				throw new IllegalArgumentException("Texture reference " + name + " must contain only strings");
 			}
+			strings.add(value.getAsString());
 		}
+		return strings;
 	}
 
-	private static boolean isArmorItemReference(String reference) {
-		if (!reference.startsWith("item/") || !reference.endsWith(".json")) return false;
+	private static DynamicArmorSlot armorItemSlot(String reference) {
+		if (!reference.startsWith("item/") || !reference.endsWith(".json")) return null;
 		String id = reference.substring("item/".length(), reference.length() - ".json".length());
-		return id.endsWith("_helmet") || id.endsWith("_chestplate") || id.endsWith("_leggings")
-				|| id.endsWith("_boots") || id.equals("turtle_shell") || id.equals("elytra");
+		if (id.endsWith("_helmet") || id.equals("turtle_shell")) return DynamicArmorSlot.HEAD;
+		if (id.endsWith("_chestplate")) return DynamicArmorSlot.CHEST;
+		if (id.endsWith("_leggings")) return DynamicArmorSlot.LEGGINGS;
+		if (id.endsWith("_boots")) return DynamicArmorSlot.BOOTS;
+		return null;
 	}
 
-	private static void requireImageBounds(long width, long height) {
-		if (width < 1 || height < 1 || width > 512 || height > 512 || width * height > 512L * 512L) {
-			throw new IllegalArgumentException("Image must be a valid PNG no larger than 512x512");
+	private void recordTextureReferenceRead(String relative) {
+		String prefix = "reference/vanilla/";
+		if (!relative.startsWith(prefix)) return;
+		String reference = relative.substring(prefix.length());
+		if (reference.endsWith(".json")) readTextureReferences.add(reference);
+		DynamicArmorSlot itemSlot = armorItemSlot(reference);
+		if (itemSlot != null) readArmorItemSlots.add(itemSlot);
+		if (reference.startsWith("entity/equipment/humanoid/") && reference.endsWith(".json")) {
+			readArmorEquipmentSlots.addAll(
+					EnumSet.of(DynamicArmorSlot.HEAD, DynamicArmorSlot.CHEST, DynamicArmorSlot.BOOTS));
+		} else if (reference.startsWith("entity/equipment/humanoid_leggings/")
+				&& reference.endsWith(".json")) {
+			readArmorEquipmentSlots.add(DynamicArmorSlot.LEGGINGS);
 		}
-	}
-
-	private static long unsignedInt(byte[] bytes, int offset) {
-		return (long) (bytes[offset] & 0xFF) << 24 | (long) (bytes[offset + 1] & 0xFF) << 16
-				| (long) (bytes[offset + 2] & 0xFF) << 8 | bytes[offset + 3] & 0xFFL;
 	}
 
 	private ToolResult grep(JsonObject arguments) throws IOException {
@@ -465,14 +470,19 @@ final class GeneralistGenerationTools {
 			output.addProperty("category", rejection.category().serializedName());
 			output.addProperty("description", rejection.description());
 			output.addProperty("message", "The workstation recipe rejection was accepted.");
-			return new ToolResult(output, null, rejection);
+				return new ToolResult(output, null, rejection);
+			}
+		if (!hasReadTextureReference()) {
+			throw new IllegalArgumentException("Use read_texture to study at least one relevant installed texture's exact palette and rows before verifying generated artwork");
 		}
 		WorkspaceGenerationVerifier.VerifiedGeneration verified = WorkspaceGenerationVerifier.verify(workspace, request);
 		if (verified.type() == DynamicContentType.ARMOR) {
-			if (!hasRequiredArmorReferenceInspection()
-					|| !verified.sourceDigest().equals(previewedArmorSourceDigest)) {
+			DynamicArmorSlot slot = verified.content().armor().slot();
+			if (!hasRequiredArmorReferenceReads(slot)
+					|| !verified.sourceDigest().equals(inspectedArmorSourceDigest)) {
 				workspace.deleteSnapshot(verified.sourceSnapshot());
-				throw new IllegalArgumentException("Use view_image on a vanilla armor item and humanoid equipment sheet, then call preview_armor after the final armor edit, inspect the attached views, and call verify without changing source");
+				throw new IllegalArgumentException("Use read_texture on a relevant " + slot.serializedName()
+						+ " armor item and its matching humanoid equipment layer, then call inspect_armor_texture after the final armor edit, inspect its textual palette/row mappings, and call verify without changing source");
 			}
 		}
 		workspace.stage(verified);
@@ -485,12 +495,16 @@ final class GeneralistGenerationTools {
 		return new ToolResult(output, verified);
 	}
 
-	boolean hasRequiredArmorReferenceInspection() {
-		return viewedArmorItemReference && viewedArmorEquipmentReference;
+	boolean hasRequiredArmorReferenceReads(DynamicArmorSlot slot) {
+		return readArmorItemSlots.contains(slot) && readArmorEquipmentSlots.contains(slot);
 	}
 
-	boolean hasTrustedArmorPreview(String sourceDigest) {
-		return sourceDigest != null && sourceDigest.equals(previewedArmorSourceDigest);
+	boolean hasReadTextureReference() {
+		return !readTextureReferences.isEmpty();
+	}
+
+	boolean hasTrustedArmorInspection(String sourceDigest) {
+		return sourceDigest != null && sourceDigest.equals(inspectedArmorSourceDigest);
 	}
 
 	private static List<Path> files(Path start) throws IOException {
@@ -640,48 +654,23 @@ final class GeneralistGenerationTools {
 		return schema;
 	}
 
+	/**
+	 * Generation tool results are deliberately text-only. In particular, do not add image/data-URL fields here: every
+	 * texture the model studies must cross the model boundary as the same RRGGBBAA palette plus hexadecimal rows that it
+	 * authors in generated Java. This keeps reference inspection and authored output in one exact representation.
+	 */
 	record ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified,
-			com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection rejection, String imageDataUrl) {
+			com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection rejection) {
 		ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified) {
-			this(output, verified, null, null);
-		}
-
-		ToolResult(JsonObject output, WorkspaceGenerationVerifier.VerifiedGeneration verified,
-				com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection rejection) {
-			this(output, verified, rejection, null);
+			this(output, verified, null);
 		}
 
 		JsonElement responseOutput() {
-			if (imageDataUrl == null) return new JsonPrimitive(output.toString());
-			JsonArray parts = new JsonArray();
-			JsonObject text = new JsonObject();
-			text.addProperty("type", "input_text");
-			text.addProperty("text", output.toString());
-			parts.add(text);
-			JsonObject image = new JsonObject();
-			image.addProperty("type", "input_image");
-			image.addProperty("image_url", imageDataUrl);
-			image.addProperty("detail", "high");
-			parts.add(image);
-			return parts;
+			return new JsonPrimitive(output.toString());
 		}
 
 		JsonElement exocortexContent() {
-			if (imageDataUrl == null) return new JsonPrimitive(output.toString());
-			JsonArray parts = new JsonArray();
-			JsonObject text = new JsonObject();
-			text.addProperty("type", "text");
-			text.addProperty("text", output.toString());
-			parts.add(text);
-			JsonObject source = new JsonObject();
-			source.addProperty("type", "base64");
-			source.addProperty("media_type", "image/png");
-			source.addProperty("data", imageDataUrl.substring(imageDataUrl.indexOf(',') + 1));
-			JsonObject image = new JsonObject();
-			image.addProperty("type", "image");
-			image.add("source", source);
-			parts.add(image);
-			return parts;
+			return new JsonPrimitive(output.toString());
 		}
 	}
 }
