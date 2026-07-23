@@ -739,7 +739,7 @@ public final class GenerationWorkspace implements AutoCloseable {
 			guessing signatures. Common definition classes are in `com.yeyito.littlechemistry.content`: `GeneratedContentSpec`,
 			`DynamicTextureSpec`, `DynamicBlockProperties`, `DynamicItemProperties`, `DynamicArmorProperties`,
 			`DynamicArmorDisplayTextureSpec`, `DynamicEntityProperties`, `DynamicBlockModel`, `DynamicEntityModel`,
-			`DynamicParticleDefinition`, `DynamicItemVisuals`, `DynamicItemTexture`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
+				`DynamicParticleDefinition`, `DynamicItemVisuals`, `DynamicItemTexture`, `DynamicStorageSpec`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
 			`DynamicTool`, `DynamicBlockShape`, `DynamicItemType`, `DynamicHeldType`, `DynamicArmorSlot`,
 			`DynamicEntityMovement`, and `DynamicEntityDisposition`.
 
@@ -760,8 +760,23 @@ public final class GenerationWorkspace implements AutoCloseable {
 			transactions, block opening, automation integration, and the aqua `AI Workstation` item-tooltip marker whenever the
 			persisted definition has a non-null workstation spec. Generated code must use that capability rather than imitating
 			a workstation through tooltip text or ordinary use callbacks. Read `DynamicWorkstationSpec`, its slot/UI records,
-			`WorkstationBehavior`, `WorkstationTickBehavior`, `DynamicWorkstationContext`, and `WorkstationRecipeRequest` from the
-			class index before constructing them.
+				`WorkstationBehavior`, `WorkstationTickBehavior`, `DynamicWorkstationContext`, and `WorkstationRecipeRequest` from the
+				class index before constructing them.
+
+				Workstation block models must contain at least one visibly distinct active texture named `<baseTextureId>_active`.
+				The engine automatically selects visual state `active` while machine inventory or processing is present. Generated
+				workstation behavior may also use `DynamicWorkstationContext.state()` for other synchronized persistent visual state.
+
+				## Native generated storage and block visual state
+				Attach `new DynamicStorageSpec(rows)` with `GeneratedContentBuilder.storage(...)` to an ordinary block or a regular-held,
+				max-stack-one item. The engine supplies persistent contents, a native one-to-six-row chest menu, nesting protection,
+				container drops, and presentation. Backpacks/satchels/bags should use portable item storage rather than armor; cabinets,
+				cupboards/crates/barrels/lockers should use block storage. Storage block models need a `<baseTextureId>_open` texture.
+				The engine selects `open` while the menu is viewed. Do not implement fake open sounds or custom inventory menus.
+
+				Ordinary placed-block callbacks can call `DynamicPlacedBlockUseContext.persistentState()`; workstation callbacks can call
+				`DynamicWorkstationContext.state()`. Setting key `visual` to `foo` substitutes any authored model texture named
+				`<baseTextureId>_foo`, with base-texture fallback. Other values in `DynamicBlockState` are bounded, persisted, and synced.
 
 			A typical factory returns:
 			```
@@ -783,15 +798,19 @@ public final class GenerationWorkspace implements AutoCloseable {
 			`DynamicItemVisuals` with `GeneratedContentBuilder.itemVisuals(...)`; create each state with
 			`GeneratedContentApi.itemTexture(id, texture)`. Bows require `pulling_0`, `pulling_1`, and `pulling_2`. Crossbows require
 			those plus `charged` and `charged_firework`. Every 16x16 frame must be visibly distinct from the base and every other
-			frame. Read vanilla state textures with `read_texture` and work directly from their palettes and indexed rows rather
-			than guessing their silhouettes.
+				frame. Read vanilla state textures with `read_texture` and work directly from their palettes and indexed rows rather
+				than guessing their silhouettes. Native firing remains authoritative, but generated bows/crossbows must implement
+				`ProjectileCreatedBehavior` and/or `ProjectileImpactBehavior` so their concept affects actual launched shots. The creation
+				hook may mutate the vanilla projectile or return a compatible replacement; the impact hook handles the common native
+				collision path. Inventory/crafting particles are not a substitute for shot behavior.
 
 			## Text-only texture inspection
 			All model-facing texture data is deliberately textual. `read_texture` returns installed artwork as the exact RRGGBBAA
-			palette and hexadecimal row format used by `DynamicTextureSpec`; no PNG or vision attachment is available. For generated
-			armor, `inspect_armor_texture` compiles the current source and returns the authored 64x32 palette/rows plus faithful
-			front/back/side mappings in that same indexed format. Inspect and revise those rows. `verify` accepts armor only when
-			`inspect_armor_texture` was called after the final source edit, and accepts any generated content only after at least one
-			relevant texture was actually read through the textual reference interface.
+				palette and hexadecimal row format used by `DynamicTextureSpec`; no PNG or vision attachment is available. Installed
+				sources larger than 64 pixels are coordinate-labelled textual tiles in that same format. `inspect_generated_textures`
+				compiles current source and returns every authored base/state/model/particle texture as palettes/rows; armor also includes
+				faithful front/back/side mappings. Inspect and revise those rows, then call the tool again on unchanged source with a
+				concrete `assessment`. `verify` accepts content only after that acknowledged final inspection and after the required
+				native, ingredient, and armor references were read textually.
 			""";
 }

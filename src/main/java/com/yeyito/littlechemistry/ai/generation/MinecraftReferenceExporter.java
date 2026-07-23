@@ -52,7 +52,7 @@ final class MinecraftReferenceExporter {
 						.forEach(entries::add);
 			}
 		}
-		entries = entries.stream().distinct().sorted().toList();
+		entries = entries.stream().distinct().sorted().map(path -> "reference/vanilla/" + path).toList();
 		Files.createDirectories(vanillaRoot);
 		write(vanillaRoot.resolve("TEXTURES.txt"), String.join("\n", entries) + "\n");
 		List<String> guiSprites = DynamicWorkstationSlotIcon.availableIds().stream()
@@ -63,10 +63,10 @@ final class MinecraftReferenceExporter {
 
 				Search TEXTURES.txt, then use read_texture on the matching virtual JSON path under this directory. Installed
 				source PNGs are decoded only inside the game and are never sent to the model. Item and block textures are
-				normalized to an indexed 16x16 first frame. Entity/equipment artwork keeps its installed dimensions when they
-				fit Little Chemistry's 1-64 pixel representation. The materialized JSON contains an RRGGBBAA palette and rows
-				of hexadecimal palette indices: exactly the representation generated Java must author. Preserve UV island
-				positions when reusing an animated entity profile or humanoid equipment sheet.
+					normalized to an indexed 16x16 first frame. Entity/equipment artwork keeps its installed dimensions. A source
+					larger than 64 pixels is split into coordinate-labelled 64x64-or-smaller tiles. Every complete texture or tile
+					contains an RRGGBBAA palette and rows of hexadecimal palette indices: exactly the representation generated Java
+					must author. Preserve UV island positions when reusing an entity profile or humanoid equipment sheet.
 				""");
 	}
 
@@ -79,25 +79,46 @@ final class MinecraftReferenceExporter {
 		BufferedImage source = read(pngRelative);
 		boolean sampled = normalized.startsWith("item/") || normalized.startsWith("block/");
 		BufferedImage image = sampled ? sample16(source) : source;
-		if (image.getWidth() < 1 || image.getWidth() > 64 || image.getHeight() < 1 || image.getHeight() > 64) {
-			throw new IOException("Installed texture is outside the supported 1-64 pixel dimensions: "
+		if (image.getWidth() < 1 || image.getWidth() > 256 || image.getHeight() < 1 || image.getHeight() > 256) {
+			throw new IOException("Installed texture is outside the supported 1-256 pixel reference dimensions: "
 					+ image.getWidth() + "x" + image.getHeight());
 		}
-		DynamicTextureSpec indexed = encode(image);
 		JsonObject output = new JsonObject();
 		output.addProperty("source", "minecraft:" + normalized.substring(0, normalized.length() - 5));
 		output.addProperty("sourceWidth", source.getWidth());
 		output.addProperty("sourceHeight", source.getHeight());
-		output.addProperty("width", indexed.width());
-		output.addProperty("height", indexed.height());
+		output.addProperty("width", image.getWidth());
+		output.addProperty("height", image.getHeight());
 		output.addProperty("sampledRegion", sampled ? "first square frame normalized to 16x16" : "complete texture");
+		if (image.getWidth() <= 64 && image.getHeight() <= 64) {
+			appendIndexed(output, encode(image));
+		} else {
+			JsonArray tiles = new JsonArray();
+			for (int y = 0; y < image.getHeight(); y += 64) for (int x = 0; x < image.getWidth(); x += 64) {
+				int width = Math.min(64, image.getWidth() - x);
+				int height = Math.min(64, image.getHeight() - y);
+				JsonObject tile = new JsonObject();
+				tile.addProperty("x", x);
+				tile.addProperty("y", y);
+				tile.addProperty("width", width);
+				tile.addProperty("height", height);
+				appendIndexed(tile, encode(image.getSubimage(x, y, width, height)));
+				tiles.add(tile);
+			}
+			output.add("tiles", tiles);
+			output.addProperty("tileRepresentation",
+					"each coordinate-labelled tile is an exact RRGGBBAA palette plus hexadecimal rows");
+		}
+		return GSON.toJson(output);
+	}
+
+	private static void appendIndexed(JsonObject output, DynamicTextureSpec indexed) {
 		JsonArray palette = new JsonArray();
 		indexed.palette().forEach(palette::add);
 		output.add("palette", palette);
 		JsonArray rows = new JsonArray();
 		indexed.rows().forEach(rows::add);
 		output.add("rows", rows);
-		return GSON.toJson(output);
 	}
 
 	private static ModContainer minecraft() throws IOException {

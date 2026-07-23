@@ -9,6 +9,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.Item;
@@ -72,6 +73,13 @@ final class DynamicBowCarrierItem extends BowItem implements DynamicItemCarrier 
 		DynamicProjectileCarrierHooks.crafted(stack, player);
 	}
 
+	@Override protected Projectile createProjectile(Level level, LivingEntity shooter, ItemStack weapon,
+			ItemStack ammunition, boolean critical) {
+		return DynamicProjectileCarrierHooks.projectileCreated(
+				super.createProjectile(level, shooter, weapon, ammunition, critical),
+				level, shooter, weapon, ammunition, critical);
+	}
+
 	@Override public Component getName(ItemStack stack) {
 		return DynamicProjectileCarrierHooks.name(stack);
 	}
@@ -131,6 +139,13 @@ final class DynamicCrossbowCarrierItem extends CrossbowItem implements DynamicIt
 	@Override public void onCraftedBy(ItemStack stack, Player player) {
 		super.onCraftedBy(stack, player);
 		DynamicProjectileCarrierHooks.crafted(stack, player);
+	}
+
+	@Override protected Projectile createProjectile(Level level, LivingEntity shooter, ItemStack weapon,
+			ItemStack ammunition, boolean critical) {
+		return DynamicProjectileCarrierHooks.projectileCreated(
+				super.createProjectile(level, shooter, weapon, ammunition, critical),
+				level, shooter, weapon, ammunition, critical);
 	}
 
 	@Override public Component getName(ItemStack stack) {

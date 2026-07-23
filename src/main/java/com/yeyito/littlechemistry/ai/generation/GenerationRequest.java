@@ -19,20 +19,26 @@ record GenerationRequest(
 ) {
 	private static final Gson PRETTY_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String TEXTURE_DIRECTION = """
-			Always base the visual design on installed vanilla textures. Before creating any texture, search the
-			reference indexes and call read_texture on relevant virtual JSON paths. Study the exact RRGGBBAA palette and hexadecimal
-			pixel rows directly, then create original indexed artwork grounded in those references. Final verification requires a
-			real texture-reference read. Texture inputs are deliberately text-only and use the same palette/rows representation your
-			generated Java must submit; do not infer art from filenames.
+			Always derive the visual design from installed vanilla textures. Before coding pixels, search the reference indexes and
+			call read_texture on the closest vanilla carrier/model and on every visually meaningful Minecraft ingredient. For a
+			boat-like concept, inspect both the boat item and entity/boat sheet; for animated/native items, inspect every vanilla
+			state frame. Large references arrive as coordinate-labelled textual tiles. Copy the closest reference's palette/row
+			silhouette into source first, then make deliberate ingredient-specific pixel edits; do not redraw from memory or infer art
+			from filenames. After all pixels are final, call inspect_generated_textures, compare every returned palette/row texture
+			and state against the references, and revise weak silhouettes, UV placement, theme detail, or animation progression.
+			Call it again after the last source edit with a concrete `assessment` of the returned rows, palette, silhouette, UVs, and
+			state frames, then verify without changing source. All texture I/O is deliberately text-only
+			and uses the same indexed palette/rows representation generated Java must submit; no raster image is shown to the model.
 			""";
 	private static final String ARMOR_DIRECTION = """
 			If the result is armor, inspect reference/vanilla/TEXTURES.txt and use read_texture on at least one relevant vanilla
 			armor item icon and its matching humanoid equipment layer before coding. Author both the original 16x16 inventory icon
-			and the required 64x32 equipment sheet using Minecraft's actual armor UV layout. For head armor, explicitly study and paint
-			the base-head UV region at x=0..31, y=0..15 and hat/outer-head region at x=32..63, y=0..15 so the worn helmet
-			renders on the player's head instead of only in the inventory. After the texture is complete, call inspect_armor_texture
+			and the required 64x32 equipment sheet using Minecraft's actual armor UV layout. For a close-fitting helmet, paint the
+			base-head region x=0..31,y=0..15 and optional outer detail x=32..63,y=0..15. For a crown, wreath, hood trim, or other
+			head accessory, leave unrelated base-head faces transparent and deliberately use the outer-head region instead of turning
+			the accessory into a solid cap. After the texture is complete, call inspect_generated_textures
 			and inspect its textual front, back, and side palette/row mappings. Revise misplaced, sparse, noisy, or incoherent artwork
-			and call inspect_armor_texture again after the final source edit; final verify rejects armor not inspected at that digest.
+			and call inspect_generated_textures again after the final source edit; final verify rejects artwork not inspected at that digest.
 			Remember that texture-only vanilla armor cannot create a broad hat brim or a backpack with real depth, so design a
 			coherent texture for the available humanoid shell rather than implying unsupported geometry.
 			""";
@@ -55,7 +61,23 @@ record GenerationRequest(
 			`charged_firework`. Create each state with
 			`GeneratedContentApi.itemTexture` so its persisted hash is exact.
 			The registered native carrier supplies vanilla drawing, charging, ammunition, firing, sounds, enchantments, and
-			standard durability; do not reimplement those mechanics in generated behavior.
+			standard durability; do not reimplement those mechanics in generated behavior. The concept must nevertheless affect an
+			actual shot: implement ProjectileCreatedBehavior and/or ProjectileImpactBehavior to mutate/replace the native projectile
+			or apply a bounded concept-specific impact. Crafted or inventory particles alone are not projectile behavior.
+			""";
+	private static final String STORAGE_AND_BLOCK_STATE_DIRECTION = """
+			Storage is a first-class native capability. Backpacks, satchels, bags, and portable cases should normally be ordinary
+			regular-held maxStack-1 items with `storage(new DynamicStorageSpec(rows))`, not armor; only classify one as armor if the
+			request explicitly asks for wearable protective equipment. Cabinets, cupboards, chests, crates, barrels, and lockers
+			should normally be generated blocks with storage. The engine supplies persistent contents, native chest menus, slot rules,
+			drops, and a storage tooltip; generated behavior must not fake opening with sounds or hand-roll a menu.
+
+			Placed blocks can use `context.persistentState()` (or workstation `context.state()`) for bounded persistent synchronized
+			state. Set key `visual` to select model texture variants named `<baseTextureId>_<state>`, with automatic fallback to the
+			base texture. Author `*_open` variants for openable storage and `*_active` variants for workstation/machine blocks. New
+			workstations must include visibly distinct active variants; the engine selects `active` automatically while inventory or
+			processing is present. Do not promise that a block opens, processes, or changes visually unless its native capability,
+			state mutation, and matching model variants actually implement that promise.
 			""";
 
 	GenerationRequest {
@@ -142,7 +164,8 @@ record GenerationRequest(
 						+ "`<category>/<id>/C_<id>_Content.java` with package `<category>.c_<id>`, plus the sibling "
 						+ "`GeneratedBehaviorImpl.java`. The process and every ingredient must materially influence identity, "
 						+ "pixels, native properties, and behavior.\n\n");
-			prompt.append(ARMOR_DIRECTION).append(WORKSTATION_DIRECTION).append(PROJECTILE_WEAPON_DIRECTION).append('\n');
+				prompt.append(ARMOR_DIRECTION).append(WORKSTATION_DIRECTION).append(PROJECTILE_WEAPON_DIRECTION)
+						.append(STORAGE_AND_BLOCK_STATE_DIRECTION).append('\n');
 		} else {
 			String kind = switch (fixedType) {
 				case ITEM -> "item";
@@ -180,7 +203,8 @@ record GenerationRequest(
 			}
 			if (fixedType == DynamicContentType.ARMOR) prompt.append(ARMOR_DIRECTION).append('\n');
 			if (fixedType == DynamicContentType.BLOCK) prompt.append(WORKSTATION_DIRECTION).append('\n');
-			if (fixedType == DynamicContentType.ITEM) prompt.append(PROJECTILE_WEAPON_DIRECTION).append('\n');
+				if (fixedType == DynamicContentType.ITEM) prompt.append(PROJECTILE_WEAPON_DIRECTION).append('\n');
+				prompt.append(STORAGE_AND_BLOCK_STATE_DIRECTION).append('\n');
 		}
 		prompt.append(TEXTURE_DIRECTION);
 		if (workstationPolicy != null) {

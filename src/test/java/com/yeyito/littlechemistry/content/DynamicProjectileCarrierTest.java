@@ -2,6 +2,8 @@ package com.yeyito.littlechemistry.content;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
+import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.Rarity;
@@ -33,6 +35,31 @@ final class DynamicProjectileCarrierTest {
 		assertEquals(DynamicCrossbowCarrierItem.class, DynamicContentObjects.carrierClassFor(DynamicHeldType.CROSSBOW));
 		assertEquals(384, DynamicHeldType.BOW.nativeDurability());
 		assertEquals(465, DynamicHeldType.CROSSBOW.nativeDurability());
+		assertTrue(java.util.Arrays.stream(DynamicBowCarrierItem.class.getDeclaredMethods())
+				.anyMatch(method -> method.getName().equals("createProjectile")));
+		assertTrue(java.util.Arrays.stream(DynamicCrossbowCarrierItem.class.getDeclaredMethods())
+				.anyMatch(method -> method.getName().equals("createProjectile")));
+	}
+
+	@Test
+	void generatedShotLifecycleCapabilitiesAreDiscoverableFromSource() {
+		String source = """
+				public final class GeneratedBehaviorImpl implements
+				    com.yeyito.littlechemistry.behavior.ProjectileCreatedBehavior,
+				    com.yeyito.littlechemistry.behavior.ProjectileImpactBehavior {
+				  public net.minecraft.world.entity.projectile.Projectile projectileCreated(
+				      com.yeyito.littlechemistry.behavior.DynamicProjectileContext context) {
+				    return context.vanillaProjectile();
+				  }
+				  public void projectileImpact(net.minecraft.server.level.ServerLevel level,
+				      net.minecraft.world.entity.projectile.Projectile projectile,
+				      net.minecraft.world.phys.HitResult hit,
+				      com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}
+				}
+				""";
+
+		assertTrue(DynamicBehaviorSource.supports(source, DynamicBehaviorCapability.PROJECTILE_CREATED));
+		assertTrue(DynamicBehaviorSource.supports(source, DynamicBehaviorCapability.PROJECTILE_IMPACT));
 	}
 
 	@Test

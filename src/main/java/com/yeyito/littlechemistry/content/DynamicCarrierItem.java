@@ -11,6 +11,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
@@ -26,9 +27,12 @@ import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.MenuType;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Locale;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 public final class DynamicCarrierItem extends Item implements DynamicItemCarrier {
@@ -102,6 +106,23 @@ public final class DynamicCarrierItem extends Item implements DynamicItemCarrier
 	public InteractionResult use(Level level, Player player, InteractionHand hand) {
 		ItemStack stack = player.getItemInHand(hand);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
+		if (definition != null && definition.storage() != null) {
+			if (level.isClientSide()) return InteractionResult.SUCCESS;
+			if (player instanceof ServerPlayer serverPlayer) {
+				DynamicStorageSpec storage = definition.storage();
+				int inventorySlot = hand == InteractionHand.OFF_HAND
+						? net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND
+						: serverPlayer.getInventory().getSelectedSlot();
+				UUID storageId = uniqueStorageId(serverPlayer, stack);
+				DynamicItemStorageContainer container = new DynamicItemStorageContainer(
+						serverPlayer, storageId, inventorySlot, storage.slots());
+				serverPlayer.openMenu(new SimpleMenuProvider(
+						(id, inventory, ignored) -> new DynamicItemStorageMenu(menuType(storage.rows()), id,
+								inventory, container, storage.rows(), inventorySlot),
+						DynamicContentObjects.displayName(definition)));
+				return InteractionResult.CONSUME;
+			}
+		}
 		if (definition != null && DynamicBehaviorSource.supports(
 				definition.behaviorSource(), DynamicBehaviorCapability.USE_AIR)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
@@ -112,6 +133,35 @@ public final class DynamicCarrierItem extends Item implements DynamicItemCarrier
 			}
 		}
 		return super.use(level, player, hand);
+	}
+
+	private static UUID uniqueStorageId(ServerPlayer player, ItemStack carrier) {
+		UUID id = carrier.get(DynamicContentObjects.STORAGE_ID);
+		if (id != null && countStorageId(player, id) == 1) return id;
+		do id = UUID.randomUUID(); while (countStorageId(player, id) != 0);
+		carrier.set(DynamicContentObjects.STORAGE_ID, id);
+		player.getInventory().setChanged();
+		return id;
+	}
+
+	private static int countStorageId(ServerPlayer player, UUID id) {
+		int count = 0;
+		for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+			if (id.equals(player.getInventory().getItem(slot).get(DynamicContentObjects.STORAGE_ID))) count++;
+		}
+		return count;
+	}
+
+	private static MenuType<ChestMenu> menuType(int rows) {
+		return switch (rows) {
+			case 1 -> MenuType.GENERIC_9x1;
+			case 2 -> MenuType.GENERIC_9x2;
+			case 3 -> MenuType.GENERIC_9x3;
+			case 4 -> MenuType.GENERIC_9x4;
+			case 5 -> MenuType.GENERIC_9x5;
+			case 6 -> MenuType.GENERIC_9x6;
+			default -> throw new IllegalArgumentException("Unsupported storage row count");
+		};
 	}
 
 	@Override
@@ -185,7 +235,11 @@ public final class DynamicCarrierItem extends Item implements DynamicItemCarrier
 		if (definition != null && !definition.description().isBlank()) {
 			DynamicTooltipText.appendWrapped(builder, definition.description(), ChatFormatting.GRAY);
 		}
-		if (definition != null && definition.item() != null) {
+			if (definition != null && definition.item() != null) {
+				if (definition.storage() != null) {
+					builder.accept(Component.literal("Storage: " + definition.storage().slots() + " slots")
+							.withStyle(ChatFormatting.DARK_GRAY));
+				}
 			switch (definition.item().craftingUse()) {
 				case KEEP -> builder.accept(Component.literal("Not consumed when used in crafting")
 						.withStyle(ChatFormatting.DARK_GRAY));

@@ -71,7 +71,7 @@ final class GeneralistGenerationToolsTest {
 		Set<String> names = new HashSet<>();
 		definitions.forEach(element -> names.add(element.getAsJsonObject().get("name").getAsString()));
 
-		assertEquals(Set.of("bash", "read", "read_texture", "inspect_armor_texture",
+		assertEquals(Set.of("bash", "read", "read_texture", "inspect_generated_textures",
 				"grep", "glob", "write", "edit", "patch", "verify"), names);
 		assertFalse(names.contains("view_image"));
 		assertFalse(names.contains("preview_armor"));
@@ -188,6 +188,29 @@ final class GeneralistGenerationToolsTest {
 			assertTrue(tools.execute("read_texture", leggingsLayer).output().get("ok").getAsBoolean());
 			assertTrue(tools.hasRequiredArmorReferenceReads(
 					com.yeyito.littlechemistry.content.DynamicArmorSlot.LEGGINGS));
+		}
+	}
+
+	@Test
+	void largeVanillaUvSheetsRemainAvailableAsTextualIndexedTiles() throws Exception {
+		Path world = temporaryDirectory.resolve("large-reference-world");
+		Path job = temporaryDirectory.resolve("large-reference-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.fixed(DynamicContentType.ITEM, null, "Boat Study", 1, null));
+			JsonObject arguments = new JsonObject();
+			arguments.addProperty("path", "reference/vanilla/entity/boat/oak.json");
+
+			JsonObject output = tools.execute("read_texture", arguments).output();
+
+			assertTrue(output.get("ok").getAsBoolean(), output.toString());
+			assertTrue(output.has("tiles"), output.toString());
+			assertEquals(2, output.getAsJsonArray("tiles").size());
+			for (var tile : output.getAsJsonArray("tiles")) {
+				assertTrue(tile.getAsJsonObject().has("palette"));
+				assertTrue(tile.getAsJsonObject().has("rows"));
+			}
+			assertFalse(output.toString().contains("image/png"));
 		}
 	}
 

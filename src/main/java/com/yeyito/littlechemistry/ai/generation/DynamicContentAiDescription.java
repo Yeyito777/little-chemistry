@@ -104,7 +104,13 @@ public final class DynamicContentAiDescription {
 			customParticles.add(encoded);
 		}
 		result.add("customParticles", customParticles);
-		result.addProperty("isWorkstation", definition.workstation() != null);
+			result.addProperty("isWorkstation", definition.workstation() != null);
+			if (definition.storage() != null) {
+				JsonObject storage = new JsonObject();
+				storage.addProperty("rows", definition.storage().rows());
+				storage.addProperty("slots", definition.storage().slots());
+				result.add("storage", storage);
+			}
 		if (definition.workstation() != null) {
 			JsonObject workstation = new JsonObject();
 			workstation.addProperty("processDescription", definition.workstation().processDescription());

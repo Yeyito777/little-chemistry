@@ -54,6 +54,11 @@ public final class DynamicWorkstationContext {
 		return definition;
 	}
 
+	/** Persistent placed-block state. Set key {@code visual} to select authored {@code *_<state>} model textures. */
+	public DynamicBlockState state() {
+		return DynamicBlockState.at(level, position);
+	}
+
 	public Set<String> slotIds() {
 		Set<String> result = new LinkedHashSet<>();
 		for (String slotId : runtime.slotIds()) {

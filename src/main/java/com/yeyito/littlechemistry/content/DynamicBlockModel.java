@@ -51,6 +51,21 @@ public record DynamicBlockModel(
 		throw new IllegalArgumentException("Unknown block model texture: " + id);
 	}
 
+	public DynamicBlockTexture findTexture(String id) {
+		for (DynamicBlockTexture texture : textures) if (texture.id().equals(id)) return texture;
+		return null;
+	}
+
+	/** IDs actually assigned to faces; state-variant assets need not themselves be assigned to a face. */
+	public Set<String> referencedTextureIds() {
+		Set<String> result = new HashSet<>();
+		faces.values().forEach(face -> result.add(face.texture()));
+		for (DynamicBlockModelElement element : elements) {
+			element.faces().values().forEach(face -> result.add(face.texture()));
+		}
+		return Set.copyOf(result);
+	}
+
 	public DynamicBlockTexture particleTextureAsset() {
 		return texture(particleTexture);
 	}

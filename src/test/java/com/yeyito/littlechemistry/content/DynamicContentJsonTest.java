@@ -55,7 +55,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(22, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(23, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
@@ -444,7 +444,7 @@ class DynamicContentJsonTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 9, List.of(workstation, entity));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(22, decoded.format());
+		assertEquals(23, decoded.format());
 		assertEquals(2, decoded.definitions().size());
 		assertEquals("separator", decoded.definitions().get(0).name());
 		assertTrue(decoded.definitions().get(0).workstation().recipeDataSchema()

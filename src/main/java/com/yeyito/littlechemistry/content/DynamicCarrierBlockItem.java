@@ -53,6 +53,10 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 			builder.accept(Component.translatable("tooltip.little_chemistry.workstation")
 					.withStyle(ChatFormatting.AQUA));
 		}
+		if (definition != null && definition.storage() != null) {
+			builder.accept(Component.literal("Storage: " + definition.storage().slots() + " slots")
+					.withStyle(ChatFormatting.DARK_GRAY));
+		}
 		if (definition != null && definition.block() != null) {
 			for (int index = 0; index < definition.block().drops().entries().size(); index++) {
 				DynamicDropEntry entry = definition.block().drops().entries().get(index);

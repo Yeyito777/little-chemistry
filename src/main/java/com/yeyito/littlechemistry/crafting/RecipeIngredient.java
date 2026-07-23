@@ -29,6 +29,9 @@ public final class RecipeIngredient {
 			normalized.remove(PortableCraftingComponents.STATE);
 			normalized.remove(DataComponents.CONTAINER);
 		}
+		if (com.yeyito.littlechemistry.content.DynamicContentObjects.STORAGE_ID != null) {
+			normalized.remove(com.yeyito.littlechemistry.content.DynamicContentObjects.STORAGE_ID);
+		}
 		return normalized;
 	}
 

@@ -30,6 +30,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.ContainerUser;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.WorldlyContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -59,12 +60,15 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 			Codec.unboundedMap(Codec.STRING, Codec.LONG);
 	private static final Codec<Map<String, Integer>> UI_STATE_CODEC =
 			Codec.unboundedMap(Codec.STRING, Codec.INT);
+	private static final Codec<Map<String, String>> GENERATED_STATE_CODEC =
+			Codec.unboundedMap(Codec.STRING, Codec.STRING);
 	private static final Set<DynamicBlockEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 
 	private Identifier contentId;
 	private NonNullList<ItemStack> workstationItems = NonNullList.withSize(MAX_SLOTS, ItemStack.EMPTY);
 	private final Map<String, Long> persistentState = new LinkedHashMap<>();
 	private final Map<String, Integer> uiState = new LinkedHashMap<>();
+	private final Map<String, String> generatedState = new LinkedHashMap<>();
 	private @Nullable WorkstationRecipeRequest currentRequest;
 	private @Nullable WorkstationRecipeSignature currentSignature;
 	private @Nullable AiWorkstationRecipe currentRecipe;
@@ -72,6 +76,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	private boolean recipeDirty = true;
 	private boolean capturingRecipe;
 	private boolean evaluatingSlotRule;
+	private int storageOpeners;
 
 	public DynamicBlockEntity(BlockPos position, BlockState state) {
 		super(DynamicContentObjects.BLOCK_ENTITY_TYPE, position, state);
@@ -92,6 +97,13 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	public boolean isWorkstation() {
 		return workstationDefinition() != null;
 	}
+
+	public DynamicContentDefinition storageDefinition() {
+		DynamicContentDefinition definition = contentId == null ? null : DynamicContentCatalog.find(contentId);
+		return definition != null && definition.storage() != null ? definition : null;
+	}
+
+	public boolean isStorage() { return storageDefinition() != null; }
 
 	public DynamicWorkstationContext workstationContext() {
 		if (!(level instanceof ServerLevel serverLevel)) {
@@ -147,6 +159,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		if (definition == null) return;
 		entity.ensureWorkstationState(definition.workstation());
 		entity.refreshRecipe();
+		entity.updateAutomaticWorkstationVisual();
 		if (!entity.isWorkstationLocked()) {
 			DynamicBehaviorRegistry.workstationTick(definition, entity.workstationContext());
 		}
@@ -363,6 +376,45 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		setChanged();
 	}
 
+	public @Nullable String generatedState(String key) {
+		if (!validRuntimeKey(key)) throw new IllegalArgumentException("Invalid generated block state key");
+		return generatedState.get(key);
+	}
+
+	public Map<String, String> generatedStateSnapshot() { return Map.copyOf(generatedState); }
+
+	public void setGeneratedState(String key, @Nullable String value) {
+		assertRuntimeMutable();
+		if (!validRuntimeKey(key)) throw new IllegalArgumentException("Invalid generated block state key");
+		if (value != null && (value.length() > 1_024 || value.indexOf('\0') >= 0)) {
+			throw new IllegalArgumentException("Generated block state values may contain at most 1024 characters");
+		}
+		if (value != null && !generatedState.containsKey(key) && generatedState.size() >= MAX_PERSISTENT_KEYS) {
+			throw new IllegalArgumentException("Generated block state exceeds its key budget");
+		}
+		String previous = value == null ? generatedState.remove(key) : generatedState.put(key, value);
+		if (generatedState.toString().length() > 16_384) {
+			if (previous == null) generatedState.remove(key); else generatedState.put(key, previous);
+			throw new IllegalArgumentException("Generated block state exceeds its encoded size budget");
+		}
+		if (java.util.Objects.equals(previous, value)) return;
+		super.setChanged();
+		if (level != null) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+	}
+
+	private void updateAutomaticWorkstationVisual() {
+		DynamicContentDefinition definition = workstationDefinition();
+		if (definition == null || definition.blockModel() == null) return;
+		boolean hasActive = definition.blockModel().referencedTextureIds().stream()
+				.anyMatch(id -> definition.blockModel().findTexture(id + "_active") != null);
+		if (!hasActive) return;
+		String currentVisual = generatedState.get("visual");
+		if (currentVisual != null && !currentVisual.equals("active")) return;
+		boolean active = !isEmpty() || recipeStatus == WorkstationRecipeStatus.GENERATING
+				|| recipeStatus == WorkstationRecipeStatus.READY || recipeStatus == WorkstationRecipeStatus.BLOCKED;
+		setGeneratedState("visual", active ? "active" : null);
+	}
+
 	@Override
 	public int uiState(String channelId) {
 		DynamicContentDefinition definition = workstationDefinition();
@@ -531,7 +583,8 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public int getContainerSize() {
-		return MAX_SLOTS;
+		DynamicContentDefinition storage = storageDefinition();
+		return storage == null ? MAX_SLOTS : storage.storage().slots();
 	}
 
 	@Override
@@ -542,7 +595,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public ItemStack getItem(int slot) {
-		return slot >= 0 && slot < workstationItems.size() ? workstationItems.get(slot) : ItemStack.EMPTY;
+		return slot >= 0 && slot < getContainerSize() ? workstationItems.get(slot) : ItemStack.EMPTY;
 	}
 
 	@Override
@@ -562,8 +615,15 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	@Override
 	public void setItem(int slot, ItemStack stack) {
 		assertRuntimeMutable();
-		if (slot < 0 || slot >= workstationItems.size() || isSlotLocked(slot)) return;
+		if (slot < 0 || slot >= getContainerSize() || isSlotLocked(slot)) return;
 		ItemStack value = stack.copy();
+		if (isStorage()) {
+			if (value.has(net.minecraft.core.component.DataComponents.CONTAINER)) return;
+			value.limitSize(value.getMaxStackSize());
+			workstationItems.set(slot, value);
+			setChanged();
+			return;
+		}
 		DynamicWorkstationSlot specification = slotSpec(slot);
 		if (specification == null) return;
 		int capacity = Math.min(specification.maxStack(), value.getMaxStackSize());
@@ -574,12 +634,15 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public boolean canPlaceItem(int slot, ItemStack stack) {
-		return canAcceptAutomationStack(slot, stack);
+		return isStorage()
+				? slot >= 0 && slot < getContainerSize() && !stack.has(net.minecraft.core.component.DataComponents.CONTAINER)
+				: canAcceptAutomationStack(slot, stack);
 	}
 
 	@Override
 	public boolean stillValid(Player player) {
-		return isValidWorkstation(player);
+		return (isWorkstation() || isStorage()) && level != null && level.getBlockEntity(worldPosition) == this
+				&& Container.stillValidBlockEntity(this, player);
 	}
 
 	@Override
@@ -592,20 +655,22 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	@Override
 	public int[] getSlotsForFace(Direction direction) {
 		DynamicContentDefinition definition = workstationDefinition();
-		if (definition == null) return new int[0];
-		int[] slots = new int[definition.workstation().slots().size()];
+		int count = definition == null ? isStorage() ? getContainerSize() : 0 : definition.workstation().slots().size();
+		int[] slots = new int[count];
 		for (int index = 0; index < slots.length; index++) slots[index] = index;
 		return slots;
 	}
 
 	@Override
 	public boolean canPlaceItemThroughFace(int slot, ItemStack stack, @Nullable Direction direction) {
+		if (isStorage()) return canPlaceItem(slot, stack);
 		return canAcceptAutomationStack(slot, stack)
 				&& mayUseSlot(slot, stack, WorkstationSlotAction.INSERT, null, direction);
 	}
 
 	@Override
 	public boolean canTakeItemThroughFace(int slot, ItemStack stack, Direction direction) {
+		if (isStorage()) return slot >= 0 && slot < getContainerSize();
 		return mayUseSlot(slot, stack, WorkstationSlotAction.EXTRACT, null, direction);
 	}
 
@@ -632,8 +697,23 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	@Override
 	public Component getDisplayName() {
 		DynamicContentDefinition definition = workstationDefinition();
+		if (definition == null) definition = storageDefinition();
 		return definition == null ? Component.translatable("container.little_chemistry.workstation")
-				: DynamicContentObjects.displayName(definition);
+					: DynamicContentObjects.displayName(definition);
+	}
+
+	@Override
+	public void startOpen(ContainerUser player) {
+		if (isStorage() && storageOpeners++ == 0) syncTransientStorageVisual();
+	}
+
+	@Override
+	public void stopOpen(ContainerUser player) {
+		if (isStorage() && storageOpeners > 0 && --storageOpeners == 0) syncTransientStorageVisual();
+	}
+
+	private void syncTransientStorageVisual() {
+		if (level != null) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
 	}
 
 	@Override
@@ -721,6 +801,15 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		uiState.clear();
 		uiState.putAll(input.read("workstation_ui", UI_STATE_CODEC).orElse(Map.of()));
 		if (uiState.size() > DynamicWorkstationUi.MAX_STATE_CHANNELS) uiState.clear();
+		generatedState.clear();
+		generatedState.putAll(input.read("generated_state", GENERATED_STATE_CODEC).orElse(Map.of()));
+		generatedState.entrySet().removeIf(entry -> !validRuntimeKey(entry.getKey())
+				|| entry.getValue() == null || entry.getValue().length() > 1_024
+				|| entry.getValue().indexOf('\0') >= 0);
+		if (generatedState.size() > MAX_PERSISTENT_KEYS || generatedState.toString().length() > 16_384) {
+			generatedState.clear();
+		}
+		storageOpeners = 0;
 		currentRequest = null;
 		currentSignature = null;
 		currentRecipe = null;
@@ -735,6 +824,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		if (!isEmpty()) ContainerHelper.saveAllItems(output, workstationItems);
 		if (!persistentState.isEmpty()) output.store("workstation_state", LONG_STATE_CODEC, Map.copyOf(persistentState));
 		if (!uiState.isEmpty()) output.store("workstation_ui", UI_STATE_CODEC, Map.copyOf(uiState));
+		if (!generatedState.isEmpty()) output.store("generated_state", GENERATED_STATE_CODEC, Map.copyOf(generatedState));
 	}
 
 	@Override
@@ -759,6 +849,12 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	public CompoundTag getUpdateTag(HolderLookup.Provider lookup) {
 		CompoundTag tag = new CompoundTag();
 		if (contentId != null) tag.putString("content_id", contentId.toString());
+		if (!generatedState.isEmpty() || storageOpeners > 0) {
+			CompoundTag state = new CompoundTag();
+			generatedState.forEach(state::putString);
+			if (storageOpeners > 0 && isStorage()) state.putString("visual", "open");
+			tag.put("generated_state", state);
+		}
 		return tag;
 	}
 

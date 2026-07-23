@@ -14,6 +14,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
@@ -22,12 +23,15 @@ import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
+import net.minecraft.world.phys.HitResult;
 
 import java.util.Locale;
 import java.util.function.Consumer;
 
 /** Composes existing generated item callbacks and presentation around native projectile-weapon mechanics. */
-final class DynamicProjectileCarrierHooks {
+
+public final class DynamicProjectileCarrierHooks {
+	private static final String WEAPON_TAG_PREFIX = "little_chemistry.weapon.";
 	private DynamicProjectileCarrierHooks() {
 	}
 
@@ -102,6 +106,30 @@ final class DynamicProjectileCarrierHooks {
 		if (definition != null && player instanceof ServerPlayer serverPlayer
 				&& player.level() instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.crafted(definition, serverLevel, serverPlayer, stack);
+		}
+	}
+
+	static Projectile projectileCreated(Projectile vanillaProjectile, Level level, LivingEntity shooter,
+			ItemStack weapon, ItemStack ammunition, boolean critical) {
+		DynamicContentDefinition definition = definition(weapon);
+		Projectile result = vanillaProjectile;
+		if (definition != null && level instanceof ServerLevel serverLevel) {
+			result = DynamicBehaviorRegistry.projectileCreated(
+					definition, serverLevel, shooter, weapon, ammunition, vanillaProjectile, critical);
+			result.addTag(WEAPON_TAG_PREFIX + definition.name());
+		}
+		return result;
+	}
+
+	public static void projectileImpact(Projectile projectile, HitResult hit) {
+		if (!(projectile.level() instanceof ServerLevel level)) return;
+		for (String tag : projectile.entityTags()) {
+			if (!tag.startsWith(WEAPON_TAG_PREFIX)) continue;
+			DynamicContentDefinition definition = DynamicContentCatalog.find(
+					com.yeyito.littlechemistry.LittleChemistry.id(tag.substring(WEAPON_TAG_PREFIX.length())));
+			if (definition == null) return;
+			DynamicBehaviorRegistry.projectileImpact(definition, level, projectile, hit);
+			return;
 		}
 	}
 

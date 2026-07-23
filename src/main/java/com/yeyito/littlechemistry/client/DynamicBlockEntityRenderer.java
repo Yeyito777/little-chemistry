@@ -38,6 +38,7 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		DynamicContentDefinition definition = DynamicContentCatalog.find(contentId);
 		state.textureHash = definition == null ? null : definition.textureHash();
 		state.model = definition == null ? null : definition.blockModel();
+		state.visualState = blockEntity.generatedState("visual");
 		if (state.textureHash != null && blockEntity.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
 			DynamicParticleTextures.remember(clientLevel, blockEntity.getBlockPos(), state.textureHash);
 		}
@@ -106,10 +107,10 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 						(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
 				);
 			} else {
-				int order = 0;
-				for (var texture : state.model.textures()) {
-					String textureId = texture.id();
-					nodes.order(order++).submitCustomGeometry(
+					int order = 0;
+					for (String textureId : state.model.referencedTextureIds()) {
+						var texture = textureForState(state.model, textureId, state.visualState);
+						nodes.order(order++).submitCustomGeometry(
 							poseStack,
 							RenderTypes.entityCutout(RuntimeTextureStore.texture(texture.hash())),
 							(pose, vertices) -> renderModelGeometry(state, textureId, pose, vertices)
@@ -118,7 +119,7 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 			}
 			if (state.breakProgress != null) {
 				int progress = Math.clamp(state.breakProgress.progress(), 0, ModelBakery.DESTROY_TYPES.size() - 1);
-				int breakOrder = state.model == null ? 1 : state.model.textures().size();
+					int breakOrder = state.model == null ? 1 : state.model.referencedTextureIds().size();
 				nodes.order(breakOrder).submitCustomGeometry(
 						poseStack,
 						ModelBakery.DESTROY_TYPES.get(progress),
@@ -133,6 +134,12 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		} finally {
 			if (rotated) poseStack.popPose();
 		}
+	}
+
+	static com.yeyito.littlechemistry.content.DynamicBlockTexture textureForState(
+			com.yeyito.littlechemistry.content.DynamicBlockModel model, String baseId, String visualState) {
+		var variant = visualState == null ? null : model.findTexture(baseId + "_" + visualState);
+		return variant == null ? model.texture(baseId) : variant;
 	}
 
 	private static void renderLegacyGeometry(DynamicBlockRenderState state, PoseStack.Pose pose, VertexConsumer vertices) {

@@ -24,6 +24,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Collection;
@@ -240,6 +241,28 @@ public final class DynamicBehaviorRegistry {
 			behavior.projectileHitBlock(level, position, state, hit, projectile, definition);
 			return null;
 		});
+	}
+
+	public static Projectile projectileCreated(DynamicContentDefinition definition, ServerLevel level,
+			LivingEntity shooter, ItemStack weapon, ItemStack ammunition, Projectile vanillaProjectile,
+			boolean critical) {
+		DynamicProjectileContext context = new DynamicProjectileContext(
+				level, shooter, weapon, ammunition, vanillaProjectile, critical, definition);
+		Projectile result = invoke(definition, shooter instanceof ServerPlayer player ? player : null,
+				ProjectileCreatedBehavior.class, vanillaProjectile, vanillaProjectile,
+				behavior -> behavior.projectileCreated(context));
+		if (result == null || result.level() != level) return vanillaProjectile;
+		if (result.getOwner() == null) result.setOwner(shooter);
+		return result;
+	}
+
+	public static void projectileImpact(DynamicContentDefinition definition, ServerLevel level,
+			Projectile projectile, HitResult hit) {
+		invoke(definition, projectile.getOwner() instanceof ServerPlayer player ? player : null,
+				ProjectileImpactBehavior.class, null, null, behavior -> {
+					behavior.projectileImpact(level, projectile, hit, definition);
+					return null;
+				});
 	}
 
 	/**

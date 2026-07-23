@@ -18,7 +18,7 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("items/moonlit_satchel/C_moonlit_satchel_Content.java"));
 		assertTrue(prompt.contains("package `items.c_moonlit_satchel`"));
 		assertTrue(prompt.contains("installed vanilla textures"));
-		assertTrue(prompt.contains("RRGGBBAA palette and hexadecimal"));
+		assertTrue(prompt.contains("same indexed palette/rows representation"));
 		assertTrue(prompt.contains("read_texture"));
 		assertTrue(prompt.contains("text-only"));
 		assertFalse(prompt.contains("AGENTS.md"));
@@ -34,10 +34,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
 		assertTrue(prompt.contains("16x16 inventory icon"));
 		assertTrue(prompt.contains("64x32 equipment sheet"));
-		assertTrue(prompt.contains("base-head UV region at x=0..31, y=0..15"));
-		assertTrue(prompt.contains("hat/outer-head region at x=32..63, y=0..15"));
-		assertTrue(prompt.contains("renders on the player's head"));
-		assertTrue(prompt.contains("inspect_armor_texture"));
+		assertTrue(prompt.contains("base-head region x=0..31,y=0..15"));
+		assertTrue(prompt.contains("outer-head region"));
+		assertTrue(prompt.contains("leave unrelated base-head faces transparent"));
+		assertTrue(prompt.contains("inspect_generated_textures"));
 		assertFalse(prompt.contains("view_image"));
 	}
 
@@ -59,7 +59,7 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
 		assertTrue(prompt.contains("Armor output count is always 1"));
 		assertFalse(prompt.contains("\"outputCount\":1"));
-		assertTrue(prompt.contains("Always base the visual design on installed vanilla textures"));
+		assertTrue(prompt.contains("Always derive the visual design from installed vanilla textures"));
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
@@ -72,6 +72,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("heldType `BOW` or `CROSSBOW`"));
 		assertTrue(prompt.contains("outputCount 1, and positive enchantability"));
 		assertTrue(prompt.contains("do not reimplement those mechanics"));
+		assertTrue(prompt.contains("ProjectileCreatedBehavior"));
+		assertTrue(prompt.contains("Backpacks, satchels, bags"));
+		assertTrue(prompt.contains("`storage(new DynamicStorageSpec(rows))`"));
+		assertTrue(prompt.contains("`*_active` variants"));
 	}
 
 	@Test

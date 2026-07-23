@@ -40,6 +40,9 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.SimpleMenuProvider;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
@@ -105,6 +108,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected InteractionResult useItemOn(ItemStack heldStack, BlockState state, Level level, BlockPos position,
 			Player player, InteractionHand hand, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.storage() != null) return openStorage(level, position, player, definition);
 		if (definition != null && DynamicBehaviorSource.supports(
 				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
@@ -124,6 +128,7 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos position,
 			Player player, BlockHitResult hit) {
 		DynamicContentDefinition definition = definition(level, position);
+		if (definition != null && definition.storage() != null) return openStorage(level, position, player, definition);
 		if (definition != null && DynamicBehaviorSource.supports(
 				definition.behaviorSource(), DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
 			if (level.isClientSide()) return InteractionResult.SUCCESS;
@@ -148,6 +153,32 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			return InteractionResult.CONSUME;
 		}
 		return InteractionResult.FAIL;
+	}
+
+	private static InteractionResult openStorage(Level level, BlockPos position, Player player,
+			DynamicContentDefinition definition) {
+		if (level.isClientSide()) return InteractionResult.SUCCESS;
+		if (player instanceof ServerPlayer serverPlayer
+				&& level.getBlockEntity(position) instanceof DynamicBlockEntity storage && storage.isStorage()) {
+			int rows = definition.storage().rows();
+			serverPlayer.openMenu(new SimpleMenuProvider(
+					(id, inventory, ignored) -> new ChestMenu(storageMenuType(rows), id, inventory, storage, rows),
+					DynamicContentObjects.displayName(definition)));
+			return InteractionResult.CONSUME;
+		}
+		return InteractionResult.FAIL;
+	}
+
+	private static MenuType<ChestMenu> storageMenuType(int rows) {
+		return switch (rows) {
+			case 1 -> MenuType.GENERIC_9x1;
+			case 2 -> MenuType.GENERIC_9x2;
+			case 3 -> MenuType.GENERIC_9x3;
+			case 4 -> MenuType.GENERIC_9x4;
+			case 5 -> MenuType.GENERIC_9x5;
+			case 6 -> MenuType.GENERIC_9x6;
+			default -> throw new IllegalArgumentException("Unsupported storage row count");
+		};
 	}
 
 	@Override
@@ -312,6 +343,15 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 				&& player instanceof ServerPlayer serverPlayer) {
 			DynamicBehaviorRegistry.brokenBlock(definition, serverLevel, serverPlayer, position, state, destroyedWith);
 		}
+	}
+
+	@Override
+	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos position,
+			boolean movedByPiston) {
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity dynamic && !dynamic.isEmpty()) {
+			net.minecraft.world.Containers.dropContents(level, position, dynamic.drainWorkstationItems());
+		}
+		super.affectNeighborsAfterRemoval(state, level, position, movedByPiston);
 	}
 
 	@Override

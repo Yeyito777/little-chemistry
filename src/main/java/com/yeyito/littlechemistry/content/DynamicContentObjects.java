@@ -3,7 +3,9 @@ package com.yeyito.littlechemistry.content;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.crafting.DynamicWorkstationMenu;
 import net.fabricmc.fabric.api.transfer.v1.item.ItemStorage;
+import net.fabricmc.fabric.api.transfer.v1.item.ContainerStorage;
 import net.minecraft.core.Registry;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -15,6 +17,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.component.Tool;
 import net.minecraft.world.item.component.Weapon;
@@ -39,9 +42,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
+import java.util.UUID;
 
 public final class DynamicContentObjects {
 	public static DataComponentType<Identifier> CONTENT_ID;
+	public static DataComponentType<UUID> STORAGE_ID;
 	public static DynamicCarrierItem ITEM;
 	public static DynamicCarrierItem TOOL_HELD_ITEM;
 	private static final Map<DynamicHeldType, Item> HELD_ITEMS = new EnumMap<>(DynamicHeldType.class);
@@ -64,6 +69,14 @@ public final class DynamicContentObjects {
 				DataComponentType.<Identifier>builder()
 						.persistent(Identifier.CODEC)
 						.networkSynchronized(Identifier.STREAM_CODEC)
+						.build()
+		);
+		STORAGE_ID = Registry.register(
+				BuiltInRegistries.DATA_COMPONENT_TYPE,
+				LittleChemistry.id("storage_id"),
+				DataComponentType.<UUID>builder()
+						.persistent(UUIDUtil.STRING_CODEC)
+						.networkSynchronized(UUIDUtil.STREAM_CODEC)
 						.build()
 		);
 
@@ -118,10 +131,13 @@ public final class DynamicContentObjects {
 				LittleChemistry.id("dynamic_block"),
 				new BlockEntityType<>(DynamicBlockEntity::new, Set.of(BLOCK))
 		);
-		DynamicWorkstationMenu.register();
-		ItemStorage.SIDED.registerForBlockEntity((blockEntity, side) ->
-				blockEntity.isWorkstation() ? new DynamicWorkstationItemStorage(blockEntity, side) : null,
-				BLOCK_ENTITY_TYPE);
+			DynamicWorkstationMenu.register();
+			ItemStorage.SIDED.registerForBlockEntity((blockEntity, side) -> {
+				if (blockEntity.isWorkstation()) return new DynamicWorkstationItemStorage(blockEntity, side);
+				if (blockEntity.isStorage()) return ContainerStorage.of(blockEntity, side);
+				return null;
+			},
+					BLOCK_ENTITY_TYPE);
 	}
 
 	public static ItemStack createStack(DynamicContentDefinition definition) {
@@ -169,8 +185,12 @@ public final class DynamicContentObjects {
 				stack.set(DataComponents.DAMAGE, 0);
 				stack.set(DataComponents.WEAPON, new Weapon(properties.damagePerAttack()));
 			}
-			ItemAttributeModifiers attributes = attributes(properties);
-			if (attributes != null) stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes);
+				ItemAttributeModifiers attributes = attributes(properties);
+				if (attributes != null) stack.set(DataComponents.ATTRIBUTE_MODIFIERS, attributes);
+				if (definition.storage() != null) {
+					stack.set(DataComponents.MAX_STACK_SIZE, 1);
+					stack.set(DataComponents.CONTAINER, ItemContainerContents.EMPTY);
+				}
 		}
 		if (definition.armor() != null) {
 			DynamicArmorProperties armor = definition.armor();
@@ -202,9 +222,17 @@ public final class DynamicContentObjects {
 		if (definition == null) return;
 		Rarity currentRarity = stack.getOrDefault(DataComponents.RARITY, Rarity.COMMON);
 		if (currentRarity != definition.rarity()) stack.set(DataComponents.RARITY, definition.rarity());
-		if (definition.item() != null) {
-			DynamicItemProperties properties = definition.item();
-			if (properties.enchantability() > 0) {
+			if (definition.item() != null) {
+				DynamicItemProperties properties = definition.item();
+				if (definition.storage() != null) {
+					if (stack.getOrDefault(DataComponents.MAX_STACK_SIZE, 1) != 1) {
+						stack.set(DataComponents.MAX_STACK_SIZE, 1);
+					}
+					if (!stack.has(DataComponents.CONTAINER)) {
+						stack.set(DataComponents.CONTAINER, ItemContainerContents.EMPTY);
+					}
+				}
+				if (properties.enchantability() > 0) {
 				Enchantable expected = new Enchantable(properties.enchantability());
 				if (!expected.equals(stack.get(DataComponents.ENCHANTABLE))) {
 					stack.set(DataComponents.ENCHANTABLE, expected);

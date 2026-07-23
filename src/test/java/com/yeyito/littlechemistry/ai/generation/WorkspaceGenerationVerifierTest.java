@@ -186,13 +186,12 @@ final class WorkspaceGenerationVerifierTest {
 	}
 
 	@Test
-	void headArmorRequiresBothBaseAndOuterHeadUvArtwork() {
+	void headAccessoriesMayUseOnlyOuterUvArtwork() {
 		DynamicArmorDisplayTextureSpec missingOuterHead = headArmorTexture(false);
 		DynamicArmorDisplayTextureSpec completeHead = headArmorTexture(true);
 
-		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-				() -> WorkspaceGenerationVerifier.validateArmorTexture(missingOuterHead, DynamicArmorSlot.HEAD));
-		assertTrue(failure.getMessage().contains("base-head and hat/outer-head"));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateArmorTexture(
+				missingOuterHead, DynamicArmorSlot.HEAD));
 		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateArmorTexture(completeHead, DynamicArmorSlot.HEAD));
 	}
 

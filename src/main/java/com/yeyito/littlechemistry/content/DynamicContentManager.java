@@ -321,8 +321,9 @@ public final class DynamicContentManager {
 					generated.workstation(),
 					generated.entity(),
 					generated.entityModel(),
-					generated.itemVisuals()
-		);
+					generated.itemVisuals(),
+					generated.storage()
+			);
 		GenerationWorkspace.bindPending(generated, definition);
 		DynamicContentDefinition committed = commit(
 				definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);

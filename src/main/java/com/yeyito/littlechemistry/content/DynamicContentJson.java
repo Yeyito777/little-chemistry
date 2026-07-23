@@ -19,7 +19,7 @@ import java.util.UUID;
 
 public final class DynamicContentJson {
 	/** Formats 20 and 21 belonged to an abandoned development schema and must be restored from a format-19 backup. */
-	public static final int CURRENT_FORMAT = 22;
+	public static final int CURRENT_FORMAT = 23;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -54,6 +54,11 @@ public final class DynamicContentJson {
 		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
 		if (definition.entityModel() != null) entry.add("entityModel", encodeEntityModel(definition.entityModel()));
 		if (!definition.itemVisuals().isEmpty()) entry.add("itemVisuals", encodeItemVisuals(definition.itemVisuals()));
+		if (definition.storage() != null) {
+			JsonObject storage = new JsonObject();
+			storage.addProperty("rows", definition.storage().rows());
+			entry.add("storage", storage);
+		}
 		entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
 		if (definition.workstation() != null) {
 			entry.add("workstation", DynamicWorkstationJson.encode(definition.workstation()));
@@ -134,8 +139,10 @@ public final class DynamicContentJson {
 					? decodeCustomParticles(entry.getAsJsonArray("customParticles")) : List.of();
 				DynamicWorkstationSpec workstation = format >= 18 && entry.has("workstation")
 						? DynamicWorkstationJson.decode(entry.getAsJsonObject("workstation")) : null;
-				DynamicItemVisuals itemVisuals = format >= 22 && entry.has("itemVisuals")
-						? decodeItemVisuals(entry.getAsJsonArray("itemVisuals")) : DynamicItemVisuals.NONE;
+					DynamicItemVisuals itemVisuals = format >= 22 && entry.has("itemVisuals")
+							? decodeItemVisuals(entry.getAsJsonArray("itemVisuals")) : DynamicItemVisuals.NONE;
+					DynamicStorageSpec storage = format >= 23 && entry.has("storage")
+							? new DynamicStorageSpec(entry.getAsJsonObject("storage").get("rows").getAsInt()) : null;
 			String behaviorSource;
 			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
@@ -156,7 +163,7 @@ public final class DynamicContentJson {
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
 						armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-						customParticles, workstation, entity, entityModel, itemVisuals
+						customParticles, workstation, entity, entityModel, itemVisuals, storage
 				));
 		}
 		validateUniqueNames(definitions);
@@ -169,7 +176,7 @@ public final class DynamicContentJson {
 	}
 
 	static boolean isSupportedFormat(int format) {
-		return format >= 1 && format <= 19 || format == CURRENT_FORMAT;
+		return format >= 1 && format <= 19 || format == 22 || format == CURRENT_FORMAT;
 	}
 
 	private static int storedFormat(JsonObject root) {

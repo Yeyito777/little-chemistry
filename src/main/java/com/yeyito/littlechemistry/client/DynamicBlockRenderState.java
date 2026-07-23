@@ -9,6 +9,7 @@ import com.yeyito.littlechemistry.content.DynamicPlacedShape;
 public final class DynamicBlockRenderState extends BlockEntityRenderState {
 	String textureHash;
 	DynamicBlockModel model;
+	String visualState;
 	boolean visuallyEmissive;
 	DynamicBlockShape shape = DynamicBlockShape.FULL_CUBE;
 	DynamicPlacedShape placedShape;

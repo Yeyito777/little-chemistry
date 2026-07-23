@@ -252,6 +252,7 @@ final class WorkspaceGenerationVerifier {
 					+ " exceeds generated item maxStack " + generated.item().maxStack());
 		}
 		validateProjectileVisuals(generated);
+		validateSemanticCapabilities(selection, generated, behaviorSource);
 		if (generated.block() == null) validateIcon(generated.texture());
 		else generated.block().drops().validateNewTargets(
 				DynamicContentManager.normalizeIdentifier(selection.displayName()), DynamicContentCatalog::find);
@@ -291,7 +292,69 @@ final class WorkspaceGenerationVerifier {
 				throw new IllegalArgumentException("Behavior references undefined custom particle: " + referenced);
 			}
 		}
-		if (generated.workstation() != null) validateWorkstationDesign(generated.workstation());
+		if (generated.workstation() != null) {
+			validateWorkstationDesign(generated.workstation());
+			requireVisualVariant(generated.blockModel(), "active", "Generated workstations");
+		}
+		if (generated.storage() != null && generated.block() != null) {
+			requireVisualVariant(generated.blockModel(), "open", "Generated storage blocks");
+		}
+	}
+
+	private static void validateSemanticCapabilities(Selection selection, GeneratedContentSpec generated,
+			String behaviorSource) {
+		String name = selection.displayName().toLowerCase(java.util.Locale.ROOT);
+		boolean portableStorageConcept = Pattern.compile("\\b(backpack|satchel|rucksack|bag)\\b").matcher(name).find();
+		boolean blockStorageConcept = Pattern.compile("\\b(cabinet|cupboard|crate|barrel|locker)\\b").matcher(name).find();
+		if (portableStorageConcept && generated.armor() != null) {
+			throw new IllegalArgumentException("Backpacks, satchels, rucksacks, and bags are portable storage items, not armor, unless protective armor was explicitly requested");
+		}
+		if (portableStorageConcept && (generated.item() == null || generated.storage() == null)) {
+			throw new IllegalArgumentException("Portable storage concepts require an ordinary item with DynamicStorageSpec");
+		}
+		if (blockStorageConcept && (generated.block() == null || generated.storage() == null)) {
+			throw new IllegalArgumentException("Cabinets, cupboards, crates, barrels, and lockers require block DynamicStorageSpec");
+		}
+		if (generated.storage() != null && selection.outputCount() != 1) {
+			throw new IllegalArgumentException("Generated storage outputCount must be 1");
+		}
+		if (generated.storage() != null && generated.block() != null
+				&& DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.USE_PLACED_BLOCK)) {
+			throw new IllegalArgumentException("Generated block storage opening is engine-owned; do not intercept it with UsePlacedBlockBehavior");
+		}
+		if (generated.storage() != null && generated.item() != null
+				&& DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.USE_AIR)) {
+			throw new IllegalArgumentException("Portable storage opening is engine-owned; do not intercept it with UseAirBehavior");
+		}
+		if ((generated.item() == null || !generated.item().heldType().isNativeProjectileWeapon())
+				&& (DynamicBehaviorSource.supports(
+				behaviorSource, DynamicBehaviorCapability.PROJECTILE_CREATED)
+				|| DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_IMPACT))) {
+			throw new IllegalArgumentException("Projectile lifecycle callbacks apply only to generated bow/crossbow items");
+		}
+		if (generated.item() != null && generated.item().heldType().isNativeProjectileWeapon()
+				&& !DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_CREATED)
+				&& !DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_IMPACT)) {
+			throw new IllegalArgumentException("Generated bows and crossbows must implement ProjectileCreatedBehavior and/or ProjectileImpactBehavior so the concept affects actual shots");
+		}
+	}
+
+	private static void requireVisualVariant(DynamicBlockModel model, String state, String subject) {
+		boolean distinctVariant = model != null && model.referencedTextureIds().stream().anyMatch(id -> {
+			DynamicBlockTexture base = model.findTexture(id);
+			DynamicBlockTexture variant = model.findTexture(id + "_" + state);
+			if (base == null || variant == null) return false;
+			if (base.texture().width() != variant.texture().width()
+					|| base.texture().height() != variant.texture().height()) {
+				throw new IllegalArgumentException("Visual-state texture '" + variant.id()
+						+ "' must have the same dimensions as base texture '" + id + "'");
+			}
+			return differentPixels(base.texture(), variant.texture()) >= 8;
+		});
+		if (!distinctVariant) {
+			throw new IllegalArgumentException(subject + " require at least one authored *_" + state
+					+ " model texture variant that differs from its base by at least eight pixels");
+		}
 	}
 
 	static void validateProjectileVisuals(GeneratedContentSpec generated) {
@@ -397,7 +460,7 @@ final class WorkspaceGenerationVerifier {
 		if (type == DynamicContentType.BLOCK) return true;
 		return switch (capability) {
 			case USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, INVENTORY_TICK, POST_HURT_ENEMY,
-					MINE_BLOCK, FINISH_USING, CRAFTED -> true;
+					MINE_BLOCK, FINISH_USING, CRAFTED, PROJECTILE_CREATED, PROJECTILE_IMPACT -> true;
 			default -> false;
 		};
 	}
@@ -447,10 +510,9 @@ final class WorkspaceGenerationVerifier {
 					+ slot.serializedName() + " UV islands");
 		}
 		if (slot == DynamicArmorSlot.HEAD
-				&& (opaquePixels(texture, 0, 0, 32, 16) < 16
-				|| opaquePixels(texture, 32, 0, 32, 16) < 8)) {
+				&& opaquePixels(texture, 0, 0, 64, 16) < 16) {
 			throw new IllegalArgumentException(
-					"Head armor must paint both the base-head and hat/outer-head UV regions");
+					"Head armor must paint a deliberate base-head and/or hat/outer-head UV region");
 		}
 	}
 
