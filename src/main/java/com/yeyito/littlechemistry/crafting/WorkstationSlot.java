@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.crafting;
 import com.yeyito.littlechemistry.behavior.WorkstationSlotAction;
 import com.yeyito.littlechemistry.content.DynamicBlockEntity;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlot;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSlotIcon;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
@@ -67,6 +68,6 @@ final class WorkstationSlot extends Slot {
 
 	@Override
 	public Identifier getNoItemIcon() {
-		return specification.emptySlotIcon() == null ? null : Identifier.parse(specification.emptySlotIcon());
+		return DynamicWorkstationSlotIcon.resolve(specification.emptySlotIcon());
 	}
 }

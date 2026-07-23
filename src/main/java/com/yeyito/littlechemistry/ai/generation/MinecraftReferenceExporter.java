@@ -5,11 +5,14 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSlotIcon;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
+import net.minecraft.resources.Identifier;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +50,9 @@ final class MinecraftReferenceExporter {
 		entries = entries.stream().distinct().sorted().toList();
 		Files.createDirectories(vanillaRoot);
 		write(vanillaRoot.resolve("TEXTURES.txt"), String.join("\n", entries) + "\n");
+		List<String> guiSprites = DynamicWorkstationSlotIcon.availableIds().stream()
+				.map(Identifier::toString).sorted().toList();
+		write(vanillaRoot.resolve("GUI_SPRITES.txt"), String.join("\n", guiSprites) + "\n");
 		write(vanillaRoot.resolve("README.md"), """
 				# Installed vanilla artwork mirror
 
@@ -88,16 +94,43 @@ final class MinecraftReferenceExporter {
 		return GSON.toJson(output);
 	}
 
+	/** Returns the same first-frame image represented by {@link #materialize(String)} for visual inspection. */
+	static byte[] previewPng(String virtualPath) throws IOException {
+		String normalized = virtualPath.replace('\\', '/');
+		if (normalized.startsWith("/") || normalized.contains("../") || !normalized.endsWith(".json")) {
+			throw new IOException("Invalid vanilla texture reference path");
+		}
+		String pngRelative = TEXTURE_ROOT + normalized.substring(0, normalized.length() - 5) + ".png";
+		BufferedImage source = read(pngRelative);
+		BufferedImage preview = normalized.startsWith("item/") || normalized.startsWith("block/")
+				? sample16(source) : source;
+		if (preview.getWidth() < 1 || preview.getWidth() > 256
+				|| preview.getHeight() < 1 || preview.getHeight() > 256) {
+			throw new IOException("Installed texture is outside the previewable 1-256 pixel dimensions: "
+					+ preview.getWidth() + "x" + preview.getHeight());
+		}
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		if (!ImageIO.write(preview, "PNG", output)) throw new IOException("The Java runtime has no PNG writer");
+		return output.toByteArray();
+	}
+
 	private static ModContainer minecraft() throws IOException {
 		return FabricLoader.getInstance().getModContainer("minecraft")
 				.orElseThrow(() -> new IOException("Installed Minecraft resources are unavailable"));
 	}
 
 	private static BufferedImage read(String relative) throws IOException {
-		for (Path root : minecraft().getRootPaths()) {
+		var installedMinecraft = FabricLoader.getInstance().getModContainer("minecraft");
+		if (installedMinecraft.isPresent()) for (Path root : installedMinecraft.get().getRootPaths()) {
 			Path texture = root.resolve(relative);
 			if (!Files.isRegularFile(texture)) continue;
 			try (InputStream input = Files.newInputStream(texture)) {
+				BufferedImage image = ImageIO.read(input);
+				if (image != null) return image;
+			}
+		}
+		try (InputStream input = MinecraftReferenceExporter.class.getClassLoader().getResourceAsStream(relative)) {
+			if (input != null) {
 				BufferedImage image = ImageIO.read(input);
 				if (image != null) return image;
 			}

@@ -105,9 +105,9 @@ public final class DynamicContentManager {
 	}
 
 	/**
-	 * Reads the current catalog, falling back to the newest compatible migration backup when a later development build
-	 * already rewrote the world to a newer schema. The newer catalog is archived before the normal save restores this
-	 * version's format, so no rollback silently destroys the only copy of later-format data.
+	 * Reads the current catalog, falling back to the newest compatible migration backup when another development build
+	 * already rewrote the world to an unsupported schema. The unsupported catalog is archived before the normal save
+	 * restores this version's format, so no rollback silently destroys the only copy of that data.
 	 */
 	static DynamicContentJson.Decoded loadCompatibleCatalog(Path dataFile) throws IOException {
 		byte[] bytes = Files.readAllBytes(dataFile);
@@ -117,14 +117,14 @@ public final class DynamicContentManager {
 		} catch (RuntimeException invalid) {
 			throw new IOException("Could not read the dynamic content catalog format", invalid);
 		}
-		if (storedFormat <= DynamicContentJson.CURRENT_FORMAT) {
+		if (DynamicContentJson.isSupportedFormat(storedFormat)) {
 			return DynamicContentJson.decode(bytes);
 		}
 
 		CatalogBackup backup = newestCompatibleBackup(dataFile);
 		if (backup == null) {
-			throw new IOException("Dynamic content format " + storedFormat + " is newer than supported format "
-					+ DynamicContentJson.CURRENT_FORMAT + " and no compatible migration backup exists");
+			throw new IOException("Dynamic content format " + storedFormat + " is unsupported by this build (current format "
+					+ DynamicContentJson.CURRENT_FORMAT + ") and no compatible migration backup exists");
 		}
 		DynamicContentJson.Decoded restored;
 		try {
@@ -138,7 +138,7 @@ public final class DynamicContentManager {
 
 		Path newerArchive = archiveNewerCatalog(dataFile, bytes, storedFormat);
 		LOGGER.warn(
-				"Dynamic content format {} is newer than supported format {}; restoring compatible backup {} and preserving the newer catalog at {}",
+				"Dynamic content format {} is unsupported by this build (current format {}); restoring compatible backup {} and preserving the unsupported catalog at {}",
 				storedFormat, DynamicContentJson.CURRENT_FORMAT, backup.path(), newerArchive);
 		return restored;
 	}
@@ -181,7 +181,7 @@ public final class DynamicContentManager {
 				} catch (NumberFormatException ignored) {
 					continue;
 				}
-				if (format < 1 || format > DynamicContentJson.CURRENT_FORMAT) continue;
+				if (!DynamicContentJson.isSupportedFormat(format)) continue;
 				if (newest == null || format > newest.format()) newest = new CatalogBackup(candidate, format);
 			}
 		}
@@ -236,6 +236,9 @@ public final class DynamicContentManager {
 				|| (type == DynamicContentType.ENTITY && generated.entity() == null)) {
 			throw new IllegalArgumentException("Generated properties do not match the requested content type");
 		}
+		if (generated.item() != null && generated.item().heldType().isNativeProjectileWeapon()) {
+			generated.itemVisuals().requireCompleteFor(generated.item().heldType());
+		}
 		if (generated.block() != null) {
 			Map<String, DynamicContentDefinition> definitionsByName = definitions.stream().collect(
 					java.util.stream.Collectors.toUnmodifiableMap(DynamicContentDefinition::name, definition -> definition));
@@ -278,6 +281,14 @@ public final class DynamicContentManager {
 				textureAssets.put(actualHash, bytes);
 			}
 		}
+		for (DynamicItemTexture state : generated.itemVisuals().states()) {
+			byte[] bytes = state.texture().renderPng();
+			String actualHash = DynamicTextureAsset.sha256(bytes);
+			if (!actualHash.equals(state.hash())) {
+				throw new IOException("Generated item visual texture hash mismatch for " + state.id());
+			}
+			textureAssets.put(actualHash, bytes);
+		}
 		byte[] armorDisplayTextureBytes = generated.armorDisplayTexture() == null
 				? null : generated.armorDisplayTexture().renderPng();
 		String armorDisplayTextureHash = armorDisplayTextureBytes == null
@@ -307,9 +318,10 @@ public final class DynamicContentManager {
 				behaviorSource,
 				generated.blockModel(),
 				generated.customParticles(),
-				generated.workstation(),
-				generated.entity(),
-				generated.entityModel()
+					generated.workstation(),
+					generated.entity(),
+					generated.entityModel(),
+					generated.itemVisuals()
 		);
 		GenerationWorkspace.bindPending(generated, definition);
 		DynamicContentDefinition committed = commit(
@@ -539,6 +551,10 @@ public final class DynamicContentManager {
 				ensureAsset(texture.hash(), texture.texture().renderPng(),
 						definition.name() + " entity model texture " + texture.id());
 			}
+		}
+		for (DynamicItemTexture state : definition.itemVisuals().states()) {
+			ensureAsset(state.hash(), state.texture().renderPng(),
+					definition.name() + " item visual state " + state.id());
 		}
 		if (definition.armorDisplayTexture() != null) {
 			ensureAsset(definition.armorDisplayTextureHash(), definition.armorDisplayTexture().renderPng(),

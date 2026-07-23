@@ -21,6 +21,7 @@ import com.yeyito.littlechemistry.content.DynamicParticleFrame;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
+import com.yeyito.littlechemistry.content.DynamicWorkstationSlotIcon;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import net.minecraft.core.Direction;
@@ -250,9 +251,22 @@ final class WorkspaceGenerationVerifier {
 			throw new IllegalArgumentException("Recipe outputCount " + selection.outputCount()
 					+ " exceeds generated item maxStack " + generated.item().maxStack());
 		}
+		validateProjectileVisuals(generated);
 		if (generated.block() == null) validateIcon(generated.texture());
 		else generated.block().drops().validateNewTargets(
 				DynamicContentManager.normalizeIdentifier(selection.displayName()), DynamicContentCatalog::find);
+		Set<String> itemTextureHashes = new HashSet<>();
+		itemTextureHashes.add(DynamicTextureAsset.sha256(generated.texture().renderPng()));
+		for (var state : generated.itemVisuals().states()) {
+			validateIcon(state.texture());
+			String actual = DynamicTextureAsset.sha256(state.texture().renderPng());
+			if (!actual.equals(state.hash())) {
+				throw new IllegalArgumentException("Item visual state '" + state.id() + "' has a stale texture hash");
+			}
+			if (!itemTextureHashes.add(actual)) {
+				throw new IllegalArgumentException("Item visual states and base texture must be visually distinct");
+			}
+		}
 		if (generated.armorDisplayTexture() != null) {
 			validateArmorTexture(generated.armorDisplayTexture(), generated.armor().slot());
 		}
@@ -280,6 +294,38 @@ final class WorkspaceGenerationVerifier {
 		if (generated.workstation() != null) validateWorkstationDesign(generated.workstation());
 	}
 
+	static void validateProjectileVisuals(GeneratedContentSpec generated) {
+		if (generated.item() == null || !generated.item().heldType().isNativeProjectileWeapon()) return;
+		generated.itemVisuals().requireCompleteFor(generated.item().heldType());
+		List<DynamicTextureSpec> textures = new java.util.ArrayList<>();
+		textures.add(generated.texture());
+		generated.itemVisuals().states().forEach(state -> textures.add(state.texture()));
+		for (int first = 0; first < textures.size(); first++) {
+			for (int second = first + 1; second < textures.size(); second++) {
+				if (differentPixels(textures.get(first), textures.get(second)) < 8) {
+					throw new IllegalArgumentException(
+							"Projectile base and visual states must differ by at least eight pixels");
+				}
+			}
+		}
+	}
+
+	private static int differentPixels(DynamicTextureSpec first, DynamicTextureSpec second) {
+		int changed = 0;
+		for (int y = 0; y < first.height(); y++) {
+			for (int x = 0; x < first.width(); x++) {
+				String firstColor = effectiveColor(first.palette().get(Character.digit(first.rows().get(y).charAt(x), 16)));
+				String secondColor = effectiveColor(second.palette().get(Character.digit(second.rows().get(y).charAt(x), 16)));
+				if (!firstColor.equals(secondColor)) changed++;
+			}
+		}
+		return changed;
+	}
+
+	private static String effectiveColor(String rgba) {
+		return rgba.regionMatches(true, 6, "00", 0, 2) ? "00000000" : rgba.toUpperCase(java.util.Locale.ROOT);
+	}
+
 	static void validateWorkstationKind(String resultKind, boolean hasWorkstationSpec) {
 		if ("workstation".equals(resultKind) && !hasWorkstationSpec) {
 			throw new IllegalArgumentException("Result kind workstation requires a non-null DynamicWorkstationSpec; "
@@ -301,6 +347,12 @@ final class WorkspaceGenerationVerifier {
 				|| WORKSTATION_POLICY_META_LANGUAGE.stream().anyMatch(normalized::contains)) {
 			throw new IllegalArgumentException("Workstation recipePolicy must be concise third-person output-design data, "
 					+ "not model, workflow, verification, recipeData, or schema instructions");
+		}
+		for (var slot : workstation.slots()) {
+			if (slot.emptySlotIcon() != null && DynamicWorkstationSlotIcon.resolve(slot.emptySlotIcon()) == null) {
+				throw new IllegalArgumentException("Workstation slot '" + slot.id() + "' uses unknown GUI sprite '"
+						+ slot.emptySlotIcon() + "'; choose an ID from reference/vanilla/GUI_SPRITES.txt or use null");
+			}
 		}
 	}
 

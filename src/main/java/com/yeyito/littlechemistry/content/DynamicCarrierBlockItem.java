@@ -47,14 +47,11 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		super.appendHoverText(stack, context, display, builder, flag);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			definition.description().lines().forEach(line ->
-					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
+			DynamicTooltipText.appendWrapped(builder, definition.description(), ChatFormatting.GRAY);
 		}
 		if (definition != null && definition.workstation() != null) {
 			builder.accept(Component.translatable("tooltip.little_chemistry.workstation")
 					.withStyle(ChatFormatting.AQUA));
-			definition.workstation().processDescription().lines().limit(3).forEach(line ->
-					builder.accept(Component.literal(line).withStyle(ChatFormatting.DARK_GRAY)));
 		}
 		if (definition != null && definition.block() != null) {
 			for (int index = 0; index < definition.block().drops().entries().size(); index++) {

@@ -6,7 +6,8 @@
       "type": "minecraft:special",
       "base": "minecraft:item/bow",
       "model": {
-        "type": "little_chemistry:dynamic"
+        "type": "little_chemistry:dynamic",
+        "state": "base"
       }
     },
     "on_true": {
@@ -17,7 +18,8 @@
         "type": "minecraft:special",
         "base": "minecraft:item/bow_pulling_0",
         "model": {
-          "type": "little_chemistry:dynamic"
+          "type": "little_chemistry:dynamic",
+          "state": "pulling_0"
         }
       },
       "entries": [
@@ -27,7 +29,8 @@
             "type": "minecraft:special",
             "base": "minecraft:item/bow_pulling_1",
             "model": {
-              "type": "little_chemistry:dynamic"
+              "type": "little_chemistry:dynamic",
+              "state": "pulling_1"
             }
           }
         },
@@ -37,7 +40,8 @@
             "type": "minecraft:special",
             "base": "minecraft:item/bow_pulling_2",
             "model": {
-              "type": "little_chemistry:dynamic"
+              "type": "little_chemistry:dynamic",
+              "state": "pulling_2"
             }
           }
         }

@@ -183,8 +183,7 @@ public final class DynamicCarrierItem extends Item implements DynamicItemCarrier
 		super.appendHoverText(stack, context, display, builder, flag);
 		DynamicContentDefinition definition = DynamicContentObjects.definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			definition.description().lines().forEach(line ->
-					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
+			DynamicTooltipText.appendWrapped(builder, definition.description(), ChatFormatting.GRAY);
 		}
 		if (definition != null && definition.item() != null) {
 			switch (definition.item().craftingUse()) {

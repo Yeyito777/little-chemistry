@@ -68,12 +68,54 @@ final class GeneralistGenerationToolsTest {
 		Set<String> names = new HashSet<>();
 		definitions.forEach(element -> names.add(element.getAsJsonObject().get("name").getAsString()));
 
-		assertEquals(Set.of("bash", "read", "grep", "glob", "write", "edit", "patch", "verify"), names);
+		assertEquals(Set.of("bash", "read", "view_image", "preview_armor", "grep", "glob", "write", "edit", "patch", "verify"), names);
 		assertFalse(names.stream().anyMatch(name -> name.startsWith("set_")));
 		assertFalse(names.contains("submit"));
 		assertTrue(definitions.asList().stream().map(element -> element.getAsJsonObject())
 				.filter(tool -> tool.get("name").getAsString().equals("verify"))
 				.findFirst().orElseThrow().get("description").getAsString().contains("Compile"));
+	}
+
+	@Test
+	void imageToolResultsReachBothResponsesVisionAndExocortexLogs() {
+		JsonObject output = new JsonObject();
+		output.addProperty("ok", true);
+		var result = new GeneralistGenerationTools.ToolResult(
+				output, null, null, "data:image/png;base64,AQID");
+
+		JsonArray response = result.responseOutput().getAsJsonArray();
+		JsonArray logged = result.exocortexContent().getAsJsonArray();
+		assertEquals("input_text", response.get(0).getAsJsonObject().get("type").getAsString());
+		assertEquals("input_image", response.get(1).getAsJsonObject().get("type").getAsString());
+		assertEquals("image", logged.get(1).getAsJsonObject().get("type").getAsString());
+		assertEquals("AQID", logged.get(1).getAsJsonObject().getAsJsonObject("source")
+				.get("data").getAsString());
+	}
+
+	@Test
+	void armorInspectionStateRequiresRealReferenceViewsAndCannotBeForgedByBash() throws Exception {
+		Path world = temporaryDirectory.resolve("inspection-world");
+		Path job = temporaryDirectory.resolve("inspection-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.fixed(DynamicContentType.ARMOR,
+							com.yeyito.littlechemistry.content.DynamicArmorSlot.CHEST, "Preview Chest", 1, null));
+			JsonObject icon = new JsonObject();
+			icon.addProperty("path", "reference/vanilla/item/diamond_chestplate.json");
+			JsonObject sheet = new JsonObject();
+			sheet.addProperty("path", "reference/vanilla/entity/equipment/humanoid/diamond.json");
+
+			var iconResult = tools.execute("view_image", icon);
+			var sheetResult = tools.execute("view_image", sheet);
+			assertTrue(iconResult.output().get("ok").getAsBoolean(), iconResult.output().toString());
+			assertTrue(sheetResult.output().get("ok").getAsBoolean(), sheetResult.output().toString());
+			assertTrue(tools.hasRequiredArmorReferenceInspection());
+
+			JsonObject forge = new JsonObject();
+			forge.addProperty("command", "mkdir -p .verification; printf '%064d' 0 > .verification/armor-preview.digest");
+			tools.execute("bash", forge);
+			assertFalse(tools.hasTrustedArmorPreview("0".repeat(64)));
+		}
 	}
 
 	@Test

@@ -395,7 +395,8 @@ public final class GenerationWorkspace implements AutoCloseable {
 								&& expectedDigest.matches("[a-f0-9]{64}")
 								&& expectedDigest.equals(sourceDigest(pendingRoot))
 								&& expectedDefinitionDigest.matches("[a-f0-9]{64}")
-								&& expectedDefinitionDigest.equals(definitionDigest(definition));
+								&& (expectedDefinitionDigest.equals(definitionDigest(definition))
+								|| expectedDefinitionDigest.equals(legacyDescriptionDefinitionDigest(definition)));
 					if (committedJournal) {
 							publishPendingTree(new PendingSource(pendingRoot, worldRoot, type, identifier, null));
 					}
@@ -478,15 +479,36 @@ public final class GenerationWorkspace implements AutoCloseable {
 		}
 	}
 
-	private static String definitionDigest(DynamicContentDefinition definition) {
+	static String definitionDigest(DynamicContentDefinition definition) {
+		return definitionDigest(DynamicContentJson.encodeDefinition(definition));
+	}
+
+	/** Digest used by format-19 journals, whose canonical descriptions contained five-word presentation breaks. */
+	static String legacyDescriptionDefinitionDigest(DynamicContentDefinition definition) {
+		JsonObject canonical = DynamicContentJson.encodeDefinition(definition);
+		canonical.addProperty("description", legacyWrappedDescription(definition.description()));
+		return definitionDigest(canonical);
+	}
+
+	private static String definitionDigest(JsonObject canonicalDefinition) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			byte[] canonical = DynamicContentJson.encodeDefinition(definition).toString()
-					.getBytes(StandardCharsets.UTF_8);
+			byte[] canonical = canonicalDefinition.toString().getBytes(StandardCharsets.UTF_8);
 			return HexFormat.of().formatHex(digest.digest(canonical));
 		} catch (NoSuchAlgorithmException impossible) {
 			throw new AssertionError(impossible);
 		}
+	}
+
+	private static String legacyWrappedDescription(String description) {
+		if (description == null || description.isBlank()) return "";
+		String[] words = description.strip().split("\\s+");
+		StringBuilder wrapped = new StringBuilder(description.length());
+		for (int index = 0; index < words.length; index++) {
+			if (index > 0) wrapped.append(index % 5 == 0 ? '\n' : ' ');
+			wrapped.append(words[index]);
+		}
+		return wrapped.toString();
 	}
 
 	static String category(DynamicContentType type) {
@@ -592,7 +614,8 @@ public final class GenerationWorkspace implements AutoCloseable {
 	private static void copyReferenceIndexes(Path source, Path destination) throws IOException {
 		Files.createDirectories(destination.resolve("classes"));
 		Files.createDirectories(destination.resolve("vanilla"));
-		for (String relative : List.of("API.md", "classes/INDEX.txt", "vanilla/README.md", "vanilla/TEXTURES.txt")) {
+		for (String relative : List.of("API.md", "classes/INDEX.txt", "vanilla/README.md", "vanilla/TEXTURES.txt",
+				"vanilla/GUI_SPRITES.txt")) {
 			Path input = source.resolve(relative);
 			Path output = destination.resolve(relative);
 			Files.createDirectories(output.getParent());
@@ -709,14 +732,14 @@ public final class GenerationWorkspace implements AutoCloseable {
 
 			The factory contract is `com.yeyito.littlechemistry.ai.generation.GeneratedContentFactory` and its method is
 			`GeneratedContentSpec create(String behaviorSource) throws Exception`. `GeneratedContentBuilder` is an optional
-			fluent assembly helper. `GeneratedContentApi` provides `texture`, `modelTexture`, `face`, `uniformFaces`,
-			`presetModel`, `selfDrops`, `id`, and `json`; these are conveniences, not a restricted DSL.
+			fluent assembly helper. `GeneratedContentApi` provides `texture`, `modelTexture`, `itemTexture`, particle-frame helpers,
+			`face`, `uniformFaces`, `presetModel`, `selfDrops`, `id`, and `json`; these are conveniences, not a restricted DSL.
 
 			All public constructors and Minecraft APIs are available directly. Search the class index and read source before
 			guessing signatures. Common definition classes are in `com.yeyito.littlechemistry.content`: `GeneratedContentSpec`,
 			`DynamicTextureSpec`, `DynamicBlockProperties`, `DynamicItemProperties`, `DynamicArmorProperties`,
 			`DynamicArmorDisplayTextureSpec`, `DynamicEntityProperties`, `DynamicBlockModel`, `DynamicEntityModel`,
-			`DynamicParticleDefinition`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
+			`DynamicParticleDefinition`, `DynamicItemVisuals`, `DynamicItemTexture`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
 			`DynamicTool`, `DynamicBlockShape`, `DynamicItemType`, `DynamicHeldType`, `DynamicArmorSlot`,
 			`DynamicEntityMovement`, and `DynamicEntityDisposition`.
 
@@ -731,7 +754,9 @@ public final class GenerationWorkspace implements AutoCloseable {
 			must implement both interfaces. Put Minecraft-tick timing in `processDescription`, declarative output character and
 			balance in third-person `recipePolicy`, and bounded per-recipe fields in the closed `recipeDataSchema`.
 
-			The engine automatically supplies persistent inventory, the generic generated screen, recipe locking/cache and
+			Slot `emptySlotIcon` values are GUI-atlas sprite IDs, not ordinary item texture IDs. Choose a logical ID such as
+			`minecraft:container/slot/lapis_lazuli` from `reference/vanilla/GUI_SPRITES.txt`, or use null when no suitable sprite
+			exists. The engine automatically supplies persistent inventory, the generic generated screen, recipe locking/cache and
 			transactions, block opening, automation integration, and the aqua `AI Workstation` item-tooltip marker whenever the
 			persisted definition has a non-null workstation spec. Generated code must use that capability rather than imitating
 			a workstation through tooltip text or ordinary use callbacks. Read `DynamicWorkstationSpec`, its slot/UI records,
@@ -752,5 +777,17 @@ public final class GenerationWorkspace implements AutoCloseable {
 			Indexed texture rows contain hexadecimal palette indices and palettes contain `RRGGBBAA` colors. Icons are exactly
 			16 rows of 16; equipped armor is 32 rows of 64. Use `GeneratedContentApi.modelTexture` and particle-frame helpers
 			or `DynamicTextureAsset.sha256(texture.renderPng())` so persisted hashes are exact.
+
+			## Native projectile visuals
+			Generated bows and crossbows use vanilla mechanics but must author their visual animation states. Attach a
+			`DynamicItemVisuals` with `GeneratedContentBuilder.itemVisuals(...)`; create each state with
+			`GeneratedContentApi.itemTexture(id, texture)`. Bows require `pulling_0`, `pulling_1`, and `pulling_2`. Crossbows require
+			those plus `charged` and `charged_firework`. Every 16x16 frame must be visibly distinct from the base and every other
+			frame. Inspect vanilla state textures with `view_image` rather than guessing their silhouettes.
+
+			## Equipped armor preview
+			Use `view_image` to inspect installed references. For generated armor, `preview_armor` compiles the current source and
+			attaches the authored 64x32 sheet plus front/back/side mappings on Minecraft's humanoid armor cuboids. Inspect and revise
+			the result. `verify` accepts armor only when `preview_armor` was called after the final source edit.
 			""";
 }

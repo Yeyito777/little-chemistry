@@ -2,10 +2,13 @@ package com.yeyito.littlechemistry.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
+import com.yeyito.littlechemistry.content.DynamicItemVisuals;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.special.SpecialModelRenderer;
@@ -17,6 +20,16 @@ import org.joml.Vector3fc;
 import java.util.function.Consumer;
 
 public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<DynamicSpecialItemRenderer.Argument> {
+	private final String textureState;
+
+	public DynamicSpecialItemRenderer() {
+		this("base");
+	}
+
+	private DynamicSpecialItemRenderer(String textureState) {
+		this.textureState = textureState;
+	}
+
 	@Override
 	public void submit(Argument argument, PoseStack poseStack, SubmitNodeCollector nodes, int light, int overlay,
 			boolean hasFoil, int outlineColor) {
@@ -84,9 +97,18 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 			return null;
 		}
 		boolean block = stack.is(DynamicContentObjects.BLOCK_ITEM);
-		return new Argument(definition.textureHash(), block,
+		String textureHash = selectedTextureHash(definition, textureState, block);
+		return new Argument(textureHash, block,
 				block && definition.block() != null ? definition.block().shape() : DynamicBlockShape.FULL_CUBE,
 				block ? definition.blockModel() : null);
+	}
+
+	static String selectedTextureHash(DynamicContentDefinition definition, String textureState, boolean block) {
+		if (block) return definition.textureHash();
+		String fallback = textureState.equals(DynamicItemVisuals.CHARGED_FIREWORK)
+				? definition.itemVisuals().textureHash(DynamicItemVisuals.CHARGED, definition.textureHash())
+				: definition.textureHash();
+		return definition.itemVisuals().textureHash(textureState, fallback);
 	}
 
 	public record Argument(String textureHash, boolean block, DynamicBlockShape blockShape, DynamicBlockModel blockModel) {
@@ -108,12 +130,18 @@ public final class DynamicSpecialItemRenderer implements SpecialModelRenderer<Dy
 		}
 	}
 
-	public record Unbaked() implements SpecialModelRenderer.Unbaked<Argument> {
-		public static final MapCodec<Unbaked> MAP_CODEC = MapCodec.unit(new Unbaked());
+	public record Unbaked(String state) implements SpecialModelRenderer.Unbaked<Argument> {
+		public static final MapCodec<Unbaked> MAP_CODEC = RecordCodecBuilder.mapCodec(instance -> instance.group(
+				Codec.STRING.optionalFieldOf("state", "base").forGetter(Unbaked::state)
+		).apply(instance, Unbaked::new));
+
+		public Unbaked() {
+			this("base");
+		}
 
 		@Override
 		public DynamicSpecialItemRenderer bake(SpecialModelRenderer.BakingContext context) {
-			return new DynamicSpecialItemRenderer();
+			return new DynamicSpecialItemRenderer(state);
 		}
 
 		@Override

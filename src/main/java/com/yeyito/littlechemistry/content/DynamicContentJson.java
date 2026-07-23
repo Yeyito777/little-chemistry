@@ -18,7 +18,8 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DynamicContentJson {
-	public static final int CURRENT_FORMAT = 19;
+	/** Formats 20 and 21 belonged to an abandoned development schema and must be restored from a format-19 backup. */
+	public static final int CURRENT_FORMAT = 22;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -52,6 +53,7 @@ public final class DynamicContentJson {
 		}
 		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
 		if (definition.entityModel() != null) entry.add("entityModel", encodeEntityModel(definition.entityModel()));
+		if (!definition.itemVisuals().isEmpty()) entry.add("itemVisuals", encodeItemVisuals(definition.itemVisuals()));
 		entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
 		if (definition.workstation() != null) {
 			entry.add("workstation", DynamicWorkstationJson.encode(definition.workstation()));
@@ -69,7 +71,7 @@ public final class DynamicContentJson {
 	public static Decoded decode(byte[] bytes) {
 		JsonObject root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
 		int format = storedFormat(root);
-		if (format < 1 || format > CURRENT_FORMAT) {
+		if (!isSupportedFormat(format)) {
 			throw new IllegalArgumentException("Unsupported dynamic content format");
 		}
 		UUID serverId = UUID.fromString(root.get("serverId").getAsString());
@@ -130,8 +132,10 @@ public final class DynamicContentJson {
 					? decodeCompatibleEntityModel(entry.getAsJsonObject("entityModel")) : null;
 			List<DynamicParticleDefinition> customParticles = entry.has("customParticles")
 					? decodeCustomParticles(entry.getAsJsonArray("customParticles")) : List.of();
-			DynamicWorkstationSpec workstation = format >= 18 && entry.has("workstation")
-					? DynamicWorkstationJson.decode(entry.getAsJsonObject("workstation")) : null;
+				DynamicWorkstationSpec workstation = format >= 18 && entry.has("workstation")
+						? DynamicWorkstationJson.decode(entry.getAsJsonObject("workstation")) : null;
+				DynamicItemVisuals itemVisuals = format >= 22 && entry.has("itemVisuals")
+						? decodeItemVisuals(entry.getAsJsonArray("itemVisuals")) : DynamicItemVisuals.NONE;
 			String behaviorSource;
 			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
@@ -151,9 +155,9 @@ public final class DynamicContentJson {
 			}
 			definitions.add(new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
-					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-					customParticles, workstation, entity, entityModel
-			));
+						armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+						customParticles, workstation, entity, entityModel, itemVisuals
+				));
 		}
 		validateUniqueNames(definitions);
 		DynamicBlockDrops.validateCatalog(definitions);
@@ -162,6 +166,10 @@ public final class DynamicContentJson {
 
 	static int storedFormat(byte[] bytes) {
 		return storedFormat(JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject());
+	}
+
+	static boolean isSupportedFormat(int format) {
+		return format >= 1 && format <= 19 || format == CURRENT_FORMAT;
 	}
 
 	private static int storedFormat(JsonObject root) {
@@ -194,6 +202,28 @@ public final class DynamicContentJson {
 		List<String> rows = new ArrayList<>();
 		encoded.getAsJsonArray("rows").forEach(value -> rows.add(value.getAsString()));
 		return new DynamicTextureSpec(palette, rows);
+	}
+
+	private static JsonArray encodeItemVisuals(DynamicItemVisuals visuals) {
+		JsonArray encoded = new JsonArray();
+		for (DynamicItemTexture state : visuals.states()) {
+			JsonObject value = new JsonObject();
+			value.addProperty("id", state.id());
+			value.addProperty("hash", state.hash());
+			value.add("texture", encodeTexture(state.texture()));
+			encoded.add(value);
+		}
+		return encoded;
+	}
+
+	private static DynamicItemVisuals decodeItemVisuals(JsonArray encoded) {
+		List<DynamicItemTexture> states = new ArrayList<>();
+		for (JsonElement element : encoded) {
+			JsonObject value = element.getAsJsonObject();
+			states.add(new DynamicItemTexture(value.get("id").getAsString(), value.get("hash").getAsString(),
+					decodeTexture(value.getAsJsonObject("texture"))));
+		}
+		return new DynamicItemVisuals(states);
 	}
 
 	private static JsonArray encodeCustomParticles(List<DynamicParticleDefinition> particles) {

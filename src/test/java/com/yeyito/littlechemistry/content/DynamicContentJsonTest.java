@@ -55,7 +55,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(19, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(22, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
@@ -99,7 +99,7 @@ class DynamicContentJsonTest {
 		DynamicContentDefinition dropBranchDecoded = DynamicContentJson.decode(
 				dropBranchFormatFifteen.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
-		assertEquals("A crystal that holds a\nsliver of moonlight.", decoded.description());
+		assertEquals("A crystal that holds a sliver of moonlight.", decoded.description());
 		assertEquals(DynamicRarity.MYTHICAL, decoded.rarityTier());
 		assertEquals(Rarity.EPIC, decoded.rarity());
 		assertEquals(Rarity.EPIC, decoded.block().rarity());
@@ -444,7 +444,7 @@ class DynamicContentJsonTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 9, List.of(workstation, entity));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(19, decoded.format());
+		assertEquals(22, decoded.format());
 		assertEquals(2, decoded.definitions().size());
 		assertEquals("separator", decoded.definitions().get(0).name());
 		assertTrue(decoded.definitions().get(0).workstation().recipeDataSchema()
@@ -458,6 +458,37 @@ class DynamicContentJsonTest {
 				formatEighteen.toString().getBytes(StandardCharsets.UTF_8));
 		assertEquals("separator", migrated.definitions().get(0).name());
 		assertEquals(DynamicWorkstationSpecTest.workstation(), migrated.definitions().get(0).workstation());
+	}
+
+	@Test
+	void currentCatalogPreservesProjectileFramesWhileFormatNineteenDefaultsToStaticArtwork() throws Exception {
+		DynamicTextureSpec base = rectangularTexture(16, 16, "00000000", "604020FF");
+		DynamicItemProperties crossbow = new DynamicItemProperties(
+				DynamicItemType.ITEM, DynamicHeldType.CROSSBOW, 1, Rarity.COMMON, false, 1, 0.0,
+				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
+				0, 0, 0, null, null);
+		DynamicItemVisuals visuals = new DynamicItemVisuals(List.of(
+				itemVisual(DynamicItemVisuals.PULLING_0, "704020FF"),
+				itemVisual(DynamicItemVisuals.PULLING_1, "805020FF"),
+				itemVisual(DynamicItemVisuals.PULLING_2, "906020FF"),
+				itemVisual(DynamicItemVisuals.CHARGED, "A07020FF"),
+				itemVisual(DynamicItemVisuals.CHARGED_FIREWORK, "B08020FF")));
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ITEM, "ember_crossbow", "Ember Crossbow", "A test crossbow.",
+				DynamicRarity.COMMON, 0L, DynamicTextureAsset.sha256(base.renderPng()), base,
+				null, null, null, crossbow, null, DynamicBehaviorSource.completeLegacySource(null), null,
+				List.of(), null, null, null, visuals);
+		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 2, List.of(definition));
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(encoded).definitions().getFirst();
+		assertEquals(visuals, decoded.itemVisuals());
+		assertEquals(6, decoded.renderTextureHashes().size());
+
+		JsonObject legacy = JsonParser.parseString(new String(encoded, StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 19);
+		DynamicContentDefinition migrated = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
+		assertEquals(DynamicItemVisuals.NONE, migrated.itemVisuals());
 	}
 
 	@Test
@@ -561,5 +592,10 @@ class DynamicContentJsonTest {
 			rows.add(row.toString());
 		}
 		return new DynamicTextureSpec(List.of(dark, light), rows);
+	}
+
+	private static DynamicItemTexture itemVisual(String id, String color) throws Exception {
+		DynamicTextureSpec texture = rectangularTexture(16, 16, "00000000", color);
+		return new DynamicItemTexture(id, DynamicTextureAsset.sha256(texture.renderPng()), texture);
 	}
 }

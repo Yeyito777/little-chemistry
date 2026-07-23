@@ -115,8 +115,7 @@ final class DynamicProjectileCarrierHooks {
 			Consumer<Component> builder, TooltipFlag flag) {
 		DynamicContentDefinition definition = definition(stack);
 		if (definition != null && !definition.description().isBlank()) {
-			definition.description().lines().forEach(line ->
-					builder.accept(Component.literal(line).withStyle(ChatFormatting.GRAY)));
+			DynamicTooltipText.appendWrapped(builder, definition.description(), ChatFormatting.GRAY);
 		}
 		if (definition == null || definition.item() == null) return;
 		switch (definition.item().craftingUse()) {

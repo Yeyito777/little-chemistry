@@ -26,33 +26,34 @@ public record DynamicContentDefinition(
 		List<DynamicParticleDefinition> customParticles,
 		DynamicWorkstationSpec workstation,
 		DynamicEntityProperties entity,
-		DynamicEntityModel entityModel
+		DynamicEntityModel entityModel,
+		DynamicItemVisuals itemVisuals
 ) {
-	private static final int DESCRIPTION_WORDS_PER_LINE = 5;
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
-		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, null),
-				textureSeed, textureHash, texture, null, null,
-				block, item, null, behaviorSource, null, List.of(), null, null, null);
+			this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, null),
+					textureSeed, textureHash, texture, null, null,
+					block, item, null, behaviorSource, null, List.of(), null, null, null, DynamicItemVisuals.NONE);
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
-		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
-				textureSeed, textureHash, texture, null, null,
-				block, item, armor, behaviorSource, null, List.of(), null, null, null);
+			this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
+					textureSeed, textureHash, texture, null, null,
+					block, item, armor, behaviorSource, null, List.of(), null, null, null, DynamicItemVisuals.NONE);
 	}
 
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, long textureSeed,
 			String textureHash, DynamicTextureSpec texture, String armorDisplayTextureHash,
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource) {
-		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
-				textureSeed, textureHash, texture, armorDisplayTextureHash,
-				armorDisplayTexture, block, item, armor, behaviorSource, null, List.of(), null, null, null);
+			this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
+					textureSeed, textureHash, texture, armorDisplayTextureHash,
+					armorDisplayTexture, block, item, armor, behaviorSource, null, List.of(), null, null, null,
+					DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for callers predating generated descriptions. */
@@ -61,9 +62,10 @@ public record DynamicContentDefinition(
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor, String behaviorSource,
 			DynamicBlockModel blockModel) {
-		this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
-				textureSeed, textureHash, texture, armorDisplayTextureHash,
-				armorDisplayTexture, block, item, armor, behaviorSource, blockModel, List.of(), null, null, null);
+			this(type, name, displayName, "", DynamicRarity.fromProperties(block, item, armor),
+					textureSeed, textureHash, texture, armorDisplayTextureHash,
+					armorDisplayTexture, block, item, armor, behaviorSource, blockModel, List.of(), null, null, null,
+					DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for callers predating generated custom particles. */
@@ -72,9 +74,9 @@ public record DynamicContentDefinition(
 			String armorDisplayTextureHash, DynamicArmorDisplayTextureSpec armorDisplayTexture,
 			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
 			String behaviorSource, DynamicBlockModel blockModel) {
-		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
-				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-				List.of(), null, null, null);
+			this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+					List.of(), null, null, null, DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for callers predating optional workstation blocks. */
@@ -83,9 +85,9 @@ public record DynamicContentDefinition(
 			String armorDisplayTextureHash, DynamicArmorDisplayTextureSpec armorDisplayTexture,
 			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
 			String behaviorSource, DynamicBlockModel blockModel, List<DynamicParticleDefinition> customParticles) {
-		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
-				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-				customParticles, null, null, null);
+			this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+					customParticles, null, null, null, DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for workstation-aware callers predating generated entities. */
@@ -95,9 +97,9 @@ public record DynamicContentDefinition(
 			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
 			String behaviorSource, DynamicBlockModel blockModel, List<DynamicParticleDefinition> customParticles,
 			DynamicWorkstationSpec workstation) {
-		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
-				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-				customParticles, workstation, null, null);
+			this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+					customParticles, workstation, null, null, DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for entity definitions created before particles and workstations were integrated. */
@@ -107,9 +109,21 @@ public record DynamicContentDefinition(
 			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
 			String behaviorSource, DynamicBlockModel blockModel, DynamicEntityProperties entity,
 			DynamicEntityModel entityModel) {
+			this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+					armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+					List.of(), null, entity, entityModel, DynamicItemVisuals.NONE);
+	}
+
+	/** Compatibility constructor for definitions persisted before stateful projectile artwork. */
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, String description,
+			DynamicRarity rarityTier, long textureSeed, String textureHash, DynamicTextureSpec texture,
+			String armorDisplayTextureHash, DynamicArmorDisplayTextureSpec armorDisplayTexture,
+			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
+			String behaviorSource, DynamicBlockModel blockModel, List<DynamicParticleDefinition> customParticles,
+			DynamicWorkstationSpec workstation, DynamicEntityProperties entity, DynamicEntityModel entityModel) {
 		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
 				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-				List.of(), null, entity, entityModel);
+				customParticles, workstation, entity, entityModel, DynamicItemVisuals.NONE);
 	}
 
 	public DynamicContentDefinition {
@@ -121,6 +135,7 @@ public record DynamicContentDefinition(
 			throw new IllegalArgumentException("Dynamic content display name is invalid");
 		}
 		description = normalizeDescription(description);
+		itemVisuals = itemVisuals == null ? DynamicItemVisuals.NONE : itemVisuals;
 		if (rarityTier == null) throw new IllegalArgumentException("Dynamic content rarity is required");
 		if (textureHash == null || !textureHash.matches("[a-f0-9]{64}")) {
 			throw new IllegalArgumentException("Dynamic content texture hash is invalid");
@@ -139,6 +154,9 @@ public record DynamicContentDefinition(
 			throw new IllegalArgumentException("Dynamic behavior source is invalid");
 		}
 		customParticles = DynamicParticleDefinition.validateLibrary(customParticles);
+		if (type != DynamicContentType.ITEM && !itemVisuals.isEmpty()) {
+			throw new IllegalArgumentException("Only item content may define item visual states");
+		}
 		if (workstation != null && type != DynamicContentType.BLOCK) {
 			throw new IllegalArgumentException("Only block content may define a workstation");
 		}
@@ -179,6 +197,7 @@ public record DynamicContentDefinition(
 					texture.requireDimensions(DynamicTextureAsset.WIDTH, DynamicTextureAsset.HEIGHT);
 					texture.requireBinaryAlpha();
 				}
+				itemVisuals.validateFor(item.heldType());
 			}
 			case ARMOR -> {
 				if (armor == null || block != null || item != null || entity != null
@@ -232,24 +251,11 @@ public record DynamicContentDefinition(
 				&& character != '\n' && character != '\r')) {
 			throw new IllegalArgumentException("Description may contain only printable characters and line breaks");
 		}
-		String wrapped = wrapDescription(normalized);
-		if (wrapped.length() > 120) {
+		normalized = normalized.replaceAll("[\\s\\p{Z}]+", " ").strip();
+		if (normalized.length() > 120) {
 			throw new IllegalArgumentException("Description must contain at most 120 characters");
 		}
-		return wrapped;
-	}
-
-	private static String wrapDescription(String description) {
-		if (description.isEmpty()) return description;
-		String[] words = description.split("\\s+");
-		StringBuilder wrapped = new StringBuilder(description.length());
-		for (int index = 0; index < words.length; index++) {
-			if (index > 0) {
-				wrapped.append(index % DESCRIPTION_WORDS_PER_LINE == 0 ? '\n' : ' ');
-			}
-			wrapped.append(words[index]);
-		}
-		return wrapped.toString();
+		return normalized;
 	}
 
 	/**
@@ -266,7 +272,12 @@ public record DynamicContentDefinition(
 	/** All ordinary textures needed to render this definition, excluding the separate worn-armor sheet. */
 	public java.util.Set<String> renderTextureHashes() {
 		if (blockModel != null) return blockModel.textureHashes();
-		if (entityModel == null) return java.util.Set.of(textureHash);
+		if (entityModel == null) {
+			if (itemVisuals.isEmpty()) return java.util.Set.of(textureHash);
+			Set<String> hashes = new HashSet<>(itemVisuals.textureHashes());
+			hashes.add(textureHash);
+			return Set.copyOf(hashes);
+		}
 		java.util.Set<String> hashes = new java.util.HashSet<>(entityModel.textureHashes());
 		hashes.add(textureHash);
 		return java.util.Set.copyOf(hashes);

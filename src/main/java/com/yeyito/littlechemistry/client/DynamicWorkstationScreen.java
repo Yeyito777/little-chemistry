@@ -14,6 +14,7 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.Slot;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -60,9 +61,10 @@ public final class DynamicWorkstationScreen extends AbstractContainerScreen<Dyna
 		var ui = menu.specification().ui();
 		graphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, argb(ui.backgroundColor()));
 		graphics.outline(leftPos, topPos, imageWidth, imageHeight, 0xFF101010);
-		for (DynamicWorkstationSlot slot : menu.specification().slots()) {
-			int x = leftPos + slot.x();
-			int y = topPos + slot.y();
+		for (Slot slot : menu.slots) {
+			if (!slot.isActive()) continue;
+			int x = leftPos + slot.x;
+			int y = topPos + slot.y;
 			graphics.fill(x - 1, y - 1, x + 17, y + 17, 0xFF202020);
 			graphics.outline(x - 1, y - 1, 18, 18, 0xFFB8B8B8);
 		}
@@ -70,7 +72,7 @@ public final class DynamicWorkstationScreen extends AbstractContainerScreen<Dyna
 			drawGauge(graphics, gauge);
 			if (gauge.tooltip() != null && isHovering(gauge.x(), gauge.y(), gauge.width(), gauge.height(),
 					mouseX, mouseY)) {
-				graphics.setTooltipForNextFrame(font, Component.literal(gauge.tooltip()), mouseX, mouseY);
+				graphics.setTooltipForNextFrame(font, font.split(Component.literal(gauge.tooltip()), 170), mouseX, mouseY);
 			}
 		}
 	}
@@ -85,7 +87,7 @@ public final class DynamicWorkstationScreen extends AbstractContainerScreen<Dyna
 			}
 			if (label.tooltip() != null && isHovering(label.x(), label.y(),
 					Math.max(1, font.width(label.text())), 10 * line, mouseX, mouseY)) {
-				graphics.setTooltipForNextFrame(font, Component.literal(label.tooltip()),
+				graphics.setTooltipForNextFrame(font, font.split(Component.literal(label.tooltip()), 170),
 						mouseX, mouseY);
 			}
 		}
@@ -94,11 +96,12 @@ public final class DynamicWorkstationScreen extends AbstractContainerScreen<Dyna
 	@Override
 	protected void extractTooltip(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
 		super.extractTooltip(graphics, mouseX, mouseY);
-		if (hoveredSlot == null || hoveredSlot.hasItem() || hoveredSlot.index < 0
-				|| hoveredSlot.index >= menu.specification().slots().size()) return;
-		DynamicWorkstationSlot specification = menu.specification().slots().get(hoveredSlot.index);
+		int menuSlotIndex = hoveredSlot == null ? -1 : menu.slots.indexOf(hoveredSlot);
+		if (hoveredSlot == null || hoveredSlot.hasItem() || menuSlotIndex < 0
+				|| menuSlotIndex >= menu.specification().slots().size()) return;
+		DynamicWorkstationSlot specification = menu.specification().slots().get(menuSlotIndex);
 		if (specification.tooltip() != null) {
-			graphics.setTooltipForNextFrame(font, Component.literal(specification.tooltip()), mouseX, mouseY);
+			graphics.setTooltipForNextFrame(font, font.split(Component.literal(specification.tooltip()), 170), mouseX, mouseY);
 		}
 	}
 

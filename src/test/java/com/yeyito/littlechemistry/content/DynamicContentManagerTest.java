@@ -26,7 +26,7 @@ final class DynamicContentManagerTest {
 		byte[] compatible = DynamicContentJson.encode(UUID.randomUUID(), 7, List.of());
 		Files.write(temporaryDirectory.resolve("dynamic-content.format-17.backup.json"), legacyFormat(compatible, 17));
 		Path selected = temporaryDirectory.resolve("dynamic-content.format-19.backup.json");
-		Files.write(selected, compatible);
+		Files.write(selected, legacyFormat(compatible, 19));
 		byte[] newer = legacyFormat(compatible, 21);
 		Files.write(dataFile, newer);
 
@@ -69,6 +69,22 @@ final class DynamicContentManagerTest {
 				() -> DynamicContentManager.loadCompatibleCatalog(dataFile));
 
 		assertTrue(failure.getMessage().contains("no compatible migration backup"));
+	}
+
+	@Test
+	void abandonedFormatTwentyIsArchivedAndRestoredFromFormatNineteen() throws Exception {
+		Path dataFile = temporaryDirectory.resolve("dynamic-content.json");
+		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 4, List.of());
+		byte[] formatNineteen = legacyFormat(encoded, 19);
+		byte[] formatTwenty = legacyFormat(encoded, 20);
+		Files.write(temporaryDirectory.resolve("dynamic-content.format-19.backup.json"), formatNineteen);
+		Files.write(dataFile, formatTwenty);
+
+		DynamicContentJson.Decoded restored = DynamicContentManager.loadCompatibleCatalog(dataFile);
+
+		assertEquals(19, restored.format());
+		assertArrayEquals(formatTwenty, Files.readAllBytes(
+				temporaryDirectory.resolve("dynamic-content.format-20.pre-v3.5-revert.json")));
 	}
 
 	private static byte[] legacyFormat(byte[] encoded, int format) {

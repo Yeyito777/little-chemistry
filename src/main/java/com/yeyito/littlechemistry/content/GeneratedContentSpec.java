@@ -18,19 +18,22 @@ public record GeneratedContentSpec(
 		List<DynamicParticleDefinition> customParticles,
 		DynamicWorkstationSpec workstation,
 		DynamicEntityProperties entity,
-		DynamicEntityModel entityModel
+		DynamicEntityModel entityModel,
+		DynamicItemVisuals itemVisuals
 ) {
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, String behaviorSource) {
 		this(texture, block, item, null, null, behaviorSource, null,
-				DynamicRarity.fromProperties(block, item, null), "", List.of(), null, null, null);
+					DynamicRarity.fromProperties(block, item, null), "", List.of(), null, null, null,
+					DynamicItemVisuals.NONE);
 	}
 
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor,
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, null,
-				DynamicRarity.fromProperties(block, item, armor), "", List.of(), null, null, null);
+					DynamicRarity.fromProperties(block, item, armor), "", List.of(), null, null, null,
+					DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for callers predating generated descriptions. */
@@ -39,7 +42,8 @@ public record GeneratedContentSpec(
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
 			DynamicBlockModel blockModel) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				DynamicRarity.fromProperties(block, item, armor), "", List.of(), null, null, null);
+					DynamicRarity.fromProperties(block, item, armor), "", List.of(), null, null, null,
+					DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for callers predating generated custom particles. */
@@ -48,7 +52,7 @@ public record GeneratedContentSpec(
 			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
 			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarityTier, description, List.of(), null, null, null);
+					rarityTier, description, List.of(), null, null, null, DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for callers predating optional workstation blocks. */
@@ -58,7 +62,7 @@ public record GeneratedContentSpec(
 			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description,
 			List<DynamicParticleDefinition> customParticles) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarityTier, description, customParticles, null, null, null);
+					rarityTier, description, customParticles, null, null, null, DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for workstation-aware callers predating generated entities. */
@@ -68,7 +72,7 @@ public record GeneratedContentSpec(
 			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description,
 			List<DynamicParticleDefinition> customParticles, DynamicWorkstationSpec workstation) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarityTier, description, customParticles, workstation, null, null);
+					rarityTier, description, customParticles, workstation, null, null, DynamicItemVisuals.NONE);
 	}
 
 	/** Compatibility constructor for generated entities from the standalone entity subsystem. */
@@ -78,7 +82,18 @@ public record GeneratedContentSpec(
 			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description,
 			DynamicEntityProperties entity, DynamicEntityModel entityModel) {
 		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarityTier, description, List.of(), null, entity, entityModel);
+					rarityTier, description, List.of(), null, entity, entityModel, DynamicItemVisuals.NONE);
+	}
+
+	/** Compatibility constructor for generated source written before stateful projectile artwork. */
+	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor,
+			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
+			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description,
+			List<DynamicParticleDefinition> customParticles, DynamicWorkstationSpec workstation,
+			DynamicEntityProperties entity, DynamicEntityModel entityModel) {
+		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
+				rarityTier, description, customParticles, workstation, entity, entityModel, DynamicItemVisuals.NONE);
 	}
 
 	public GeneratedContentSpec {
@@ -91,6 +106,17 @@ public record GeneratedContentSpec(
 			throw new IllegalArgumentException("Generated content must contain exactly one property kind");
 		}
 		if (rarityTier == null) throw new IllegalArgumentException("Generated content requires a rarity");
+		itemVisuals = itemVisuals == null ? DynamicItemVisuals.NONE : itemVisuals;
+		if (item == null) {
+			if (!itemVisuals.isEmpty()) throw new IllegalArgumentException("Only generated items may have item visual states");
+		} else {
+			itemVisuals.validateFor(item.heldType());
+			for (DynamicItemTexture state : itemVisuals.states()) {
+				if (state.texture().equals(texture)) {
+					throw new IllegalArgumentException("Item visual states must differ from the base texture");
+				}
+			}
+		}
 		customParticles = DynamicParticleDefinition.validateLibrary(customParticles);
 		if (workstation != null && block == null) {
 			throw new IllegalArgumentException("Only generated blocks may define a workstation");

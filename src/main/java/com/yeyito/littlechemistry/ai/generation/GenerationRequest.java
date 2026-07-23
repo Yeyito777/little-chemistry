@@ -24,11 +24,15 @@ record GenerationRequest(
 			shading, and UV or layout conventions. Then create an original texture grounded in those references.
 			""";
 	private static final String ARMOR_DIRECTION = """
-			If the result is armor, inspect reference/vanilla/TEXTURES.txt and read at least one relevant vanilla or modded
+			If the result is armor, inspect reference/vanilla/TEXTURES.txt and use view_image on at least one relevant vanilla
 			armor item icon and humanoid equipment texture before coding. Author both the original 16x16 inventory icon and the
 			required 64x32 equipment sheet using Minecraft's actual armor UV layout. For head armor, explicitly study and paint
 			the base-head UV region at x=0..31, y=0..15 and hat/outer-head region at x=32..63, y=0..15 so the worn helmet
-			renders on the player's head instead of only in the inventory.
+			renders on the player's head instead of only in the inventory. After the texture is complete, call preview_armor and
+			inspect its front, back, and side equipped views. Revise misplaced, sparse, noisy, or incoherent artwork and call
+			preview_armor again after the final source edit; final verify rejects armor that was not previewed at that exact digest.
+			Remember that texture-only vanilla armor cannot create a broad hat brim or a backpack with real depth, so design a
+			coherent texture for the available humanoid shell rather than implying unsupported geometry.
 			""";
 	private static final String WORKSTATION_DIRECTION = """
 			If the natural result is a workstation, code it as a complete generated block with a non-null
@@ -43,7 +47,10 @@ record GenerationRequest(
 			""";
 	private static final String PROJECTILE_WEAPON_DIRECTION = """
 			If the result is a bow or crossbow, make it an ordinary item with heldType `BOW` or `CROSSBOW`, maxStack 1,
-			outputCount 1, and positive enchantability.
+			outputCount 1, and positive enchantability. Inspect the matching vanilla standby, pulling, and charged textures with
+			view_image. Supply complete, visibly distinct `DynamicItemVisuals`: bows require `pulling_0`, `pulling_1`, and
+			`pulling_2`; crossbows additionally require `charged` and `charged_firework`. Create each state with
+			`GeneratedContentApi.itemTexture` so its persisted hash is exact.
 			The registered native carrier supplies vanilla drawing, charging, ammunition, firing, sounds, enchantments, and
 			standard durability; do not reimplement those mechanics in generated behavior.
 			""";
