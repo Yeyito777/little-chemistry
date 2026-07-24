@@ -17,10 +17,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.startsWith("Please generate and code a Minecraft item named \"Moonlit Satchel\""));
 		assertTrue(prompt.contains("items/moonlit_satchel/C_moonlit_satchel_Content.java"));
 		assertTrue(prompt.contains("package `items.c_moonlit_satchel`"));
-		assertTrue(prompt.contains("installed vanilla textures"));
-		assertTrue(prompt.contains("same indexed palette/rows representation"));
+		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
+		assertTrue(prompt.contains("indexed RRGGBBAA palette/rows representation"));
 		assertTrue(prompt.contains("read_texture"));
-		assertTrue(prompt.contains("text-only"));
+		assertTrue(prompt.contains("no raster image"));
 		assertFalse(prompt.contains("AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
 	}
@@ -37,7 +37,7 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("base-head region x=0..31,y=0..15"));
 		assertTrue(prompt.contains("outer-head region"));
 		assertTrue(prompt.contains("leave unrelated base-head faces transparent"));
-		assertTrue(prompt.contains("inspect_generated_textures"));
+		assertFalse(prompt.contains("inspect_generated_textures"));
 		assertFalse(prompt.contains("view_image"));
 	}
 
@@ -59,7 +59,7 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
 		assertTrue(prompt.contains("Armor output count is always 1"));
 		assertFalse(prompt.contains("\"outputCount\":1"));
-		assertTrue(prompt.contains("Always derive the visual design from installed vanilla textures"));
+		assertTrue(prompt.contains("automatically populated with exact textual artwork"));
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
@@ -73,7 +73,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("outputCount 1, and positive enchantability"));
 		assertTrue(prompt.contains("do not reimplement those mechanics"));
 		assertTrue(prompt.contains("ProjectileCreatedBehavior"));
-		assertTrue(prompt.contains("Backpacks, satchels, bags"));
+		assertTrue(prompt.contains("decide the result's primary player interaction"));
+		assertTrue(prompt.contains("Choose armor only when being equipped for protection is primary"));
+		assertTrue(prompt.contains("Choose native storage when opening and"));
+		assertFalse(prompt.contains("Backpacks, satchels, bags"));
 		assertTrue(prompt.contains("`storage(new DynamicStorageSpec(rows))`"));
 		assertTrue(prompt.contains("`*_active` variants"));
 	}
@@ -149,6 +152,24 @@ final class GenerationRequestTest {
 		assertTrue(system.contains("RRGGBBAA palette plus hexadecimal rows"));
 		assertFalse(system.contains("view_image"));
 		assertFalse(system.contains("input_image"));
+		assertFalse(system.contains("inspect_generated_textures"));
+	}
+
+	@Test
+	void automaticIngredientTexturesAreASeparateUserMessageSection() {
+		var recipe = JsonParser.parseString("""
+				{"recipeType":"crafting","grid":[{"itemId":"minecraft:leather_helmet"}]}
+				""").getAsJsonObject();
+		RecipeVisualReferences.Bundle references = RecipeVisualReferences.forRequest(recipe);
+
+		String prompt = GenerationRequest.recipe(recipe, null, null).userPrompt(references.promptSection());
+
+		assertTrue(prompt.contains("## Automatically supplied recipe-item texture references"));
+		assertTrue(prompt.contains("minecraft:item/leather_helmet"));
+		assertTrue(prompt.contains("minecraft:entity/equipment/humanoid/leather"));
+		assertTrue(prompt.contains("search reference/vanilla/TEXTURES.txt and call read_texture"));
+		assertFalse(prompt.contains("image/png"));
+		assertFalse(prompt.contains("inspect_generated_textures"));
 	}
 
 	@Test

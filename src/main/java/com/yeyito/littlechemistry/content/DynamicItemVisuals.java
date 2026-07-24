@@ -23,13 +23,9 @@ public record DynamicItemVisuals(List<DynamicItemTexture> states) {
 			throw new IllegalArgumentException("Items may define at most five visual states");
 		}
 		Map<String, DynamicItemTexture> unique = new LinkedHashMap<>();
-		Set<String> hashes = new java.util.HashSet<>();
 		for (DynamicItemTexture state : states) {
 			if (state == null || unique.putIfAbsent(state.id(), state) != null) {
 				throw new IllegalArgumentException("Item visual state IDs must be unique");
-			}
-			if (!hashes.add(state.hash())) {
-				throw new IllegalArgumentException("Item visual state textures must be visually distinct");
 			}
 		}
 		states = List.copyOf(unique.values());

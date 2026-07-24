@@ -3,9 +3,7 @@ package com.yeyito.littlechemistry.ai.generation;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicContentType;
-import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -71,8 +69,9 @@ final class GeneralistGenerationToolsTest {
 		Set<String> names = new HashSet<>();
 		definitions.forEach(element -> names.add(element.getAsJsonObject().get("name").getAsString()));
 
-		assertEquals(Set.of("bash", "read", "read_texture", "inspect_generated_textures",
+		assertEquals(Set.of("bash", "read", "read_texture",
 				"grep", "glob", "write", "edit", "patch", "verify"), names);
+		assertFalse(names.contains("inspect_generated_textures"));
 		assertFalse(names.contains("view_image"));
 		assertFalse(names.contains("preview_armor"));
 		assertFalse(names.stream().anyMatch(name -> name.startsWith("set_")));
@@ -98,48 +97,25 @@ final class GeneralistGenerationToolsTest {
 	}
 
 	@Test
-	void armorInspectionStateRequiresExactTextualReferenceReadsAndCannotBeForgedByBash() throws Exception {
-		Path world = temporaryDirectory.resolve("inspection-world");
-		Path job = temporaryDirectory.resolve("inspection-job");
-		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
-			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
-					GenerationRequest.fixed(DynamicContentType.ARMOR,
-							com.yeyito.littlechemistry.content.DynamicArmorSlot.CHEST, "Preview Chest", 1, null));
-			JsonObject icon = new JsonObject();
-			icon.addProperty("path", "reference/vanilla/item/diamond_chestplate.json");
-			JsonObject sheet = new JsonObject();
-			sheet.addProperty("path", "reference/vanilla/entity/equipment/humanoid/diamond.json");
+	void recipeItemReferencesAreAutomaticallySuppliedAsExactTextIncludingEquipmentLayers() {
+		JsonObject recipe = JsonParser.parseString("""
+				{"grid":[{"itemId":"minecraft:leather_helmet"},
+				         {"itemId":"minecraft:golden_chestplate"}]}
+				""").getAsJsonObject();
 
-			var decoratedRead = tools.execute("read", icon);
-			var iconResult = tools.execute("read_texture", icon);
-			var sheetResult = tools.execute("read_texture", sheet);
-			assertFalse(decoratedRead.output().get("ok").getAsBoolean());
-			assertTrue(decoratedRead.output().get("message").getAsString().contains("read_texture"));
-			assertTrue(iconResult.output().get("ok").getAsBoolean(), iconResult.output().toString());
-			assertTrue(sheetResult.output().get("ok").getAsBoolean(), sheetResult.output().toString());
-			assertTrue(iconResult.output().has("palette"));
-			assertTrue(iconResult.output().has("rows"));
-			assertTrue(sheetResult.output().has("palette"));
-			assertTrue(sheetResult.output().has("rows"));
-			DynamicTextureSpec iconTexture = new DynamicTextureSpec(strings(iconResult.output(), "palette"),
-					strings(iconResult.output(), "rows"));
-			DynamicArmorDisplayTextureSpec equipmentTexture = new DynamicArmorDisplayTextureSpec(
-					strings(sheetResult.output(), "palette"), strings(sheetResult.output(), "rows"));
-			assertEquals(16, iconTexture.width());
-			assertEquals(16, iconTexture.height());
-			assertEquals(64, equipmentTexture.rows().getFirst().length());
-			assertEquals(32, equipmentTexture.rows().size());
-			assertTrue(tools.hasReadTextureReference());
-			assertTrue(tools.hasRequiredArmorReferenceReads(
-					com.yeyito.littlechemistry.content.DynamicArmorSlot.CHEST));
-			assertFalse(tools.hasRequiredArmorReferenceReads(
-					com.yeyito.littlechemistry.content.DynamicArmorSlot.HEAD));
+		RecipeVisualReferences.Bundle references = RecipeVisualReferences.forRequest(recipe);
 
-			JsonObject forge = new JsonObject();
-			forge.addProperty("command", "mkdir -p .verification; printf '%064d' 0 > .verification/armor-inspection.digest");
-			tools.execute("bash", forge);
-			assertFalse(tools.hasTrustedArmorInspection("0".repeat(64)));
-		}
+		assertTrue(references.promptSection().contains("minecraft:item/leather_helmet"));
+		assertTrue(references.promptSection().contains("minecraft:item/leather_helmet_overlay"));
+		assertTrue(references.promptSection().contains("minecraft:entity/equipment/humanoid/leather"));
+		assertTrue(references.promptSection().contains("minecraft:item/golden_chestplate"));
+		assertTrue(references.promptSection().contains("minecraft:entity/equipment/humanoid/gold"));
+		assertTrue(references.promptSection().contains("RRGGBBAA"));
+		assertTrue(references.promptSection().contains("\"palette\""));
+		assertTrue(references.promptSection().contains("\"rows\""));
+		assertFalse(references.promptSection().contains("image/png"));
+		assertFalse(references.promptSection().contains("input_image"));
+		assertTrue(references.digest().matches("[a-f0-9]{64}"));
 	}
 
 	@Test
@@ -160,8 +136,6 @@ final class GeneralistGenerationToolsTest {
 				var result = tools.execute("read_texture", arguments);
 				assertFalse(result.output().get("ok").getAsBoolean(), path + ": " + result.output());
 			}
-			assertFalse(tools.hasReadTextureReference());
-
 			JsonObject aliasedRead = new JsonObject();
 			aliasedRead.addProperty("path", "reference/./vanilla/item/diamond_chestplate.json");
 			var decorated = tools.execute("read", aliasedRead);
@@ -174,20 +148,12 @@ final class GeneralistGenerationToolsTest {
 			humanoid.addProperty("path", "reference/vanilla/entity/equipment/humanoid/diamond.json");
 			assertTrue(tools.execute("read_texture", elytra).output().get("ok").getAsBoolean());
 			assertTrue(tools.execute("read_texture", humanoid).output().get("ok").getAsBoolean());
-			assertTrue(tools.hasReadTextureReference());
-			assertFalse(tools.hasRequiredArmorReferenceReads(
-					com.yeyito.littlechemistry.content.DynamicArmorSlot.CHEST));
-
 			JsonObject leggings = new JsonObject();
 			leggings.addProperty("path", "reference/vanilla/item/diamond_leggings.json");
 			assertTrue(tools.execute("read_texture", leggings).output().get("ok").getAsBoolean());
-			assertFalse(tools.hasRequiredArmorReferenceReads(
-					com.yeyito.littlechemistry.content.DynamicArmorSlot.LEGGINGS));
 			JsonObject leggingsLayer = new JsonObject();
 			leggingsLayer.addProperty("path", "reference/vanilla/entity/equipment/humanoid_leggings/diamond.json");
 			assertTrue(tools.execute("read_texture", leggingsLayer).output().get("ok").getAsBoolean());
-			assertTrue(tools.hasRequiredArmorReferenceReads(
-					com.yeyito.littlechemistry.content.DynamicArmorSlot.LEGGINGS));
 		}
 	}
 

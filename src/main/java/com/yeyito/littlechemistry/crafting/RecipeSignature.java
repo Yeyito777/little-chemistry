@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
+import com.yeyito.littlechemistry.ai.generation.RecipeVisualReferences;
 import net.minecraft.world.inventory.CraftingContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingInput;
@@ -24,9 +25,14 @@ public final class RecipeSignature {
 	private final int width;
 	private final int height;
 	private final List<ItemStack> ingredients;
+	private final String visualReferenceDigest;
 	private final int hashCode;
 
 	public RecipeSignature(int width, int height, List<ItemStack> ingredients) {
+		this(width, height, ingredients, null);
+	}
+
+	public RecipeSignature(int width, int height, List<ItemStack> ingredients, String visualReferenceDigest) {
 		if (width < 1 || width > 3 || height < 1 || height > 3 || ingredients.size() != width * height) {
 			throw new IllegalArgumentException("Invalid crafting recipe dimensions");
 		}
@@ -37,7 +43,9 @@ public final class RecipeSignature {
 			normalized.add(RecipeIngredient.normalize(Objects.requireNonNull(ingredient, "ingredient")));
 		}
 		this.ingredients = List.copyOf(normalized);
-		this.hashCode = 31 * (31 * width + height) + ItemStack.hashStackList(this.ingredients);
+		this.visualReferenceDigest = visualReferenceDigest == null
+				? RecipeVisualReferences.digestForStacks(this.ingredients) : requireDigest(visualReferenceDigest);
+		this.hashCode = Objects.hash(width, height, ItemStack.hashStackList(this.ingredients), this.visualReferenceDigest);
 	}
 
 	public static RecipeSignature capture(CraftingContainer container) {
@@ -75,7 +83,7 @@ public final class RecipeSignature {
 				mirrored.add(ingredients.get(width - x - 1 + y * width));
 			}
 		}
-		return new RecipeSignature(width, height, mirrored);
+		return new RecipeSignature(width, height, mirrored, visualReferenceDigest);
 	}
 
 	public int width() {
@@ -90,12 +98,21 @@ public final class RecipeSignature {
 		return ingredients.stream().map(ItemStack::copy).toList();
 	}
 
+	public String visualReferenceDigest() {
+		return visualReferenceDigest;
+	}
+
+	boolean hasCurrentVisualReferences() {
+		return visualReferenceDigest.equals(RecipeVisualReferences.digestForStacks(ingredients));
+	}
+
 	public JsonObject toAiContext() {
 		JsonObject context = new JsonObject();
 		context.addProperty("recipeType", "crafting");
 		context.addProperty("process", "minecraft:crafting");
 		context.addProperty("width", width);
 		context.addProperty("height", height);
+		context.addProperty("visualReferenceDigest", visualReferenceDigest);
 		JsonArray grid = new JsonArray();
 		Map<String, DynamicContentDefinition> dynamicIngredients = new LinkedHashMap<>();
 		DynamicContentManager contentManager = DynamicContentManager.active();
@@ -118,7 +135,8 @@ public final class RecipeSignature {
 		if (this == other) return true;
 		if (!(other instanceof RecipeSignature signature)
 				|| width != signature.width || height != signature.height
-				|| ingredients.size() != signature.ingredients.size()) {
+					|| ingredients.size() != signature.ingredients.size()
+					|| !visualReferenceDigest.equals(signature.visualReferenceDigest)) {
 			return false;
 		}
 		for (int i = 0; i < ingredients.size(); i++) {
@@ -130,5 +148,12 @@ public final class RecipeSignature {
 	@Override
 	public int hashCode() {
 		return hashCode;
+	}
+
+	private static String requireDigest(String digest) {
+		if (digest == null || !digest.matches("[a-f0-9]{64}")) {
+			throw new IllegalArgumentException("Invalid recipe visual-reference digest");
+		}
+		return digest;
 	}
 }

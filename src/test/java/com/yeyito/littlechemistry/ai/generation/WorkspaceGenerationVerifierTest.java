@@ -186,16 +186,6 @@ final class WorkspaceGenerationVerifierTest {
 	}
 
 	@Test
-	void headAccessoriesMayUseOnlyOuterUvArtwork() {
-		DynamicArmorDisplayTextureSpec missingOuterHead = headArmorTexture(false);
-		DynamicArmorDisplayTextureSpec completeHead = headArmorTexture(true);
-
-		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateArmorTexture(
-				missingOuterHead, DynamicArmorSlot.HEAD));
-		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateArmorTexture(completeHead, DynamicArmorSlot.HEAD));
-	}
-
-	@Test
 	void workstationResultKindIsBoundToTheRuntimeSpecThatDrivesItsTooltipAndMenu() {
 		IllegalArgumentException missingSpec = assertThrows(IllegalArgumentException.class,
 				() -> WorkspaceGenerationVerifier.validateWorkstationKind("workstation", false));
@@ -254,19 +244,6 @@ final class WorkspaceGenerationVerifierTest {
 				() -> WorkspaceGenerationVerifier.validateWorkstationDesign(listDirective));
 
 		assertTrue(failure.getMessage().contains("third-person output-design data"));
-	}
-
-	private static DynamicArmorDisplayTextureSpec headArmorTexture(boolean includeOuterHead) {
-		String painted = java.util.stream.IntStream.range(0, 32)
-				.mapToObj(index -> index % 2 == 0 ? "1" : "2")
-				.collect(java.util.stream.Collectors.joining());
-		String transparentHalf = "0".repeat(32);
-		String transparentRow = "0".repeat(64);
-		List<String> rows = java.util.stream.IntStream.range(0, 32)
-				.mapToObj(y -> y < 16 ? painted + (includeOuterHead ? painted : transparentHalf) : transparentRow)
-				.toList();
-		return new DynamicArmorDisplayTextureSpec(
-				List.of("00000000", "804020FF", "E0C080FF"), rows);
 	}
 
 	private GenerationWorkspace itemWorkspace(int maxStack) throws Exception {

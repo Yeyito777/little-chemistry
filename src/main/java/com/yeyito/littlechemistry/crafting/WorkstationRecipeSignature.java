@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.yeyito.littlechemistry.LittleChemistry;
 import com.yeyito.littlechemistry.behavior.DynamicWorkstationRuntimeAccess;
 import com.yeyito.littlechemistry.behavior.WorkstationRecipeRequest;
+import com.yeyito.littlechemistry.ai.generation.RecipeVisualReferences;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlot;
@@ -26,10 +27,16 @@ public final class WorkstationRecipeSignature {
 	private final String processId;
 	private final String discriminator;
 	private final List<Ingredient> ingredients;
+	private final String visualReferenceDigest;
 	private final int hashCode;
 
 	public WorkstationRecipeSignature(String workstationName, String processId, String discriminator,
 			List<Ingredient> ingredients) {
+		this(workstationName, processId, discriminator, ingredients, null);
+	}
+
+	public WorkstationRecipeSignature(String workstationName, String processId, String discriminator,
+			List<Ingredient> ingredients, String visualReferenceDigest) {
 		if (workstationName == null || !workstationName.matches("[a-z0-9_]{1,64}")) {
 			throw new IllegalArgumentException("Invalid workstation content name");
 		}
@@ -48,7 +55,11 @@ public final class WorkstationRecipeSignature {
 		this.processId = processId;
 		this.discriminator = discriminator;
 		this.ingredients = List.copyOf(ingredients);
-		this.hashCode = Objects.hash(workstationName, processId, discriminator, this.ingredients);
+		this.visualReferenceDigest = visualReferenceDigest == null
+				? RecipeVisualReferences.digestForStacks(this.ingredients.stream().map(Ingredient::stack).toList())
+				: requireDigest(visualReferenceDigest);
+		this.hashCode = Objects.hash(workstationName, processId, discriminator, this.ingredients,
+				this.visualReferenceDigest);
 	}
 
 	/** Validates generated capture instructions and snapshots the exact current stacks. */
@@ -92,6 +103,15 @@ public final class WorkstationRecipeSignature {
 		return ingredients.stream().map(Ingredient::copy).toList();
 	}
 
+	public String visualReferenceDigest() {
+		return visualReferenceDigest;
+	}
+
+	boolean hasCurrentVisualReferences() {
+		return visualReferenceDigest.equals(RecipeVisualReferences.digestForStacks(
+				ingredients.stream().map(Ingredient::stack).toList()));
+	}
+
 	public boolean matches(DynamicContentDefinition definition, WorkstationRecipeRequest request,
 			DynamicWorkstationRuntimeAccess runtime) {
 		return equals(capture(definition, request, runtime));
@@ -113,6 +133,7 @@ public final class WorkstationRecipeSignature {
 		context.addProperty("recipeType", "workstation");
 		context.addProperty("process", LittleChemistry.MOD_ID + ":workstation/" + workstationName + "/" + processId);
 		context.addProperty("processId", processId);
+		context.addProperty("visualReferenceDigest", visualReferenceDigest);
 		context.add("workstation", workstationContext(definition));
 		JsonArray captured = new JsonArray();
 		Map<String, DynamicContentDefinition> dynamicIngredients = new LinkedHashMap<>();
@@ -157,12 +178,20 @@ public final class WorkstationRecipeSignature {
 				&& workstationName.equals(signature.workstationName)
 				&& processId.equals(signature.processId)
 				&& discriminator.equals(signature.discriminator)
+				&& visualReferenceDigest.equals(signature.visualReferenceDigest)
 				&& ingredients.equals(signature.ingredients);
 	}
 
 	@Override
 	public int hashCode() {
 		return hashCode;
+	}
+
+	private static String requireDigest(String digest) {
+		if (digest == null || !digest.matches("[a-f0-9]{64}")) {
+			throw new IllegalArgumentException("Invalid workstation visual-reference digest");
+		}
+		return digest;
 	}
 
 	public record Ingredient(String slotId, ItemStack stack, int count,

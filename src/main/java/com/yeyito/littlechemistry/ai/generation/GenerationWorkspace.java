@@ -770,8 +770,9 @@ public final class GenerationWorkspace implements AutoCloseable {
 				## Native generated storage and block visual state
 				Attach `new DynamicStorageSpec(rows)` with `GeneratedContentBuilder.storage(...)` to an ordinary block or a regular-held,
 				max-stack-one item. The engine supplies persistent contents, a native one-to-six-row chest menu, nesting protection,
-				container drops, and presentation. Backpacks/satchels/bags should use portable item storage rather than armor; cabinets,
-				cupboards/crates/barrels/lockers should use block storage. Storage block models need a `<baseTextureId>_open` texture.
+				container drops, and presentation. Select storage from the concept's primary opening/carrying-inventory interaction,
+				not from a hard-coded object-name list or an unrelated substitute effect. Storage block models need a
+				`<baseTextureId>_open` texture.
 				The engine selects `open` while the menu is viewed. Do not implement fake open sounds or custom inventory menus.
 
 				Ordinary placed-block callbacks can call `DynamicPlacedBlockUseContext.persistentState()`; workstation callbacks can call
@@ -804,13 +805,13 @@ public final class GenerationWorkspace implements AutoCloseable {
 				hook may mutate the vanilla projectile or return a compatible replacement; the impact hook handles the common native
 				collision path. Inventory/crafting particles are not a substitute for shot behavior.
 
-			## Text-only texture inspection
+			## Text-only texture references
 			All model-facing texture data is deliberately textual. `read_texture` returns installed artwork as the exact RRGGBBAA
-				palette and hexadecimal row format used by `DynamicTextureSpec`; no PNG or vision attachment is available. Installed
-				sources larger than 64 pixels are coordinate-labelled textual tiles in that same format. `inspect_generated_textures`
-				compiles current source and returns every authored base/state/model/particle texture as palettes/rows; armor also includes
-				faithful front/back/side mappings. Inspect and revise those rows, then call the tool again on unchanged source with a
-				concrete `assessment`. `verify` accepts content only after that acknowledged final inspection and after the required
-				native, ingredient, and armor references were read textually.
+				palette and hexadecimal row format used by `DynamicTextureSpec`; no PNG, raster preview, or vision attachment is
+				available. Every provided recipe item's conventional inventory/state textures and associated equipped layers are
+				automatically included in a separate user-message section before coding starts. Installed sources larger than 64 pixels
+				are coordinate-labelled textual tiles in that same format. Search the installed index and use `read_texture` for
+				additional carrier, entity, animation, or block-state inspiration. `verify` enforces source/runtime structure, not a
+				post-generation aesthetic review gate.
 			""";
 }

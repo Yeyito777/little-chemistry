@@ -10,6 +10,7 @@ import com.yeyito.littlechemistry.content.DynamicContentManager;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.Map;
@@ -59,6 +60,12 @@ public final class RecipeIngredient {
 		}
 		destination.addProperty("itemId", BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
 		destination.addProperty("displayName", stack.getHoverName().getString());
+		Identifier itemModel = stack.get(DataComponents.ITEM_MODEL);
+		if (itemModel != null) destination.addProperty("itemModelId", itemModel.toString());
+		var equippable = stack.get(DataComponents.EQUIPPABLE);
+		if (equippable != null && equippable.assetId().isPresent()) {
+			destination.addProperty("equipmentAssetId", equippable.assetId().get().identifier().toString());
+		}
 		var dynamicId = stack.get(DynamicContentObjects.CONTENT_ID);
 		if (dynamicId == null) return;
 		String id = dynamicId.toString();

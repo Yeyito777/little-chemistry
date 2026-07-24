@@ -6,7 +6,6 @@ import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCompiler;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import com.yeyito.littlechemistry.behavior.WorkspaceJavaCompiler;
-import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
@@ -256,20 +255,12 @@ final class WorkspaceGenerationVerifier {
 		if (generated.block() == null) validateIcon(generated.texture());
 		else generated.block().drops().validateNewTargets(
 				DynamicContentManager.normalizeIdentifier(selection.displayName()), DynamicContentCatalog::find);
-		Set<String> itemTextureHashes = new HashSet<>();
-		itemTextureHashes.add(DynamicTextureAsset.sha256(generated.texture().renderPng()));
 		for (var state : generated.itemVisuals().states()) {
 			validateIcon(state.texture());
 			String actual = DynamicTextureAsset.sha256(state.texture().renderPng());
 			if (!actual.equals(state.hash())) {
 				throw new IllegalArgumentException("Item visual state '" + state.id() + "' has a stale texture hash");
 			}
-			if (!itemTextureHashes.add(actual)) {
-				throw new IllegalArgumentException("Item visual states and base texture must be visually distinct");
-			}
-		}
-		if (generated.armorDisplayTexture() != null) {
-			validateArmorTexture(generated.armorDisplayTexture(), generated.armor().slot());
 		}
 		if (generated.blockModel() != null) {
 			validateModelTextures(generated.blockModel().textures());
@@ -303,18 +294,6 @@ final class WorkspaceGenerationVerifier {
 
 	private static void validateSemanticCapabilities(Selection selection, GeneratedContentSpec generated,
 			String behaviorSource) {
-		String name = selection.displayName().toLowerCase(java.util.Locale.ROOT);
-		boolean portableStorageConcept = Pattern.compile("\\b(backpack|satchel|rucksack|bag)\\b").matcher(name).find();
-		boolean blockStorageConcept = Pattern.compile("\\b(cabinet|cupboard|crate|barrel|locker)\\b").matcher(name).find();
-		if (portableStorageConcept && generated.armor() != null) {
-			throw new IllegalArgumentException("Backpacks, satchels, rucksacks, and bags are portable storage items, not armor, unless protective armor was explicitly requested");
-		}
-		if (portableStorageConcept && (generated.item() == null || generated.storage() == null)) {
-			throw new IllegalArgumentException("Portable storage concepts require an ordinary item with DynamicStorageSpec");
-		}
-		if (blockStorageConcept && (generated.block() == null || generated.storage() == null)) {
-			throw new IllegalArgumentException("Cabinets, cupboards, crates, barrels, and lockers require block DynamicStorageSpec");
-		}
 		if (generated.storage() != null && selection.outputCount() != 1) {
 			throw new IllegalArgumentException("Generated storage outputCount must be 1");
 		}
@@ -340,7 +319,7 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	private static void requireVisualVariant(DynamicBlockModel model, String state, String subject) {
-		boolean distinctVariant = model != null && model.referencedTextureIds().stream().anyMatch(id -> {
+		boolean authoredVariant = model != null && model.referencedTextureIds().stream().anyMatch(id -> {
 			DynamicBlockTexture base = model.findTexture(id);
 			DynamicBlockTexture variant = model.findTexture(id + "_" + state);
 			if (base == null || variant == null) return false;
@@ -349,44 +328,17 @@ final class WorkspaceGenerationVerifier {
 				throw new IllegalArgumentException("Visual-state texture '" + variant.id()
 						+ "' must have the same dimensions as base texture '" + id + "'");
 			}
-			return differentPixels(base.texture(), variant.texture()) >= 8;
+			return true;
 		});
-		if (!distinctVariant) {
+		if (!authoredVariant) {
 			throw new IllegalArgumentException(subject + " require at least one authored *_" + state
-					+ " model texture variant that differs from its base by at least eight pixels");
+					+ " model texture variant with the same dimensions as its base");
 		}
 	}
 
 	static void validateProjectileVisuals(GeneratedContentSpec generated) {
 		if (generated.item() == null || !generated.item().heldType().isNativeProjectileWeapon()) return;
 		generated.itemVisuals().requireCompleteFor(generated.item().heldType());
-		List<DynamicTextureSpec> textures = new java.util.ArrayList<>();
-		textures.add(generated.texture());
-		generated.itemVisuals().states().forEach(state -> textures.add(state.texture()));
-		for (int first = 0; first < textures.size(); first++) {
-			for (int second = first + 1; second < textures.size(); second++) {
-				if (differentPixels(textures.get(first), textures.get(second)) < 8) {
-					throw new IllegalArgumentException(
-							"Projectile base and visual states must differ by at least eight pixels");
-				}
-			}
-		}
-	}
-
-	private static int differentPixels(DynamicTextureSpec first, DynamicTextureSpec second) {
-		int changed = 0;
-		for (int y = 0; y < first.height(); y++) {
-			for (int x = 0; x < first.width(); x++) {
-				String firstColor = effectiveColor(first.palette().get(Character.digit(first.rows().get(y).charAt(x), 16)));
-				String secondColor = effectiveColor(second.palette().get(Character.digit(second.rows().get(y).charAt(x), 16)));
-				if (!firstColor.equals(secondColor)) changed++;
-			}
-		}
-		return changed;
-	}
-
-	private static String effectiveColor(String rgba) {
-		return rgba.regionMatches(true, 6, "00", 0, 2) ? "00000000" : rgba.toUpperCase(java.util.Locale.ROOT);
 	}
 
 	static void validateWorkstationKind(String resultKind, boolean hasWorkstationSpec) {
@@ -468,52 +420,6 @@ final class WorkspaceGenerationVerifier {
 	private static void validateIcon(DynamicTextureSpec texture) {
 		texture.requireDimensions(16, 16);
 		texture.requireBinaryAlpha();
-		int visible = 0;
-		Set<Integer> colors = new HashSet<>();
-		for (String row : texture.rows()) {
-			for (int index = 0; index < row.length(); index++) {
-				int color = Character.digit(row.charAt(index), 16);
-				if (!texture.palette().get(color).regionMatches(true, 6, "00", 0, 2)) {
-					visible++;
-					colors.add(color);
-				}
-			}
-		}
-		Set<Integer> used = usedColors(texture);
-		if (visible < 12 || colors.size() < 2 || used.size() < 3 || luminanceRange(texture.palette(), used) < 40) {
-			throw new IllegalArgumentException(
-					"Inventory texture needs 12 visible pixels, three used colors, and readable contrast");
-		}
-	}
-
-	static void validateArmorTexture(DynamicArmorDisplayTextureSpec texture, DynamicArmorSlot slot) {
-		int visible = 0;
-		int transparent = 0;
-		Set<Integer> used = new HashSet<>();
-		for (String row : texture.rows()) {
-			for (int index = 0; index < row.length(); index++) {
-				int colorIndex = Character.digit(row.charAt(index), 16);
-				used.add(colorIndex);
-				String color = texture.palette().get(colorIndex);
-				if (color.regionMatches(true, 6, "00", 0, 2)) transparent++;
-				else visible++;
-			}
-		}
-		if (visible < 16 || transparent == 0) {
-			throw new IllegalArgumentException("Armor display texture needs visible armor pixels and transparent UV space");
-		}
-		if (used.size() < 3 || luminanceRange(texture.palette(), used) < 32) {
-			throw new IllegalArgumentException("Armor display texture needs three used colors and readable contrast");
-		}
-		if (relevantOpaquePixels(texture, slot) < 16) {
-			throw new IllegalArgumentException("Armor display texture has too few visible pixels in the "
-					+ slot.serializedName() + " UV islands");
-		}
-		if (slot == DynamicArmorSlot.HEAD
-				&& opaquePixels(texture, 0, 0, 64, 16) < 16) {
-			throw new IllegalArgumentException(
-					"Head armor must paint a deliberate base-head and/or hat/outer-head UV region");
-		}
 	}
 
 	private static void validateModelTextures(List<DynamicBlockTexture> textures) throws IOException {
@@ -524,15 +430,6 @@ final class WorkspaceGenerationVerifier {
 			String actual = DynamicTextureAsset.sha256(specification.renderPng());
 			if (!actual.equals(texture.hash())) {
 				throw new IllegalArgumentException("Model texture '" + texture.id() + "' has a stale texture hash");
-			}
-			Set<Integer> used = usedColors(specification);
-			int visible = visiblePixels(specification);
-			if (visible == 0) throw new IllegalArgumentException("Model texture '" + texture.id() + "' is invisible");
-			if (specification.width() * specification.height() > 1 && used.size() < 2) {
-				throw new IllegalArgumentException("Model texture '" + texture.id() + "' needs two used colors");
-			}
-			if (used.size() > 1 && luminanceRange(specification.palette(), used) < 20) {
-				throw new IllegalArgumentException("Model texture '" + texture.id() + "' has too little contrast");
 			}
 		}
 		if (totalPixels > 16_384) throw new IllegalArgumentException("Model textures exceed the 16,384-pixel budget");
@@ -557,83 +454,14 @@ final class WorkspaceGenerationVerifier {
 			return;
 		}
 		texture.requireBinaryAlpha();
-		int visible = visiblePixels(texture);
-		Set<Integer> opaqueColors = new HashSet<>();
-		for (String row : texture.rows()) {
-			for (int index = 0; index < row.length(); index++) {
-				int color = Character.digit(row.charAt(index), 16);
-				if (!texture.palette().get(color).regionMatches(true, 6, "00", 0, 2)) opaqueColors.add(color);
-			}
-		}
-		if (visible < 16 || opaqueColors.size() < 3) {
-			throw new IllegalArgumentException("Cutout block textures need 16 visible pixels and three opaque colors");
-		}
-		if ((shape == DynamicBlockShape.STAR || shape == DynamicBlockShape.CROSS)
-				&& texture.width() * texture.height() - visible < 16) {
-			throw new IllegalArgumentException("Crossed-plane textures need at least 16 transparent pixels");
-		}
-	}
-
-	private static int visiblePixels(DynamicTextureSpec texture) {
-		int visible = 0;
-		for (String row : texture.rows()) {
-			for (int index = 0; index < row.length(); index++) {
-				String color = texture.palette().get(Character.digit(row.charAt(index), 16));
-				if (!color.regionMatches(true, 6, "00", 0, 2)) visible++;
-			}
-		}
-		return visible;
-	}
-
-	private static Set<Integer> usedColors(DynamicTextureSpec texture) {
-		Set<Integer> used = new HashSet<>();
-		for (String row : texture.rows()) {
-			for (int index = 0; index < row.length(); index++) {
-				used.add(Character.digit(row.charAt(index), 16));
-			}
-		}
-		return used;
 	}
 
 	private static boolean hasTransparentPixel(DynamicTextureSpec texture) {
-		return visiblePixels(texture) < texture.width() * texture.height();
-	}
-
-	private static int luminanceRange(List<String> palette, Set<Integer> used) {
-		int minimum = 256;
-		int maximum = -1;
-		for (int index : used) {
-			String color = palette.get(index);
-			if (color.regionMatches(true, 6, "00", 0, 2)) continue;
-			int red = Integer.parseInt(color.substring(0, 2), 16);
-			int green = Integer.parseInt(color.substring(2, 4), 16);
-			int blue = Integer.parseInt(color.substring(4, 6), 16);
-			int luminance = (int) Math.round(red * 0.2126 + green * 0.7152 + blue * 0.0722);
-			minimum = Math.min(minimum, luminance);
-			maximum = Math.max(maximum, luminance);
+		for (String row : texture.rows()) for (int x = 0; x < row.length(); x++) {
+			String color = texture.palette().get(Character.digit(row.charAt(x), 16));
+			if (color.regionMatches(true, 6, "00", 0, 2)) return true;
 		}
-		return maximum < 0 ? 0 : maximum - minimum;
-	}
-
-	private static int relevantOpaquePixels(DynamicArmorDisplayTextureSpec texture, DynamicArmorSlot slot) {
-		return switch (slot) {
-			case HEAD -> opaquePixels(texture, 0, 0, 32, 16);
-			case CHEST -> opaquePixels(texture, 16, 16, 24, 16) + opaquePixels(texture, 40, 16, 16, 16);
-			case LEGGINGS -> opaquePixels(texture, 0, 16, 40, 16);
-			case BOOTS -> opaquePixels(texture, 0, 16, 16, 16);
-		};
-	}
-
-	private static int opaquePixels(DynamicArmorDisplayTextureSpec texture, int left, int top, int width, int height) {
-		int count = 0;
-		for (int y = top; y < top + height; y++) {
-			String row = texture.rows().get(y);
-			for (int x = left; x < left + width; x++) {
-				String color = texture.palette().get(Character.digit(row.charAt(x), 16));
-				if (!color.regionMatches(true, 6, "00", 0, 2)) count++;
-			}
-		}
-		return count;
+		return false;
 	}
 
 	private static void validateFactorySourcePolicy(Path root, Path behaviorSource) throws IOException {

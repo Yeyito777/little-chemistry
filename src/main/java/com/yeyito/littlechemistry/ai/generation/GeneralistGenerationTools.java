@@ -5,8 +5,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
-import com.yeyito.littlechemistry.content.DynamicArmorSlot;
-import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 
 import java.io.ByteArrayOutputStream;
@@ -17,13 +15,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumSet;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -40,18 +34,11 @@ final class GeneralistGenerationTools {
 	 * mappings must use the exact palette/rows representation generated code authors.
 	 */
 	private static final Set<String> NAMES = Set.of(
-			"bash", "read", "read_texture", "inspect_generated_textures",
+			"bash", "read", "read_texture",
 			"grep", "glob", "write", "edit", "patch", "verify");
 
 	private final GenerationWorkspace workspace;
 	private final GenerationRequest request;
-	private final Set<String> readTextureReferences = new HashSet<>();
-	private final EnumSet<DynamicArmorSlot> readArmorItemSlots = EnumSet.noneOf(DynamicArmorSlot.class);
-	private final EnumSet<DynamicArmorSlot> readArmorEquipmentSlots = EnumSet.noneOf(DynamicArmorSlot.class);
-	private String inspectedTextureSourceDigest;
-	private String inspectedTextureOutputDigest;
-	private String pendingTextureInspectionDigest;
-	private String pendingTextureOutputDigest;
 
 	GeneralistGenerationTools(GenerationWorkspace workspace, GenerationRequest request) {
 		this.workspace = workspace;
@@ -68,8 +55,6 @@ final class GeneralistGenerationTools {
 						property("offset", integerSchema(1, 1_000_000)), property("limit", integerSchema(1, 2_000)))));
 		tools.add(tool("read_texture", "Read one installed texture reference as exact textual RRGGBBAA palette entries and hexadecimal pixel-index rows. This is the same indexed format generated textures must author; no PNG or vision input is sent.",
 				objectSchema(new String[] {"path"}, property("path", stringSchema(1, 1_024)))));
-		tools.add(tool("inspect_generated_textures", "Compile the current source and return every authored base, state, model, particle, and worn texture as exact textual palettes and rows. Armor also includes textual equipped mappings. First call without assessment, inspect the result, then call again on unchanged source with a concrete assessment of silhouette, rows, palette, UV placement, and state progression. Required after final texture edits and before verify; never emits an image.",
-					objectSchema(new String[0], property("assessment", stringSchema(40, 2_000)))));
 		tools.add(tool("grep", "Search UTF-8 files recursively with a Java regular expression and optional glob filter.",
 				objectSchema(new String[] {"pattern"}, property("pattern", stringSchema(1, 4_096)),
 						property("path", stringSchema(0, 1_024)), property("glob", stringSchema(0, 512)),
@@ -99,7 +84,6 @@ final class GeneralistGenerationTools {
 				case "bash" -> bash(arguments);
 				case "read" -> read(arguments);
 				case "read_texture" -> readTexture(arguments);
-				case "inspect_generated_textures" -> inspectGeneratedTextures(arguments);
 				case "grep" -> grep(arguments);
 				case "glob" -> glob(arguments);
 				case "write" -> write(arguments);
@@ -231,15 +215,13 @@ final class GeneralistGenerationTools {
 		JsonObject output = success();
 		output.addProperty("path", canonical);
 		JsonObject texture = JsonParser.parseString(encoded).getAsJsonObject();
-		// Parse through the same record generated Java uses. This prevents arbitrary JSON from satisfying the mandatory
-		// reference-read receipt and proves every successful result really is the model's palette/rows format.
+		// Parse through the same record generated Java uses, preserving the hard text-only representation boundary.
 		validateIndexedTextureReference(texture);
 		for (var entry : texture.entrySet()) output.add(entry.getKey(), entry.getValue().deepCopy());
 		output.addProperty("representation", "text-only indexed texture: RRGGBBAA palette plus hexadecimal rows; "
 				+ "large sources are coordinate-labelled tiles in that same format");
 		output.addProperty("javaAuthoringHint", "Reuse the closest palette/row silhouette directly in "
 				+ "DynamicTextureSpec, then make deliberate ingredient-specific pixel edits instead of redrawing from memory.");
-		recordTextureReferenceRead(canonical);
 		return new ToolResult(output, null);
 	}
 
@@ -255,150 +237,6 @@ final class GeneralistGenerationTools {
 		} else {
 			new DynamicTextureSpec(stringList(texture, "palette"), stringList(texture, "rows"));
 		}
-	}
-
-	private ToolResult inspectGeneratedTextures(JsonObject arguments) throws Exception {
-		requireOnly(arguments, "assessment");
-		String assessment = optionalString(arguments, "assessment", "").strip();
-		inspectedTextureSourceDigest = null;
-		inspectedTextureOutputDigest = null;
-		WorkspaceGenerationVerifier.VerifiedGeneration verified = WorkspaceGenerationVerifier.verify(workspace, request);
-		try {
-			requireRelevantReferenceReads(verified);
-			String outputDigest = generatedOutputDigest(verified.content());
-			if (!assessment.isEmpty() && (!verified.sourceDigest().equals(pendingTextureInspectionDigest)
-					|| !outputDigest.equals(pendingTextureOutputDigest))) {
-				throw new IllegalArgumentException("Inspect this exact source once without assessment before submitting "
-						+ "its textual texture assessment; unchanged source that emits different pixels is rejected");
-			}
-			if (!assessment.isEmpty()) {
-				String normalizedAssessment = assessment.toLowerCase(java.util.Locale.ROOT);
-				if (java.util.stream.Stream.of("silhouette", "row", "palette", "uv", "state", "frame", "contrast")
-						.noneMatch(normalizedAssessment::contains)) {
-					throw new IllegalArgumentException("Texture assessment must concretely discuss indexed rows/palette, "
-							+ "silhouette, UV placement, contrast, or state frames");
-				}
-			}
-			JsonObject output = success();
-			output.addProperty("kind", "generated_texture_text_inspection");
-			output.addProperty("sourceDigest", verified.sourceDigest());
-			output.addProperty("generatedOutputDigest", outputDigest);
-			var content = verified.content();
-			output.add("baseTexture", indexed(content.texture().palette(), content.texture().rows()));
-			JsonObject itemStates = new JsonObject();
-			for (var state : content.itemVisuals().states()) {
-				itemStates.add(state.id(), indexed(state.texture().palette(), state.texture().rows()));
-			}
-			if (!itemStates.isEmpty()) output.add("itemVisualStates", itemStates);
-			if (content.blockModel() != null) {
-				JsonObject textures = new JsonObject();
-				for (var texture : content.blockModel().textures()) {
-					textures.add(texture.id(), indexed(texture.texture().palette(), texture.texture().rows()));
-				}
-				output.add("blockModelTextures", textures);
-			}
-			if (content.entityModel() != null) {
-				JsonObject textures = new JsonObject();
-				for (var texture : content.entityModel().textures()) {
-					textures.add(texture.id(), indexed(texture.texture().palette(), texture.texture().rows()));
-				}
-				output.add("entityModelTextures", textures);
-			}
-			JsonObject particles = new JsonObject();
-			for (var particle : content.customParticles()) {
-				JsonArray frames = new JsonArray();
-				for (var frame : particle.frames()) {
-					frames.add(indexed(frame.texture().palette(), frame.texture().rows()));
-				}
-				particles.add(particle.id(), frames);
-			}
-			if (!particles.isEmpty()) output.add("particleTextures", particles);
-			if (verified.type() == DynamicContentType.ARMOR && content.armorDisplayTexture() != null) {
-				output.add("armorDisplayTexture", indexed(content.armorDisplayTexture().palette(),
-						content.armorDisplayTexture().rows()));
-				output.add("equippedMappings", EquippedArmorTextureInspector.inspect(
-						content.armorDisplayTexture(), content.armor().slot()));
-			}
-			if (assessment.isEmpty()) {
-				pendingTextureInspectionDigest = verified.sourceDigest();
-				pendingTextureOutputDigest = outputDigest;
-				output.addProperty("reviewRequired", true);
-				output.addProperty("message", "Compare every returned palette and row against the references you read. "
-						+ "Revise weak silhouettes, misplaced UV islands, theme pixels, and state progression. On final unchanged "
-						+ "source, call inspect_generated_textures again with a concrete assessment before verify.");
-			} else {
-				inspectedTextureSourceDigest = verified.sourceDigest();
-				inspectedTextureOutputDigest = outputDigest;
-				output.addProperty("inspectionAccepted", true);
-				output.addProperty("assessment", assessment);
-				output.addProperty("message", "Textual texture inspection was acknowledged for this exact source digest; "
-						+ "call verify without changing source.");
-			}
-			return new ToolResult(output, null);
-		} finally {
-			workspace.deleteSnapshot(verified.sourceSnapshot());
-		}
-	}
-
-	private static String generatedOutputDigest(com.yeyito.littlechemistry.content.GeneratedContentSpec content) {
-		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			// Bind the receipt to the complete executed factory result, not merely source text or asset bytes. The explicit
-			// texture entries below make the representation boundary independently obvious and versionable.
-			updateDigestString(digest, content.toString());
-			updateTextureDigest(digest, "base", content.texture().palette(), content.texture().rows());
-			for (var state : content.itemVisuals().states()) {
-				updateTextureDigest(digest, "item:" + state.id(), state.texture().palette(), state.texture().rows());
-			}
-			if (content.armorDisplayTexture() != null) {
-				updateTextureDigest(digest, "armor", content.armorDisplayTexture().palette(),
-						content.armorDisplayTexture().rows());
-			}
-			if (content.blockModel() != null) for (var texture : content.blockModel().textures()) {
-				updateTextureDigest(digest, "block:" + texture.id(), texture.texture().palette(), texture.texture().rows());
-			}
-			if (content.entityModel() != null) for (var texture : content.entityModel().textures()) {
-				updateTextureDigest(digest, "entity:" + texture.id(), texture.texture().palette(), texture.texture().rows());
-			}
-			for (var particle : content.customParticles()) {
-				for (int frame = 0; frame < particle.frames().size(); frame++) {
-					var texture = particle.frames().get(frame).texture();
-					updateTextureDigest(digest, "particle:" + particle.id() + ':' + frame,
-							texture.palette(), texture.rows());
-				}
-			}
-			return java.util.HexFormat.of().formatHex(digest.digest());
-		} catch (NoSuchAlgorithmException impossible) {
-			throw new IllegalStateException("SHA-256 is unavailable", impossible);
-		}
-	}
-
-	private static void updateTextureDigest(MessageDigest digest, String label,
-			List<String> palette, List<String> rows) {
-		updateDigestString(digest, label);
-		for (String color : palette) updateDigestString(digest, color.toUpperCase(java.util.Locale.ROOT));
-		updateDigestString(digest, "rows");
-		for (String row : rows) updateDigestString(digest, row.toUpperCase(java.util.Locale.ROOT));
-	}
-
-	private static void updateDigestString(MessageDigest digest, String value) {
-		byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-		digest.update((byte) (bytes.length >>> 24));
-		digest.update((byte) (bytes.length >>> 16));
-		digest.update((byte) (bytes.length >>> 8));
-		digest.update((byte) bytes.length);
-		digest.update(bytes);
-	}
-
-	private static JsonObject indexed(List<String> paletteValues, List<String> rowValues) {
-		JsonObject result = new JsonObject();
-		JsonArray palette = new JsonArray();
-		paletteValues.forEach(palette::add);
-		JsonArray rows = new JsonArray();
-		rowValues.forEach(rows::add);
-		result.add("palette", palette);
-		result.add("rows", rows);
-		return result;
 	}
 
 	private static Path normalizedWorkspacePath(String relative) {
@@ -441,125 +279,6 @@ final class GeneralistGenerationTools {
 			strings.add(value.getAsString());
 		}
 		return strings;
-	}
-
-	private static DynamicArmorSlot armorItemSlot(String reference) {
-		if (!reference.startsWith("item/") || !reference.endsWith(".json")) return null;
-		String id = reference.substring("item/".length(), reference.length() - ".json".length());
-		if (id.endsWith("_helmet") || id.equals("turtle_shell")) return DynamicArmorSlot.HEAD;
-		if (id.endsWith("_chestplate")) return DynamicArmorSlot.CHEST;
-		if (id.endsWith("_leggings")) return DynamicArmorSlot.LEGGINGS;
-		if (id.endsWith("_boots")) return DynamicArmorSlot.BOOTS;
-		return null;
-	}
-
-	private void recordTextureReferenceRead(String relative) {
-		String prefix = "reference/vanilla/";
-		if (!relative.startsWith(prefix)) return;
-		String reference = relative.substring(prefix.length());
-		if (reference.endsWith(".json")) readTextureReferences.add(reference);
-		DynamicArmorSlot itemSlot = armorItemSlot(reference);
-		if (itemSlot != null) readArmorItemSlots.add(itemSlot);
-		if (reference.startsWith("entity/equipment/humanoid/") && reference.endsWith(".json")) {
-			readArmorEquipmentSlots.addAll(
-					EnumSet.of(DynamicArmorSlot.HEAD, DynamicArmorSlot.CHEST, DynamicArmorSlot.BOOTS));
-		} else if (reference.startsWith("entity/equipment/humanoid_leggings/")
-				&& reference.endsWith(".json")) {
-			readArmorEquipmentSlots.add(DynamicArmorSlot.LEGGINGS);
-		}
-	}
-
-	private void requireRelevantReferenceReads(WorkspaceGenerationVerifier.VerifiedGeneration verified) throws IOException {
-		if (!hasReadTextureReference()) {
-			throw new IllegalArgumentException("Use read_texture on relevant installed texture references before inspecting generated artwork");
-		}
-		if (verified.type() == DynamicContentType.ARMOR) {
-			DynamicArmorSlot slot = verified.content().armor().slot();
-			if (!hasRequiredArmorReferenceReads(slot)) {
-				throw new IllegalArgumentException("Use read_texture on both a relevant vanilla "
-						+ slot.serializedName() + " armor item icon and its matching equipment layer first");
-			}
-		}
-		if (verified.content().item() != null) {
-			Set<String> required = switch (verified.content().item().heldType()) {
-				case BOW -> Set.of("item/bow.json", "item/bow_pulling_0.json", "item/bow_pulling_1.json",
-						"item/bow_pulling_2.json");
-				case CROSSBOW -> Set.of("item/crossbow_standby.json", "item/crossbow_pulling_0.json",
-						"item/crossbow_pulling_1.json", "item/crossbow_pulling_2.json",
-						"item/crossbow_arrow.json", "item/crossbow_firework.json");
-				default -> Set.of();
-			};
-			Set<String> missing = new java.util.TreeSet<>(required);
-			missing.removeAll(readTextureReferences);
-			if (!missing.isEmpty()) {
-				throw new IllegalArgumentException("Read every native projectile state texture before inspection; missing: "
-						+ String.join(", ", missing));
-			}
-		}
-		Set<String> missingIngredients = requiredIngredientReferences();
-		if (!missingIngredients.isEmpty()) {
-			throw new IllegalArgumentException("Read a vanilla item/block texture for every visually meaningful Minecraft ingredient before final inspection; missing: "
-					+ String.join(", ", missingIngredients));
-		}
-	}
-
-	private Set<String> requiredIngredientReferences() throws IOException {
-		if (request.recipeContext() == null) return Set.of();
-		Set<String> ids = new java.util.TreeSet<>();
-		collectMinecraftIds(request.recipeContext(), ids);
-		Path indexPath = workspace.resolve("reference/vanilla/TEXTURES.txt");
-		if (!Files.isRegularFile(indexPath)) return Set.of();
-		Set<String> available = Files.readAllLines(indexPath, StandardCharsets.UTF_8).stream()
-				.map(line -> line.startsWith("reference/vanilla/")
-						? line.substring("reference/vanilla/".length()) : line)
-				.collect(java.util.stream.Collectors.toSet());
-		Set<String> missing = new java.util.TreeSet<>();
-		for (String id : ids) {
-			String path = id.substring("minecraft:".length());
-			String item = "item/" + path + ".json";
-			String block = "block/" + path + ".json";
-			if (!available.contains(item) && !available.contains(block)) continue;
-			if (!readTextureReferences.contains(item) && !readTextureReferences.contains(block)) missing.add(id);
-			Set<String> conceptTokens = java.util.Arrays.stream(path.split("[_/.-]+"))
-					.filter(token -> token.length() >= 4 && !COMMON_TEXTURE_TOKENS.contains(token))
-					.collect(java.util.stream.Collectors.toSet());
-			if (conceptTokens.isEmpty()) continue;
-			List<String> related = available.stream()
-					.filter(candidate -> !candidate.equals(item) && !candidate.equals(block))
-					.filter(candidate -> java.util.Arrays.stream(candidate.split("[_/.-]+"))
-							.anyMatch(conceptTokens::contains))
-					.sorted().toList();
-			List<String> equipmentRelated = related.stream()
-					.filter(candidate -> candidate.startsWith("entity/equipment/")).toList();
-			List<String> entityRelated = related.stream()
-					.filter(candidate -> candidate.startsWith("entity/")).toList();
-			if (!equipmentRelated.isEmpty()) related = equipmentRelated;
-			else if (!entityRelated.isEmpty()) related = entityRelated;
-			if (!related.isEmpty() && related.stream().noneMatch(readTextureReferences::contains)) {
-				missing.add(id + " related concept/UV (for example " + related.getFirst() + ")");
-			}
-		}
-		return missing;
-	}
-
-	private static final Set<String> COMMON_TEXTURE_TOKENS = Set.of(
-			"item", "block", "entity", "equipment", "humanoid", "armor", "gold", "golden", "iron",
-			"copper", "diamond", "stone", "wood", "wooden", "dark", "light", "white", "black",
-			"gray", "grey", "green", "blue", "brown", "purple", "orange", "yellow", "ingot", "nugget",
-			"planks", "raw");
-
-	private static void collectMinecraftIds(JsonElement element, Set<String> result) {
-		if (element == null || element.isJsonNull()) return;
-		if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
-			String value = element.getAsString();
-			if (value.matches("minecraft:[a-z0-9_./-]+")) result.add(value);
-			return;
-		}
-		if (element.isJsonArray()) {
-			for (JsonElement child : element.getAsJsonArray()) collectMinecraftIds(child, result);
-		} else if (element.isJsonObject()) {
-			for (var entry : element.getAsJsonObject().entrySet()) collectMinecraftIds(entry.getValue(), result);
-		}
 	}
 
 	private ToolResult grep(JsonObject arguments) throws IOException {
@@ -705,13 +424,6 @@ final class GeneralistGenerationTools {
 			return new ToolResult(output, null, rejection);
 		}
 		WorkspaceGenerationVerifier.VerifiedGeneration verified = WorkspaceGenerationVerifier.verify(workspace, request);
-		if (!verified.sourceDigest().equals(inspectedTextureSourceDigest)
-				|| !generatedOutputDigest(verified.content()).equals(inspectedTextureOutputDigest)) {
-			workspace.deleteSnapshot(verified.sourceSnapshot());
-			throw new IllegalArgumentException("Read relevant vanilla and ingredient textures, then call "
-					+ "inspect_generated_textures after the final source edit, submit its concrete textual assessment, "
-					+ "and call verify without changing source");
-		}
 		workspace.stage(verified);
 		JsonObject output = success();
 		output.addProperty("verified", true);
@@ -720,18 +432,6 @@ final class GeneralistGenerationTools {
 		output.addProperty("outputCount", verified.outputCount());
 		output.addProperty("message", "Compilation and all runtime requirements passed.");
 		return new ToolResult(output, verified);
-	}
-
-	boolean hasRequiredArmorReferenceReads(DynamicArmorSlot slot) {
-		return readArmorItemSlots.contains(slot) && readArmorEquipmentSlots.contains(slot);
-	}
-
-	boolean hasReadTextureReference() {
-		return !readTextureReferences.isEmpty();
-	}
-
-	boolean hasTrustedArmorInspection(String sourceDigest) {
-		return sourceDigest != null && sourceDigest.equals(inspectedTextureSourceDigest);
 	}
 
 	private static List<Path> files(Path start) throws IOException {

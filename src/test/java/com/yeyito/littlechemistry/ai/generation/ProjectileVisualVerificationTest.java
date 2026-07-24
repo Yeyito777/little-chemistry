@@ -18,7 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class ProjectileVisualVerificationTest {
 	private static final String BEHAVIOR = """
@@ -29,7 +28,7 @@ final class ProjectileVisualVerificationTest {
 			""";
 
 	@Test
-	void rejectsTokenFrameChangesButAcceptsMeaningfulCrossbowStates() throws Exception {
+	void requiresCompleteCrossbowStatesWithoutScoringTheirArtwork() throws Exception {
 		List<DynamicItemTexture> meaningful = List.of(
 				frame(DynamicItemVisuals.PULLING_0, "704020FF"),
 				frame(DynamicItemVisuals.PULLING_1, "805020FF"),
@@ -43,9 +42,8 @@ final class ProjectileVisualVerificationTest {
 		DynamicTextureSpec almostBase = onePixelChangedBase();
 		tokenChange.set(0, new DynamicItemTexture(DynamicItemVisuals.PULLING_0,
 				DynamicTextureAsset.sha256(almostBase.renderPng()), almostBase));
-		GeneratedContentSpec invalid = spec(new DynamicItemVisuals(tokenChange));
-		assertThrows(IllegalArgumentException.class,
-				() -> WorkspaceGenerationVerifier.validateProjectileVisuals(invalid));
+		GeneratedContentSpec tokenDifference = spec(new DynamicItemVisuals(tokenChange));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateProjectileVisuals(tokenDifference));
 
 		List<DynamicItemTexture> invisibleChanges = new ArrayList<>(meaningful);
 		DynamicTextureSpec transparentRgbOnly = new DynamicTextureSpec(
@@ -53,8 +51,7 @@ final class ProjectileVisualVerificationTest {
 		invisibleChanges.set(0, new DynamicItemTexture(DynamicItemVisuals.PULLING_0,
 				DynamicTextureAsset.sha256(transparentRgbOnly.renderPng()), transparentRgbOnly));
 		GeneratedContentSpec invisiblyDifferent = spec(new DynamicItemVisuals(invisibleChanges));
-		assertThrows(IllegalArgumentException.class,
-				() -> WorkspaceGenerationVerifier.validateProjectileVisuals(invisiblyDifferent));
+		assertDoesNotThrow(() -> WorkspaceGenerationVerifier.validateProjectileVisuals(invisiblyDifferent));
 	}
 
 	private static GeneratedContentSpec spec(DynamicItemVisuals visuals) {

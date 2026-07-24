@@ -86,7 +86,7 @@ import java.util.concurrent.Future;
 /** Owns physical and portable crafting grids, persistent AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 2;
-	private static final int RECIPES_FORMAT = 5;
+	private static final int RECIPES_FORMAT = 6;
 	// This is the canonical server-wide limit for concurrent crafts of every supported kind.
 	private static final int MAX_ACTIVE_JOBS = 32;
 	private static final int PARTICLE_INTERVAL_TICKS = 8;
@@ -1232,10 +1232,12 @@ public final class AiCraftingManager {
 	private boolean pruneUnavailableRecipes() {
 		boolean craftingRemoved = recipes.entrySet().removeIf(entry ->
 				DynamicContentCatalog.find(entry.getValue().outputName()) == null
-						|| entry.getKey().referencesUnavailableDynamicContent());
+						|| entry.getKey().referencesUnavailableDynamicContent()
+						|| !entry.getKey().hasCurrentVisualReferences());
 		boolean smeltingRemoved = smeltingRecipes.entrySet().removeIf(entry ->
 				DynamicContentCatalog.find(entry.getValue().outputName()) == null
-						|| entry.getKey().referencesUnavailableDynamicContent());
+						|| entry.getKey().referencesUnavailableDynamicContent()
+						|| !entry.getKey().hasCurrentVisualReferences());
 		boolean workstationRemoved = workstationRecipes.entrySet().removeIf(entry -> {
 			DynamicContentDefinition workstation = DynamicContentCatalog.find(entry.getKey().workstationName());
 			int capacity = workstation == null || workstation.workstation() == null ? 0
@@ -1244,7 +1246,8 @@ public final class AiCraftingManager {
 					.mapToInt(com.yeyito.littlechemistry.content.DynamicWorkstationSlot::maxStack)
 					.findFirst().orElse(0);
 			return !entry.getValue().outputAvailable() || entry.getValue().outputCount() > capacity
-					|| entry.getKey().referencesUnavailableDynamicContent();
+					|| entry.getKey().referencesUnavailableDynamicContent()
+					|| !entry.getKey().hasCurrentVisualReferences();
 		});
 		return craftingRemoved || smeltingRemoved || workstationRemoved;
 	}
@@ -1313,7 +1316,8 @@ public final class AiCraftingManager {
 					for (JsonElement ingredient : encodedIngredients) {
 						ingredients.add(ItemStack.OPTIONAL_CODEC.parse(ops, ingredient).getOrThrow(IOException::new));
 					}
-					RecipeSignature signature = new RecipeSignature(width, height, ingredients);
+					String visualDigest = format >= 6 ? encoded.get("visualReferenceDigest").getAsString() : null;
+					RecipeSignature signature = new RecipeSignature(width, height, ingredients, visualDigest);
 					recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount));
 				}
 				case "smelting" -> {
@@ -1322,7 +1326,8 @@ public final class AiCraftingManager {
 					ItemStack ingredient = ItemStack.OPTIONAL_CODEC.parse(ops, encodedIngredient)
 							.getOrThrow(IOException::new);
 					if (ingredient.isEmpty()) throw new IOException("Invalid empty AI smelting recipe ingredient");
-					SmeltingRecipeSignature signature = new SmeltingRecipeSignature(ingredient);
+					String visualDigest = format >= 6 ? encoded.get("visualReferenceDigest").getAsString() : null;
+					SmeltingRecipeSignature signature = new SmeltingRecipeSignature(ingredient, visualDigest);
 					ResourceKey<Recipe<?>> recipeKey = readSmeltingRecipeKey(encoded, signature, output);
 					if (!encoded.has("experience") || !encoded.has("cookingTime")) recipesNeedRewrite = true;
 					float experience = encoded.has("experience") ? encoded.get("experience").getAsFloat()
@@ -1359,8 +1364,9 @@ public final class AiCraftingManager {
 								WorkstationRecipeRequest.IngredientUse.valueOf(
 										ingredient.get("use").getAsString().toUpperCase(java.util.Locale.ROOT))));
 					}
+					String visualDigest = format >= 6 ? encoded.get("visualReferenceDigest").getAsString() : null;
 					WorkstationRecipeSignature signature = new WorkstationRecipeSignature(
-							workstation, process, discriminator, ingredients);
+							workstation, process, discriminator, ingredients, visualDigest);
 					if (rejected) {
 						try {
 							workstationRecipes.put(signature, AiWorkstationRecipe.rejected(signature,
@@ -1600,6 +1606,7 @@ public final class AiCraftingManager {
 			encoded.addProperty("type", "crafting");
 			encoded.addProperty("width", recipe.signature().width());
 			encoded.addProperty("height", recipe.signature().height());
+			encoded.addProperty("visualReferenceDigest", recipe.signature().visualReferenceDigest());
 			JsonArray ingredients = new JsonArray();
 			for (ItemStack ingredient : recipe.signature().ingredients()) {
 				ingredients.add(ItemStack.OPTIONAL_CODEC.encodeStart(ops, ingredient).getOrThrow(IOException::new));
@@ -1613,6 +1620,7 @@ public final class AiCraftingManager {
 			JsonObject encoded = new JsonObject();
 			encoded.addProperty("type", "smelting");
 			encoded.addProperty("id", recipe.recipeKey().identifier().toString());
+			encoded.addProperty("visualReferenceDigest", recipe.signature().visualReferenceDigest());
 			encoded.add("ingredient", ItemStack.OPTIONAL_CODEC.encodeStart(ops, recipe.signature().ingredient())
 					.getOrThrow(IOException::new));
 			encoded.addProperty("output", recipe.outputName());
@@ -1626,6 +1634,7 @@ public final class AiCraftingManager {
 			encoded.addProperty("type", "workstation");
 			encoded.addProperty("workstation", recipe.signature().workstationName());
 			encoded.addProperty("process", recipe.signature().processId());
+			encoded.addProperty("visualReferenceDigest", recipe.signature().visualReferenceDigest());
 			if (!recipe.signature().discriminator().isEmpty()) {
 				encoded.addProperty("discriminator", recipe.signature().discriminator());
 			}
