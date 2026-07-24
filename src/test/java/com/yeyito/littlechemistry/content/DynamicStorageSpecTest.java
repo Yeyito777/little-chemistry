@@ -33,7 +33,7 @@ final class DynamicStorageSpecTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(23, decoded.format());
+		assertEquals(24, decoded.format());
 		assertEquals(new DynamicStorageSpec(2), decoded.definitions().getFirst().storage());
 
 		var legacyJson = com.google.gson.JsonParser.parseString(

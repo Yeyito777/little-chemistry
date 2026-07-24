@@ -358,11 +358,16 @@ public final class GenerationWorkspace implements AutoCloseable {
 
 	/** Creates the persistent per-world source layout and exports the current catalog without starting an AI job. */
 	public static void initialize(Path requestedWorldRoot, List<DynamicContentDefinition> definitions) throws IOException {
+		initialize(requestedWorldRoot, definitions, java.util.Map.of());
+	}
+
+	public static void initialize(Path requestedWorldRoot, List<DynamicContentDefinition> definitions,
+			java.util.Map<String, java.util.Set<String>> recoveryDefinitionDigests) throws IOException {
 		Path worldRoot = requestedWorldRoot.toAbsolutePath().normalize();
 		Files.createDirectories(worldRoot);
 		deleteTree(worldRoot.resolve(".jobs"));
 		for (String directory : SOURCE_DIRECTORIES) Files.createDirectories(worldRoot.resolve(directory));
-		recoverPending(worldRoot, definitions);
+		recoverPending(worldRoot, definitions, recoveryDefinitionDigests);
 		for (DynamicContentDefinition definition : definitions) exportDefinition(worldRoot, definition);
 	}
 
@@ -375,7 +380,8 @@ public final class GenerationWorkspace implements AutoCloseable {
 		}
 	}
 
-	private static void recoverPending(Path worldRoot, List<DynamicContentDefinition> definitions) throws IOException {
+	private static void recoverPending(Path worldRoot, List<DynamicContentDefinition> definitions,
+			java.util.Map<String, java.util.Set<String>> recoveryDefinitionDigests) throws IOException {
 		Path pendingDirectory = worldRoot.resolve(".pending");
 		if (!Files.isDirectory(pendingDirectory)) return;
 		java.util.Map<String, DynamicContentDefinition> byName = definitions.stream().collect(
@@ -394,9 +400,10 @@ public final class GenerationWorkspace implements AutoCloseable {
 						committedJournal = definition != null && definition.type() == type
 								&& expectedDigest.matches("[a-f0-9]{64}")
 								&& expectedDigest.equals(sourceDigest(pendingRoot))
-								&& expectedDefinitionDigest.matches("[a-f0-9]{64}")
-								&& (expectedDefinitionDigest.equals(definitionDigest(definition))
-								|| expectedDefinitionDigest.equals(legacyDescriptionDefinitionDigest(definition)));
+							&& expectedDefinitionDigest.matches("[a-f0-9]{64}")
+							&& (recoveryDefinitionDigests.getOrDefault(identifier, java.util.Set.of())
+									.contains(expectedDefinitionDigest)
+							|| matchesCompatibleDefinitionDigest(expectedDefinitionDigest, definition));
 					if (committedJournal) {
 							publishPendingTree(new PendingSource(pendingRoot, worldRoot, type, identifier, null));
 					}
@@ -430,9 +437,12 @@ public final class GenerationWorkspace implements AutoCloseable {
 
 		JsonObject textures = new JsonObject();
 		if (canonical.has("texture")) textures.add("inventory", canonical.get("texture").deepCopy());
-		if (canonical.has("armorDisplayTexture")) {
-			textures.add("armorDisplay", canonical.get("armorDisplayTexture").deepCopy());
-		}
+			if (canonical.has("armorDisplayTexture")) {
+				textures.add("armorDisplay", canonical.get("armorDisplayTexture").deepCopy());
+			}
+			if (canonical.has("armorGeometry")) {
+				textures.add("armorGeometry", canonical.get("armorGeometry").deepCopy());
+			}
 		if (canonical.has("blockModel")) {
 			textures.add("blockModel", canonical.getAsJsonObject("blockModel").deepCopy());
 		}
@@ -488,6 +498,22 @@ public final class GenerationWorkspace implements AutoCloseable {
 		JsonObject canonical = DynamicContentJson.encodeDefinition(definition);
 		canonical.addProperty("description", legacyWrappedDescription(definition.description()));
 		return definitionDigest(canonical);
+	}
+
+	/** Accepts journals written before player-facing names were separated mechanically from lowercase content IDs. */
+	static boolean matchesCompatibleDefinitionDigest(String expected, DynamicContentDefinition definition) {
+		if (expected.equals(definitionDigest(definition))
+				|| expected.equals(legacyDescriptionDefinitionDigest(definition))) return true;
+		String identifierStyle = DynamicContentManager.normalizeIdentifier(definition.displayName());
+		String lowercaseStyle = definition.displayName().toLowerCase(java.util.Locale.ROOT);
+		for (String legacyName : new java.util.LinkedHashSet<>(java.util.List.of(identifierStyle, lowercaseStyle))) {
+			JsonObject canonical = DynamicContentJson.encodeDefinition(definition);
+			canonical.addProperty("displayName", legacyName);
+			if (expected.equals(definitionDigest(canonical))) return true;
+			canonical.addProperty("description", legacyWrappedDescription(definition.description()));
+			if (expected.equals(definitionDigest(canonical))) return true;
+		}
+		return false;
 	}
 
 	private static String definitionDigest(JsonObject canonicalDefinition) {
@@ -738,7 +764,8 @@ public final class GenerationWorkspace implements AutoCloseable {
 			All public constructors and Minecraft APIs are available directly. Search the class index and read source before
 			guessing signatures. Common definition classes are in `com.yeyito.littlechemistry.content`: `GeneratedContentSpec`,
 			`DynamicTextureSpec`, `DynamicBlockProperties`, `DynamicItemProperties`, `DynamicArmorProperties`,
-			`DynamicArmorDisplayTextureSpec`, `DynamicEntityProperties`, `DynamicBlockModel`, `DynamicEntityModel`,
+			`DynamicArmorDisplayTextureSpec`, `DynamicArmorGeometry`, `DynamicArmorGeometryPart`, `DynamicArmorAnchor`,
+			`DynamicEntityProperties`, `DynamicBlockModel`, `DynamicEntityModel`,
 				`DynamicParticleDefinition`, `DynamicItemVisuals`, `DynamicItemTexture`, `DynamicStorageSpec`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
 			`DynamicTool`, `DynamicBlockShape`, `DynamicItemType`, `DynamicHeldType`, `DynamicArmorSlot`,
 			`DynamicEntityMovement`, and `DynamicEntityDisposition`.
@@ -779,6 +806,14 @@ public final class GenerationWorkspace implements AutoCloseable {
 				`DynamicWorkstationContext.state()`. Setting key `visual` to `foo` substitutes any authored model texture named
 				`<baseTextureId>_foo`, with base-texture fallback. Other values in `DynamicBlockState` are bounded, persisted, and synced.
 
+				## Generated world objects and entities
+				Choose entity for an independently placed world object, creature, vehicle, or mount whose primary gameplay happens in the
+				world. Every generated entity is represented in inventory by a native spawner item whose use-on-block path creates the
+				configured `DynamicCarrierEntity`; do not substitute an ordinary held item that only manipulates a pre-existing entity.
+				Define dimensions, movement/disposition, and a complete `DynamicEntityModel`. Use `EntityInteractBehavior` for mounting or
+				other direct interaction and the entity lifecycle callbacks for its actual concept-specific behavior. Descriptions must not
+				promise placement, entering, riding, or persistent world behavior unless the selected entity carrier implements it.
+
 			A typical factory returns:
 			```
 			return GeneratedContentBuilder.create()
@@ -793,6 +828,26 @@ public final class GenerationWorkspace implements AutoCloseable {
 			Indexed texture rows contain hexadecimal palette indices and palettes contain `RRGGBBAA` colors. Icons are exactly
 			16 rows of 16; equipped armor is 32 rows of 64. Use `GeneratedContentApi.modelTexture` and particle-frame helpers
 			or `DynamicTextureAsset.sha256(texture.renderPng())` so persisted hashes are exact.
+
+			## Armor display routes and authored UV geometry
+			Every armor result supplies a 16x16 inventory icon and a separate 64x32 `DynamicArmorDisplayTextureSpec`. Leave
+			`armorGeometry` null to use Minecraft's fixed humanoid armor shell and ordinary vanilla UV wrapping. For the outer-head
+			cube, top is x=40..47,y=0..7; right/front/left/back are x=32..39/40..47/48..55/56..63 at y=8..15. Side row y=8 is
+			the top edge and y=15 is the chin/neck edge.
+
+			When the intended silhouette cannot be represented by that fixed shell, attach `new DynamicArmorGeometry(parts)` through
+			`GeneratedContentBuilder.armorGeometry(...)`. This route replaces the fixed armor mesh only for that definition while
+			retaining the same equipment slot, texture, animation, glint, and vanilla route for every old/null-geometry definition.
+			Each `DynamicArmorGeometryPart` is one UV-wrapped cuboid. Coordinates are Minecraft model pixels relative to its animated
+			`DynamicArmorAnchor`: HEAD uses the familiar head box origin (-4,-8,-4), BODY (0,0,0), arms pivot at (+/-5,2,0), and legs
+			pivot at (+/-1.9,12,0). Part x/y/z are local to the declared pivot; width/height/depth are positive; pitch/yaw/roll are
+			degrees. `textureU`,`textureV` are the upper-left corner of Minecraft's conventional cuboid unwrap, which consumes
+			`2*(depth+width)` by `depth+height` pixels on the 64x32 sheet. Pack those nets without overlap when they need independent
+			pixels. Geometry is bounded to 32 parts and anchors valid for the equipment slot. Choose this route from spatial needs,
+			not object-name rules; a thin open ring, raised ornament, brim, or rear volume is geometry, while close-fitting plating is
+			usually the vanilla shell. Authored geometry follows the selected adult humanoid/armor-stand anchor poses; baby humanoids
+			fall back to the vanilla wrapped shell, and vanilla trim overlays are omitted because their fixed-shell UVs cannot map to
+			arbitrary authored cuboid nets.
 
 			## Native projectile visuals
 			Generated bows and crossbows use vanilla mechanics but must author their visual animation states. Attach a

@@ -27,9 +27,10 @@ public final class DynamicEntitySpawnerItem extends Item {
 		if (context.getLevel().isClientSide()) return InteractionResult.SUCCESS;
 		if (!(context.getLevel() instanceof ServerLevel level)) return InteractionResult.FAIL;
 
-		var position = context.getClickedPos().relative(context.getClickedFace());
+		var position = DynamicEntitySpawner.placementPosition(
+				context.getClickedPos(), context.getClickedFace(), definition.entity());
 		DynamicCarrierEntity entity = DynamicEntitySpawner.spawn(level, definition,
-				net.minecraft.world.phys.Vec3.atBottomCenterOf(position), context.getRotation(),
+				position, context.getRotation(),
 				context.getPlayer(), EntitySpawnReason.SPAWN_ITEM_USE);
 		if (entity == null) return InteractionResult.FAIL;
 		if (context.getPlayer() == null || !context.getPlayer().isCreative()) stack.shrink(1);

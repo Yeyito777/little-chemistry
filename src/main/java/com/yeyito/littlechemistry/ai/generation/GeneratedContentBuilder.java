@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.ai.generation;
 
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
+import com.yeyito.littlechemistry.content.DynamicArmorGeometry;
 import com.yeyito.littlechemistry.content.DynamicArmorProperties;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
 import com.yeyito.littlechemistry.content.DynamicBlockProperties;
@@ -33,6 +34,7 @@ public final class GeneratedContentBuilder {
 	private DynamicEntityModel entityModel;
 	private DynamicItemVisuals itemVisuals = DynamicItemVisuals.NONE;
 	private DynamicStorageSpec storage;
+	private DynamicArmorGeometry armorGeometry;
 
 	private GeneratedContentBuilder() {
 	}
@@ -58,9 +60,10 @@ public final class GeneratedContentBuilder {
 	public GeneratedContentBuilder entityModel(DynamicEntityModel value) { entityModel = value; return this; }
 	public GeneratedContentBuilder itemVisuals(DynamicItemVisuals value) { itemVisuals = value; return this; }
 	public GeneratedContentBuilder storage(DynamicStorageSpec value) { storage = value; return this; }
+	public GeneratedContentBuilder armorGeometry(DynamicArmorGeometry value) { armorGeometry = value; return this; }
 
 	public GeneratedContentSpec build(String behaviorSource) {
 		return new GeneratedContentSpec(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel,
-				rarity, description, particles, workstation, entity, entityModel, itemVisuals, storage);
+				rarity, description, particles, workstation, entity, entityModel, itemVisuals, storage, armorGeometry);
 	}
 }

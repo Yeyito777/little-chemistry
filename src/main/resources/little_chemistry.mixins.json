@@ -11,8 +11,8 @@
     "FurnaceMenuMixin",
     "FuelValuesMixin",
     "ItemCooldownsMixin",
-		"PistonStructureResolverMixin",
-		"ProjectileMixin",
+    "PistonStructureResolverMixin",
+    "ProjectileMixin",
     "RecipeManagerMixin",
     "ServerGamePacketListenerMixin",
     "ServerRecipeBookMixin",
@@ -22,6 +22,7 @@
     "ClientLevelParticleMixin",
     "CraftingScreenMixin",
     "EquipmentAssetManagerMixin",
+    "HumanoidArmorLayerMixin",
     "FurnaceScreenMixin",
     "ParticleEngineMixin"
   ],

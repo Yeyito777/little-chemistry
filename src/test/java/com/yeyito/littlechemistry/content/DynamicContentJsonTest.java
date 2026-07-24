@@ -55,7 +55,7 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(23, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(24, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
@@ -193,6 +193,26 @@ class DynamicContentJsonTest {
 		assertEquals(495, decoded.armor().durability());
 		assertEquals(displayTextureHash, decoded.armorDisplayTextureHash());
 		assertEquals(displayTexture, decoded.armorDisplayTexture());
+	}
+
+	@Test
+	void roundTripPreservesOptionalAuthoredArmorGeometry() {
+		DynamicArmorProperties armor = DynamicArmorProperties.defaults(DynamicArmorSlot.HEAD);
+		DynamicArmorGeometry geometry = new DynamicArmorGeometry(List.of(new DynamicArmorGeometryPart(
+				"upper_ring", DynamicArmorAnchor.HEAD, 0, 0,
+				-5, -9, -5, 10, 1, 10,
+				0, 0, 0, 0, 0, 0, 0, false)));
+		DynamicContentDefinition definition = new DynamicContentDefinition(
+				DynamicContentType.ARMOR, "open_headpiece", "Open Headpiece", "An authored head silhouette.",
+				DynamicRarity.fromProperties(null, null, armor), 0L, TEXTURE_HASH, null,
+				"1".repeat(64), displayTexture(), null, null, armor,
+				DynamicBehaviorSource.completeLegacySource(null), null, List.of(), null, null, null,
+				DynamicItemVisuals.NONE, null, geometry);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(
+				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition))).definitions().getFirst();
+
+		assertEquals(geometry, decoded.armorGeometry());
 	}
 
 	@Test
@@ -444,7 +464,7 @@ class DynamicContentJsonTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 9, List.of(workstation, entity));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(23, decoded.format());
+		assertEquals(24, decoded.format());
 		assertEquals(2, decoded.definitions().size());
 		assertEquals("separator", decoded.definitions().get(0).name());
 		assertTrue(decoded.definitions().get(0).workstation().recipeDataSchema()

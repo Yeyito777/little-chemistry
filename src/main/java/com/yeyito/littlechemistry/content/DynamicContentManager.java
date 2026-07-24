@@ -79,25 +79,34 @@ public final class DynamicContentManager {
 				.resolve("dynamic-content.json");
 		try {
 			DynamicContentManager manager;
+			Map<String, Set<String>> recoveryDefinitionDigests;
 			if (Files.isRegularFile(dataFile)) {
 				DynamicContentJson.Decoded decoded = loadCompatibleCatalog(dataFile);
 				if (decoded.format() < DynamicContentJson.CURRENT_FORMAT) {
 					backupLegacyCatalog(dataFile, decoded.format());
 				}
 				manager = new DynamicContentManager(server, dataFile, decoded.serverId(), decoded.revision(), decoded.definitions());
+				recoveryDefinitionDigests = decoded.recoveryDefinitionDigests();
 			} else {
 				manager = new DynamicContentManager(server, dataFile, UUID.randomUUID(), 0, List.of());
+				recoveryDefinitionDigests = Map.of();
+			}
+			try {
+				// Recover committed authored source before rewriting a catalog whose old canonical digest may be needed to
+				// recognize that source. A crash after recovery is safe; the old catalog can simply be decoded again.
+				GenerationWorkspace.initialize(manager.generationWorkspaceRoot(), manager.definitions,
+						recoveryDefinitionDigests);
+			} catch (IOException sourceFailure) {
+				if (!recoveryDefinitionDigests.isEmpty()) {
+					throw new IOException("Could not recover generated source before catalog migration", sourceFailure);
+				}
+				LittleChemistry.LOGGER.warn("Could not initialize this world's generation source workspace", sourceFailure);
 			}
 			manager.save(); // Also upgrades legacy slot-based catalogs to the virtual format.
 			manager.rebuildPayload();
 			active = manager;
 			DynamicContentCatalog.replace(manager.definitions);
 			DynamicBehaviorRegistry.replace(manager.definitions);
-			try {
-				GenerationWorkspace.initialize(manager.generationWorkspaceRoot(), manager.definitions);
-			} catch (IOException sourceFailure) {
-				LittleChemistry.LOGGER.warn("Could not initialize this world's generation source workspace", sourceFailure);
-			}
 			LittleChemistry.LOGGER.info("Loaded {} dynamic Little Chemistry entries", manager.definitions.size());
 		} catch (Exception error) {
 			throw new IllegalStateException("Could not load Little Chemistry dynamic content", error);
@@ -322,8 +331,9 @@ public final class DynamicContentManager {
 					generated.entity(),
 					generated.entityModel(),
 					generated.itemVisuals(),
-					generated.storage()
-			);
+					generated.storage(),
+					generated.armorGeometry()
+				);
 		GenerationWorkspace.bindPending(generated, definition);
 		DynamicContentDefinition committed = commit(
 				definition, textureAssets, armorDisplayTextureBytes, compiledBehavior, behavior);
@@ -620,14 +630,7 @@ public final class DynamicContentManager {
 	}
 
 	public static String normalizeDisplayName(String raw) {
-		String displayName = raw == null ? "" : raw.trim();
-		if (displayName.length() >= 2 && displayName.startsWith("\"") && displayName.endsWith("\"")) {
-			displayName = displayName.substring(1, displayName.length() - 1).trim();
-		}
-		if (displayName.isBlank() || displayName.length() > 64 || displayName.chars().anyMatch(Character::isISOControl)) {
-			throw new IllegalArgumentException("Name must contain 1-64 printable characters.");
-		}
-		return displayName;
+		return DynamicDisplayName.normalize(raw);
 	}
 
 	public static String normalizeIdentifier(String displayName) {

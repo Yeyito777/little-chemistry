@@ -20,8 +20,21 @@ public record GeneratedContentSpec(
 		DynamicEntityProperties entity,
 		DynamicEntityModel entityModel,
 		DynamicItemVisuals itemVisuals,
-		DynamicStorageSpec storage
+		DynamicStorageSpec storage,
+		DynamicArmorGeometry armorGeometry
 ) {
+	/** Compatibility constructor for generated source written before authored equipment geometry. */
+	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
+			DynamicItemProperties item, DynamicArmorProperties armor,
+			DynamicArmorDisplayTextureSpec armorDisplayTexture, String behaviorSource,
+			DynamicBlockModel blockModel, DynamicRarity rarityTier, String description,
+			List<DynamicParticleDefinition> customParticles, DynamicWorkstationSpec workstation,
+			DynamicEntityProperties entity, DynamicEntityModel entityModel, DynamicItemVisuals itemVisuals,
+			DynamicStorageSpec storage) {
+		this(texture, block, item, armor, armorDisplayTexture, behaviorSource, blockModel, rarityTier, description,
+				customParticles, workstation, entity, entityModel, itemVisuals, storage, null);
+	}
+
 	/** Compatibility constructor for generated source written before native storage. */
 	public GeneratedContentSpec(DynamicTextureSpec texture, DynamicBlockProperties block,
 			DynamicItemProperties item, DynamicArmorProperties armor,
@@ -166,6 +179,10 @@ public record GeneratedContentSpec(
 		}
 		if ((armor == null) != (armorDisplayTexture == null)) {
 			throw new IllegalArgumentException("Generated armor requires a separate 64x32 display texture");
+		}
+		if (armorGeometry != null) {
+			if (armor == null) throw new IllegalArgumentException("Only generated armor may define authored equipment geometry");
+			armorGeometry.validateFor(armor.slot());
 		}
 		if (entity == null
 				&& DynamicRarity.fromProperties(block, item, armor).vanillaRarity() != rarityTier.vanillaRarity()) {

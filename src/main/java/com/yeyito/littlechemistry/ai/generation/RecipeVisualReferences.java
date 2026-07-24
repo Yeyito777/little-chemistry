@@ -11,6 +11,7 @@ import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
+import com.yeyito.littlechemistry.content.DynamicContentJson;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
@@ -158,7 +159,10 @@ public final class RecipeVisualReferences {
 		definition.itemVisuals().states().forEach(state ->
 				addTexture(references, "generated item state " + state.id(), state.texture()));
 		if (definition.armorDisplayTexture() != null) {
-			addTexture(references, "generated equipped armor texture", definition.armorDisplayTexture());
+			JsonObject equipped = addTexture(references, "generated equipped armor texture", definition.armorDisplayTexture());
+			if (definition.armorGeometry() != null) {
+				equipped.add("authoredGeometry", DynamicContentJson.encodeArmorGeometry(definition.armorGeometry()));
+			}
 		}
 		if (definition.blockModel() != null) definition.blockModel().textures().forEach(texture ->
 				addTexture(references, "generated block model texture " + texture.id(), texture.texture()));
@@ -166,15 +170,15 @@ public final class RecipeVisualReferences {
 				addTexture(references, "generated entity model texture " + texture.id(), texture.texture()));
 	}
 
-	private static void addTexture(JsonArray references, String role, DynamicTextureSpec texture) {
-		addTexture(references, role, texture.width(), texture.height(), texture.palette(), texture.rows());
+	private static JsonObject addTexture(JsonArray references, String role, DynamicTextureSpec texture) {
+		return addTexture(references, role, texture.width(), texture.height(), texture.palette(), texture.rows());
 	}
 
-	private static void addTexture(JsonArray references, String role, DynamicArmorDisplayTextureSpec texture) {
-		addTexture(references, role, 64, 32, texture.palette(), texture.rows());
+	private static JsonObject addTexture(JsonArray references, String role, DynamicArmorDisplayTextureSpec texture) {
+		return addTexture(references, role, 64, 32, texture.palette(), texture.rows());
 	}
 
-	private static void addTexture(JsonArray references, String role, int width, int height,
+	private static JsonObject addTexture(JsonArray references, String role, int width, int height,
 			List<String> paletteValues, List<String> rowValues) {
 		JsonObject encoded = new JsonObject();
 		encoded.addProperty("role", role);
@@ -187,6 +191,7 @@ public final class RecipeVisualReferences {
 		rowValues.forEach(rows::add);
 		encoded.add("rows", rows);
 		references.add(encoded);
+		return encoded;
 	}
 
 	private static void collectIngredientReferences(JsonElement element, Set<IngredientReference> result) {

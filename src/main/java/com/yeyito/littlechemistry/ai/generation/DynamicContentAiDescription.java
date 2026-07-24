@@ -46,7 +46,7 @@ public final class DynamicContentAiDescription {
 		result.add("gameplayProperties", switch (definition.type()) {
 			case BLOCK -> describeBlock(definition.block());
 			case ITEM -> describeItem(definition.item());
-			case ARMOR -> describeArmor(definition.armor());
+			case ARMOR -> describeArmor(definition.armor(), definition.armorGeometry() != null);
 			case ENTITY -> describeEntity(definition.entity());
 		});
 		if (definition.blockModel() != null) {
@@ -237,9 +237,10 @@ public final class DynamicContentAiDescription {
 		return result;
 	}
 
-	private static JsonObject describeArmor(DynamicArmorProperties armor) {
+	private static JsonObject describeArmor(DynamicArmorProperties armor, boolean authoredGeometry) {
 		JsonObject result = new JsonObject();
 		result.addProperty("slot", armor.slot().serializedName());
+		result.addProperty("displayRoute", authoredGeometry ? "authored_geometry" : "vanilla_humanoid_wrap");
 		result.addProperty("foil", armor.foil());
 		result.addProperty("enchantability", armor.enchantability());
 		result.addProperty("defense", armor.defense());

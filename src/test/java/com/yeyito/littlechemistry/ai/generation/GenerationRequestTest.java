@@ -34,9 +34,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
 		assertTrue(prompt.contains("16x16 inventory icon"));
 		assertTrue(prompt.contains("64x32 equipment sheet"));
-		assertTrue(prompt.contains("base-head region x=0..31,y=0..15"));
-		assertTrue(prompt.contains("outer-head region"));
-		assertTrue(prompt.contains("leave unrelated base-head faces transparent"));
+		assertTrue(prompt.contains("top is x=40..47,y=0..7"));
+		assertTrue(prompt.contains("y=8 is the top-of-head edge"));
+		assertTrue(prompt.contains("`DynamicArmorGeometry`"));
+		assertTrue(prompt.contains("textureU/textureV"));
 		assertFalse(prompt.contains("inspect_generated_textures"));
 		assertFalse(prompt.contains("view_image"));
 	}
@@ -56,9 +57,11 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("`.littlechemistry/result.json`"));
 		assertTrue(prompt.contains("\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\""));
 		assertTrue(prompt.contains("\"outputCount\":<natural integer>"));
-		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
-		assertTrue(prompt.contains("Armor output count is always 1"));
-		assertFalse(prompt.contains("\"outputCount\":1"));
+			assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
+			assertTrue(prompt.contains("Armor output count is always 1"));
+			assertTrue(prompt.contains("`displayName` is the player-facing title"));
+			assertTrue(prompt.contains("never a lowercase underscore identifier"));
+			assertFalse(prompt.contains("\"outputCount\":1"));
 		assertTrue(prompt.contains("automatically populated with exact textual artwork"));
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
@@ -74,6 +77,9 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("do not reimplement those mechanics"));
 		assertTrue(prompt.contains("ProjectileCreatedBehavior"));
 		assertTrue(prompt.contains("decide the result's primary player interaction"));
+		assertTrue(compactPrompt.contains("independent world object, creature, vehicle, or mount"));
+		assertTrue(prompt.contains("generated entity's spawner item supplies native world placement"));
+		assertTrue(prompt.contains("never as a proxy that\nmerely affects some already-existing world object"));
 		assertTrue(prompt.contains("Choose armor only when being equipped for protection is primary"));
 		assertTrue(prompt.contains("Choose native storage when opening and"));
 		assertFalse(prompt.contains("Backpacks, satchels, bags"));

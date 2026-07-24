@@ -390,6 +390,7 @@ public final class RuntimeTextureStore {
 		}
 		DynamicParticleTextures.clear();
 		DynamicArmorAssets.clear();
+		DynamicArmorModels.clear();
 		for (Identifier texture : loadedTextures.values()) safeRelease(client, texture);
 		for (List<Identifier> textures : loadedArmorTextures.values()) {
 			for (Identifier texture : textures) safeRelease(client, texture);

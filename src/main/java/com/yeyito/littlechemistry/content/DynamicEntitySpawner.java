@@ -1,5 +1,7 @@
 package com.yeyito.littlechemistry.content;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -10,6 +12,8 @@ import org.jspecify.annotations.Nullable;
 
 /** Shared validated spawn lifecycle used by spawner items and operator commands. */
 public final class DynamicEntitySpawner {
+	private static final double PLACEMENT_CLEARANCE = 1.0E-3;
+
 	private DynamicEntitySpawner() {
 	}
 
@@ -29,5 +33,26 @@ public final class DynamicEntitySpawner {
 		entity.initializeBehavior();
 		level.gameEvent(GameEvent.ENTITY_PLACE, position, GameEvent.Context.of(source == null ? entity : source));
 		return entity;
+	}
+
+	/**
+	 * Centers a generated entity in the clicked face's adjacent cell, then moves wide/tall carriers far enough outward
+	 * that their own bounding box does not overlap the supporting block. This keeps side and underside placement usable
+	 * for every bounded generated entity size instead of only one-block-wide carriers.
+	 */
+	public static Vec3 placementPosition(BlockPos clicked, Direction face, DynamicEntityProperties properties) {
+		return placementPosition(clicked, face, properties.width(), properties.height());
+	}
+
+	static Vec3 placementPosition(BlockPos clicked, Direction face, float width, float height) {
+		Vec3 base = Vec3.atBottomCenterOf(clicked.relative(face));
+		if (face.getAxis().isHorizontal()) {
+			double outward = Math.max(0.0, width * 0.5 - 0.5 + PLACEMENT_CLEARANCE);
+			return base.add(face.getStepX() * outward, 0.0, face.getStepZ() * outward);
+		}
+		if (face == Direction.DOWN) {
+			return base.add(0.0, -Math.max(0.0, height - 1.0 + PLACEMENT_CLEARANCE), 0.0);
+		}
+		return base;
 	}
 }

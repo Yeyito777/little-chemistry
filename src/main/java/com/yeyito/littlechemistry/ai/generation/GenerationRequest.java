@@ -31,12 +31,14 @@ record GenerationRequest(
 	private static final String ARMOR_DIRECTION = """
 			If the result is armor, adapt a supplied or searched relevant armor item icon and its matching equipped humanoid layer.
 			Author both the 16x16 inventory icon and the required 64x32 equipment sheet using Minecraft's actual armor UV layout.
-			For a close-fitting helmet, paint the
-			base-head region x=0..31,y=0..15 and optional outer detail x=32..63,y=0..15. For a crown, wreath, hood trim, or other
-			head accessory, leave unrelated base-head faces transparent and deliberately use the outer-head region instead of turning
-			the accessory into a solid cap.
-			Remember that texture-only vanilla armor cannot create a broad hat brim or a rear-worn object with real depth, so design a
-			coherent texture for the available humanoid shell rather than implying unsupported geometry.
+			Choose the display route from the shape, not its name. Keep `armorGeometry` null for a close-fitting Minecraft armor shell.
+			On the vanilla outer-head cube, top is x=40..47,y=0..7; side faces are right/front/left/back at x=32..39/40..47/48..55/56..63,
+			y=8..15, where y=8 is the top-of-head edge and y=15 is the chin/neck edge. Never infer those directions from the flat rows.
+			When the intended silhouette is open, thin, protruding, or displaced from that shell, attach bounded authored cuboids with
+			`DynamicArmorGeometry` instead. Each `DynamicArmorGeometryPart` states an animated body anchor, model-pixel origin/size and
+			pivot/rotation, plus the exact textureU/textureV corner of its conventional cuboid UV net on the same 64x32 sheet. Read
+			`reference/API.md` for the coordinate contract. Do not paint a spatial accessory onto an unrelated vanilla face merely to
+			avoid using the authored-geometry route.
 			""";
 	private static final String WORKSTATION_DIRECTION = """
 			If the natural result is a workstation, code it as a complete generated block with a non-null
@@ -63,7 +65,10 @@ record GenerationRequest(
 			""";
 	private static final String STORAGE_AND_BLOCK_STATE_DIRECTION = """
 			Before choosing item, block, armor, entity, or workstation, decide the result's primary player interaction from the recipe
-			and concept. Choose armor only when being equipped for protection is primary. Choose native storage when opening and
+			and concept. If the result is an independent world object, creature, vehicle, or mount that players place, enter, ride,
+			or interact with after placement, choose entity; the generated entity's spawner item supplies native world placement.
+			Choose ordinary item only when remaining in a hand or inventory is the primary form of the result, never as a proxy that
+			merely affects some already-existing world object. Choose armor only when being equipped for protection is primary. Choose native storage when opening and
 			carrying or accessing an inventory is primary, even if the real-world object can also be worn; do not replace that primary
 			interaction with an unrelated passive effect. Storage uses `storage(new DynamicStorageSpec(rows))`; the engine supplies
 			persistent contents, native chest menus, slot rules, drops, and a storage tooltip, so generated behavior must not fake
@@ -162,7 +167,8 @@ record GenerationRequest(
 			}
 			prompt.append("For an accepted result, choose the natural output count from 1 to 64 based on the recipe and "
 						+ "result. Armor output count is always 1, and every count must fit both the destination and the "
-						+ "generated stack. Normalize `displayName` to a lowercase underscore ID and create "
+						+ "generated stack. `displayName` is the player-facing title: write capitalized words separated by spaces, "
+						+ "never a lowercase underscore identifier. Derive the separate lowercase underscore `<id>` from it and create "
 						+ "`<category>/<id>/C_<id>_Content.java` with package `<category>.c_<id>`, plus the sibling "
 						+ "`GeneratedBehaviorImpl.java`. The process and every ingredient must materially influence identity, "
 						+ "pixels, native properties, and behavior.\n\n");

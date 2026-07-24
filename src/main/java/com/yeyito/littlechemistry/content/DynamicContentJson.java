@@ -12,14 +12,20 @@ import net.minecraft.world.item.Rarity;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class DynamicContentJson {
 	/** Formats 20 and 21 belonged to an abandoned development schema and must be restored from a format-19 backup. */
-	public static final int CURRENT_FORMAT = 23;
+	public static final int CURRENT_FORMAT = 24;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -51,6 +57,7 @@ public final class DynamicContentJson {
 			entry.addProperty("armorDisplayTextureHash", definition.armorDisplayTextureHash());
 			entry.add("armorDisplayTexture", encodeArmorDisplayTexture(definition.armorDisplayTexture()));
 		}
+		if (definition.armorGeometry() != null) entry.add("armorGeometry", encodeArmorGeometry(definition.armorGeometry()));
 		if (definition.blockModel() != null) entry.add("blockModel", encodeBlockModel(definition.blockModel()));
 		if (definition.entityModel() != null) entry.add("entityModel", encodeEntityModel(definition.entityModel()));
 		if (!definition.itemVisuals().isEmpty()) entry.add("itemVisuals", encodeItemVisuals(definition.itemVisuals()));
@@ -86,6 +93,7 @@ public final class DynamicContentJson {
 			throw new IllegalArgumentException("Too many synchronized dynamic content definitions");
 		}
 		List<DynamicContentDefinition> definitions = new ArrayList<>();
+		Map<String, Set<String>> recoveryDefinitionDigests = new HashMap<>();
 		for (JsonElement element : encodedDefinitions) {
 			JsonObject entry = element.getAsJsonObject();
 			DynamicContentType type = DynamicContentType.fromSerializedName(entry.get("type").getAsString());
@@ -117,6 +125,8 @@ public final class DynamicContentJson {
 					? entry.get("armorDisplayTextureHash").getAsString() : null;
 			DynamicArmorDisplayTextureSpec armorDisplayTexture = format >= 7 && entry.has("armorDisplayTexture")
 					? decodeArmorDisplayTexture(entry.getAsJsonObject("armorDisplayTexture")) : null;
+			DynamicArmorGeometry armorGeometry = format >= 24 && entry.has("armorGeometry")
+					? decodeArmorGeometry(entry.getAsJsonObject("armorGeometry")) : null;
 			DynamicBlockProperties block = type == DynamicContentType.BLOCK
 					? format >= 3 && entry.has("block") ? decodeBlock(entry.getAsJsonObject("block")) : DynamicBlockProperties.DEFAULT
 					: null;
@@ -160,15 +170,22 @@ public final class DynamicContentJson {
 						? entry.get("behaviorSource").getAsString() : null;
 				behaviorSource = DynamicBehaviorSource.completeLegacySource(legacySource);
 			}
-			definitions.add(new DynamicContentDefinition(
+			DynamicContentDefinition definition = new DynamicContentDefinition(
 					type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
 						armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
-						customParticles, workstation, entity, entityModel, itemVisuals, storage
-				));
+						customParticles, workstation, entity, entityModel, itemVisuals, storage, armorGeometry
+				);
+			definitions.add(definition);
+			JsonObject preNormalization = encodeDefinition(definition);
+			preNormalization.addProperty("displayName", displayName);
+			preNormalization.addProperty("description", description);
+			String oldDigest = digestDefinition(preNormalization);
+			String currentDigest = digestDefinition(encodeDefinition(definition));
+			if (!oldDigest.equals(currentDigest)) recoveryDefinitionDigests.put(name, Set.of(oldDigest));
 		}
 		validateUniqueNames(definitions);
 		DynamicBlockDrops.validateCatalog(definitions);
-		return new Decoded(format, serverId, revision, List.copyOf(definitions));
+		return new Decoded(format, serverId, revision, List.copyOf(definitions), Map.copyOf(recoveryDefinitionDigests));
 	}
 
 	static int storedFormat(byte[] bytes) {
@@ -176,7 +193,56 @@ public final class DynamicContentJson {
 	}
 
 	static boolean isSupportedFormat(int format) {
-		return format >= 1 && format <= 19 || format == 22 || format == CURRENT_FORMAT;
+		return format >= 1 && format <= 19 || format >= 22 && format <= CURRENT_FORMAT;
+	}
+
+	public static JsonObject encodeArmorGeometry(DynamicArmorGeometry geometry) {
+		JsonObject encoded = new JsonObject();
+		JsonArray parts = new JsonArray();
+		for (DynamicArmorGeometryPart part : geometry.parts()) {
+			JsonObject value = new JsonObject();
+			value.addProperty("id", part.id());
+			value.addProperty("anchor", part.anchor().serializedName());
+			value.addProperty("textureU", part.textureU());
+			value.addProperty("textureV", part.textureV());
+			value.add("origin", coordinates(part.x(), part.y(), part.z()));
+			value.add("size", coordinates(part.width(), part.height(), part.depth()));
+			value.add("pivot", coordinates(part.pivotX(), part.pivotY(), part.pivotZ()));
+			value.add("rotation", coordinates(part.pitch(), part.yaw(), part.roll()));
+			value.addProperty("dilation", part.dilation());
+			value.addProperty("mirror", part.mirror());
+			parts.add(value);
+		}
+		encoded.add("parts", parts);
+		return encoded;
+	}
+
+	private static DynamicArmorGeometry decodeArmorGeometry(JsonObject encoded) {
+		List<DynamicArmorGeometryPart> parts = new ArrayList<>();
+		for (JsonElement element : encoded.getAsJsonArray("parts")) {
+			JsonObject value = element.getAsJsonObject();
+			float[] origin = decodeCoordinates(value.getAsJsonArray("origin"));
+			float[] size = decodeCoordinates(value.getAsJsonArray("size"));
+			float[] pivot = decodeCoordinates(value.getAsJsonArray("pivot"));
+			float[] rotation = decodeCoordinates(value.getAsJsonArray("rotation"));
+			parts.add(new DynamicArmorGeometryPart(
+					value.get("id").getAsString(),
+					DynamicArmorAnchor.parse(value.get("anchor").getAsString()),
+					value.get("textureU").getAsInt(), value.get("textureV").getAsInt(),
+					origin[0], origin[1], origin[2], size[0], size[1], size[2],
+					pivot[0], pivot[1], pivot[2], rotation[0], rotation[1], rotation[2],
+					value.get("dilation").getAsFloat(), value.get("mirror").getAsBoolean()));
+		}
+		return new DynamicArmorGeometry(parts);
+	}
+
+	private static String digestDefinition(JsonObject definition) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+					.digest(definition.toString().getBytes(StandardCharsets.UTF_8)));
+		} catch (NoSuchAlgorithmException impossible) {
+			throw new AssertionError(impossible);
+		}
 	}
 
 	private static int storedFormat(JsonObject root) {
@@ -789,6 +855,7 @@ public final class DynamicContentJson {
 		}
 	}
 
-	public record Decoded(int format, UUID serverId, long revision, List<DynamicContentDefinition> definitions) {
+	public record Decoded(int format, UUID serverId, long revision, List<DynamicContentDefinition> definitions,
+			Map<String, Set<String>> recoveryDefinitionDigests) {
 	}
 }

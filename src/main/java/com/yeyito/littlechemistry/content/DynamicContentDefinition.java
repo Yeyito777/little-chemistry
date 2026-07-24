@@ -28,8 +28,22 @@ public record DynamicContentDefinition(
 		DynamicEntityProperties entity,
 		DynamicEntityModel entityModel,
 		DynamicItemVisuals itemVisuals,
-		DynamicStorageSpec storage
+		DynamicStorageSpec storage,
+		DynamicArmorGeometry armorGeometry
 ) {
+	/** Compatibility constructor for definitions persisted before authored equipment geometry. */
+	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, String description,
+			DynamicRarity rarityTier, long textureSeed, String textureHash, DynamicTextureSpec texture,
+			String armorDisplayTextureHash, DynamicArmorDisplayTextureSpec armorDisplayTexture,
+			DynamicBlockProperties block, DynamicItemProperties item, DynamicArmorProperties armor,
+			String behaviorSource, DynamicBlockModel blockModel, List<DynamicParticleDefinition> customParticles,
+			DynamicWorkstationSpec workstation, DynamicEntityProperties entity, DynamicEntityModel entityModel,
+			DynamicItemVisuals itemVisuals, DynamicStorageSpec storage) {
+		this(type, name, displayName, description, rarityTier, textureSeed, textureHash, texture,
+				armorDisplayTextureHash, armorDisplayTexture, block, item, armor, behaviorSource, blockModel,
+				customParticles, workstation, entity, entityModel, itemVisuals, storage, null);
+	}
+
 	/** Compatibility constructor for definitions persisted before native generated storage. */
 	public DynamicContentDefinition(DynamicContentType type, String name, String displayName, String description,
 			DynamicRarity rarityTier, long textureSeed, String textureHash, DynamicTextureSpec texture,
@@ -144,10 +158,7 @@ public record DynamicContentDefinition(
 		if (name == null || !name.matches("[a-z0-9_]{1,64}")) {
 			throw new IllegalArgumentException("Dynamic content ID is invalid");
 		}
-		if (displayName == null || displayName.isBlank() || displayName.length() > 64
-				|| displayName.chars().anyMatch(Character::isISOControl)) {
-			throw new IllegalArgumentException("Dynamic content display name is invalid");
-		}
+		displayName = DynamicDisplayName.normalize(displayName);
 		description = normalizeDescription(description);
 		itemVisuals = itemVisuals == null ? DynamicItemVisuals.NONE : itemVisuals;
 		if (rarityTier == null) throw new IllegalArgumentException("Dynamic content rarity is required");
@@ -159,6 +170,12 @@ public record DynamicContentDefinition(
 		}
 		if (armorDisplayTextureHash != null && !armorDisplayTextureHash.matches("[a-f0-9]{64}")) {
 			throw new IllegalArgumentException("Dynamic armor display texture hash is invalid");
+		}
+		if (armorGeometry != null) {
+			if (type != DynamicContentType.ARMOR || armor == null) {
+				throw new IllegalArgumentException("Only armor content may define authored equipment geometry");
+			}
+			armorGeometry.validateFor(armor.slot());
 		}
 		if (behaviorSource == null || behaviorSource.isBlank()) {
 			throw new IllegalArgumentException("Dynamic content requires Java behavior source");
