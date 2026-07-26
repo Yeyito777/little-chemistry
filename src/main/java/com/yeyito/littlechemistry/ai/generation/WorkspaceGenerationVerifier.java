@@ -84,7 +84,7 @@ final class WorkspaceGenerationVerifier {
 
 			String digestBeforeCompilation = GenerationWorkspace.sourceDigest(snapshot);
 			String behaviorSource = Files.readString(behaviorSourceFile, StandardCharsets.UTF_8);
-			DynamicBehaviorCompiler.Compiled compiledBehavior = DynamicBehaviorCompiler.compile(behaviorSource);
+			DynamicBehaviorCompiler.Compiled compiledBehavior = workspace.compileBehavior(behaviorSource);
 			validateCapabilities(selection.type(), compiledBehavior.source());
 			validateFactorySourcePolicy(snapshot, behaviorSourceFile);
 

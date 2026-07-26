@@ -44,6 +44,7 @@ public final class GenerationWorkspace implements AutoCloseable {
 	private final Path jobRoot;
 	private final Path referenceRoot;
 	private final String jobId;
+	private DynamicBehaviorCompiler.Compiled cachedBehavior;
 	private boolean staged;
 
 	private GenerationWorkspace(Path worldRoot, Path jobRoot, Path referenceRoot, String jobId) {
@@ -100,6 +101,14 @@ public final class GenerationWorkspace implements AutoCloseable {
 
 	Path logsRoot() {
 		return worldRoot.resolve("logs");
+	}
+
+	synchronized DynamicBehaviorCompiler.Compiled compileBehavior(String source) {
+		String normalized = source == null ? "" : source.strip();
+		if (cachedBehavior != null && cachedBehavior.source().equals(normalized)) return cachedBehavior;
+		DynamicBehaviorCompiler.Compiled compiled = DynamicBehaviorCompiler.compile(source);
+		cachedBehavior = compiled;
+		return compiled;
 	}
 
 	Path resolve(String relative) {

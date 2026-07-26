@@ -1,22 +1,17 @@
 package com.yeyito.littlechemistry.behavior;
 
 import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.impl.launch.FabricLauncher;
-import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import org.eclipse.jdt.internal.compiler.tool.EclipseCompiler;
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.FileObject;
-import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringWriter;
 import java.lang.reflect.Constructor;
@@ -29,8 +24,6 @@ import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -49,7 +42,8 @@ public final class DynamicBehaviorCompiler {
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
 		StringWriter compilerOutput = new StringWriter();
 		EclipseCompiler compiler = new EclipseCompiler();
-		try (StandardJavaFileManager standardFiles = compiler.getStandardFileManager(
+		try (RuntimeCompilerSupport.CompilationPermit ignored = RuntimeCompilerSupport.acquireCompilationPermit();
+				StandardJavaFileManager standardFiles = compiler.getStandardFileManager(
 						diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
 			configureClassPath(standardFiles);
 			SourceFile compilationUnit = new SourceFile(normalized);
@@ -104,7 +98,7 @@ public final class DynamicBehaviorCompiler {
 			}
 		}
 		addCodeSource(classPath, DynamicBehavior.class);
-		FabricLauncher launcher = fabricLauncher();
+		var launcher = RuntimeCompilerSupport.fabricLauncher();
 		if (launcher != null) {
 			for (Path path : launcher.getClassPath()) addClassPath(classPath, path);
 		}
@@ -117,14 +111,6 @@ public final class DynamicBehaviorCompiler {
 		}
 		files.setLocationFromPaths(StandardLocation.CLASS_PATH, classPath);
 		files.setLocationFromPaths(StandardLocation.SOURCE_PATH, List.of());
-	}
-
-	private static FabricLauncher fabricLauncher() {
-		try {
-			return FabricLauncherBase.getLauncher();
-		} catch (RuntimeException | LinkageError ignored) {
-			return null;
-		}
 	}
 
 	private static void addCodeSource(Set<Path> classPath, Class<?> type) {
@@ -281,32 +267,8 @@ public final class DynamicBehaviorCompiler {
 		}
 	}
 
-	private static final class RuntimeClassFile extends SimpleJavaFileObject {
-		private final String binaryName;
-		private final byte[] bytes;
-
-		private RuntimeClassFile(String binaryName, byte[] bytes) {
-			super(URI.create("runtime:///" + binaryName.replace('.', '/') + Kind.CLASS.extension), Kind.CLASS);
-			this.binaryName = binaryName;
-			this.bytes = bytes;
-		}
-
-		@Override
-		public InputStream openInputStream() {
-			return new ByteArrayInputStream(bytes);
-		}
-
-		@Override
-		public String getName() {
-			return binaryName.replace('.', '/') + Kind.CLASS.extension;
-		}
-	}
-
-	private static final class MemoryFileManager extends ForwardingJavaFileManager<StandardJavaFileManager> {
+	private static final class MemoryFileManager extends RuntimeClassPathFileManager {
 		private final SourceFile source;
-		private final FabricLauncher launcher = fabricLauncher();
-		private final Map<String, RuntimeClassFile> runtimeClasses = new HashMap<>();
-		private final Set<String> unavailableRuntimeClasses = new HashSet<>();
 		private final Map<String, ClassFile> outputs = new TreeMap<>();
 
 		private MemoryFileManager(StandardJavaFileManager fileManager, SourceFile source) {
@@ -326,41 +288,6 @@ public final class DynamicBehaviorCompiler {
 		}
 
 		@Override
-		public JavaFileObject getJavaFileForInput(Location location, String className,
-				JavaFileObject.Kind kind) throws IOException {
-			if (location == StandardLocation.CLASS_PATH && kind == JavaFileObject.Kind.CLASS) {
-				RuntimeClassFile runtimeClass = runtimeClass(className);
-				if (runtimeClass != null) return runtimeClass;
-			}
-			return super.getJavaFileForInput(location, className, kind);
-		}
-
-		@Override
-		public Iterable<JavaFileObject> list(Location location, String packageName,
-				Set<JavaFileObject.Kind> kinds, boolean recurse) throws IOException {
-			Iterable<JavaFileObject> listed = super.list(location, packageName, kinds, recurse);
-			if (location != StandardLocation.CLASS_PATH || !kinds.contains(JavaFileObject.Kind.CLASS)
-					|| launcher == null) return listed;
-			List<JavaFileObject> resolved = new ArrayList<>();
-			for (JavaFileObject file : listed) {
-				if (file.getKind() != JavaFileObject.Kind.CLASS) {
-					resolved.add(file);
-					continue;
-				}
-				String binaryName = super.inferBinaryName(location, file);
-				RuntimeClassFile runtimeClass = runtimeClass(binaryName);
-				resolved.add(runtimeClass == null ? file : runtimeClass);
-			}
-			return resolved;
-		}
-
-		@Override
-		public String inferBinaryName(Location location, JavaFileObject file) {
-			if (file instanceof RuntimeClassFile runtimeClass) return runtimeClass.binaryName;
-			return super.inferBinaryName(location, file);
-		}
-
-		@Override
 		public JavaFileObject getJavaFileForOutput(Location location, String className,
 				JavaFileObject.Kind kind, FileObject sibling) {
 			if (kind != JavaFileObject.Kind.CLASS) {
@@ -375,26 +302,6 @@ public final class DynamicBehaviorCompiler {
 			Map<String, byte[]> result = new TreeMap<>();
 			outputs.forEach((name, output) -> result.put(name, output.bytes()));
 			return Map.copyOf(result);
-		}
-
-		private RuntimeClassFile runtimeClass(String className) {
-			if (launcher == null || unavailableRuntimeClasses.contains(className)) return null;
-			RuntimeClassFile cached = runtimeClasses.get(className);
-			if (cached != null) return cached;
-			try {
-				// Disk jars do not reflect Fabric access wideners or Mixins. Compile against the same transformed
-				// bytecode Knot defines at runtime so generated source sees the API it will actually execute against.
-				byte[] bytes = launcher.getClassByteArray(className, true);
-				if (bytes != null) {
-					RuntimeClassFile runtimeClass = new RuntimeClassFile(className, bytes);
-					runtimeClasses.put(className, runtimeClass);
-					return runtimeClass;
-				}
-			} catch (IOException | RuntimeException | LinkageError ignored) {
-				// Fall back to the configured disk class path when runtime transformation is unavailable.
-			}
-			unavailableRuntimeClasses.add(className);
-			return null;
 		}
 	}
 

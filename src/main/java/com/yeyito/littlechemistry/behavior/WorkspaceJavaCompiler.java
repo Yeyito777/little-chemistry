@@ -1,21 +1,16 @@
 package com.yeyito.littlechemistry.behavior;
 
-import net.fabricmc.loader.impl.launch.FabricLauncher;
-import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import org.eclipse.jdt.internal.compiler.tool.EclipseCompiler;
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.FileObject;
-import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringWriter;
 import java.lang.reflect.Constructor;
@@ -24,8 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -60,8 +53,9 @@ public final class WorkspaceJavaCompiler {
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
 		StringWriter compilerOutput = new StringWriter();
 		EclipseCompiler compiler = new EclipseCompiler();
-		try (StandardJavaFileManager standardFiles = compiler.getStandardFileManager(
-				diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
+		try (RuntimeCompilerSupport.CompilationPermit ignored = RuntimeCompilerSupport.acquireCompilationPermit();
+				StandardJavaFileManager standardFiles = compiler.getStandardFileManager(
+					diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
 			DynamicBehaviorCompiler.configureClassPath(standardFiles);
 			List<Path> sourceRoots = new ArrayList<>();
 			sourceRoots.add(jobRoot);
@@ -139,14 +133,6 @@ public final class WorkspaceJavaCompiler {
 		}
 	}
 
-	private static FabricLauncher fabricLauncher() {
-		try {
-			return FabricLauncherBase.getLauncher();
-		} catch (RuntimeException | LinkageError ignored) {
-			return null;
-		}
-	}
-
 	private static final class OutputClass extends SimpleJavaFileObject {
 		private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 
@@ -158,60 +144,10 @@ public final class WorkspaceJavaCompiler {
 		private byte[] bytes() { return bytes.toByteArray(); }
 	}
 
-	private static final class RuntimeClass extends SimpleJavaFileObject {
-		private final String binaryName;
-		private final byte[] bytes;
-
-		private RuntimeClass(String binaryName, byte[] bytes) {
-			super(java.net.URI.create("runtime:///" + binaryName.replace('.', '/') + Kind.CLASS.extension), Kind.CLASS);
-			this.binaryName = binaryName;
-			this.bytes = bytes;
-		}
-
-		@Override public InputStream openInputStream() { return new ByteArrayInputStream(bytes); }
-		@Override public String getName() { return binaryName.replace('.', '/') + Kind.CLASS.extension; }
-	}
-
-	private static final class MemoryFileManager extends ForwardingJavaFileManager<StandardJavaFileManager> {
-		private final FabricLauncher launcher = fabricLauncher();
-		private final Map<String, RuntimeClass> runtimeClasses = new HashMap<>();
-		private final Set<String> unavailableRuntimeClasses = new HashSet<>();
+	private static final class MemoryFileManager extends RuntimeClassPathFileManager {
 		private final Map<String, OutputClass> outputs = new TreeMap<>();
 
 		private MemoryFileManager(StandardJavaFileManager files) { super(files); }
-
-		@Override
-		public JavaFileObject getJavaFileForInput(Location location, String className, JavaFileObject.Kind kind)
-				throws IOException {
-			if (location == StandardLocation.CLASS_PATH && kind == JavaFileObject.Kind.CLASS) {
-				RuntimeClass runtime = runtimeClass(className);
-				if (runtime != null) return runtime;
-			}
-			return super.getJavaFileForInput(location, className, kind);
-		}
-
-		@Override
-		public Iterable<JavaFileObject> list(Location location, String packageName, Set<JavaFileObject.Kind> kinds,
-				boolean recurse) throws IOException {
-			Iterable<JavaFileObject> listed = super.list(location, packageName, kinds, recurse);
-			if (location != StandardLocation.CLASS_PATH || !kinds.contains(JavaFileObject.Kind.CLASS)
-					|| launcher == null) return listed;
-			List<JavaFileObject> resolved = new ArrayList<>();
-			for (JavaFileObject file : listed) {
-				if (file.getKind() != JavaFileObject.Kind.CLASS) {
-					resolved.add(file);
-					continue;
-				}
-				String binaryName = super.inferBinaryName(location, file);
-				RuntimeClass runtime = runtimeClass(binaryName);
-				resolved.add(runtime == null ? file : runtime);
-			}
-			return resolved;
-		}
-
-		@Override public String inferBinaryName(Location location, JavaFileObject file) {
-			return file instanceof RuntimeClass runtime ? runtime.binaryName : super.inferBinaryName(location, file);
-		}
 
 		@Override
 		public JavaFileObject getJavaFileForOutput(Location location, String className, JavaFileObject.Kind kind,
@@ -227,23 +163,6 @@ public final class WorkspaceJavaCompiler {
 			Map<String, byte[]> result = new TreeMap<>();
 			outputs.forEach((name, output) -> result.put(name, output.bytes()));
 			return Map.copyOf(result);
-		}
-
-		private RuntimeClass runtimeClass(String className) {
-			if (launcher == null || unavailableRuntimeClasses.contains(className)) return null;
-			RuntimeClass cached = runtimeClasses.get(className);
-			if (cached != null) return cached;
-			try {
-				byte[] bytes = launcher.getClassByteArray(className, true);
-				if (bytes != null) {
-					RuntimeClass runtime = new RuntimeClass(className, bytes);
-					runtimeClasses.put(className, runtime);
-					return runtime;
-				}
-			} catch (IOException | RuntimeException | LinkageError ignored) {
-			}
-			unavailableRuntimeClasses.add(className);
-			return null;
 		}
 	}
 

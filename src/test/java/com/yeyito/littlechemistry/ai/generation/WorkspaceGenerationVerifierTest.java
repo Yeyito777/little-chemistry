@@ -59,6 +59,19 @@ final class WorkspaceGenerationVerifierTest {
 	}
 
 	@Test
+	void workspaceReusesAnUnchangedBehaviorCompilationAcrossFactoryRepairs() throws Exception {
+		try (GenerationWorkspace workspace = itemWorkspace(64)) {
+			String source = Files.readString(workspace.root()
+					.resolve("items/prismatic_dust/GeneratedBehaviorImpl.java"));
+
+			var first = workspace.compileBehavior(source);
+			var second = workspace.compileBehavior("\n" + source + "\n");
+
+			assertSame(first, second);
+		}
+	}
+
+	@Test
 	void flexibleRecipeResultIsBoundByWorkstationSchemaAndOutputCapacity() throws Exception {
 		try (GenerationWorkspace workspace = itemWorkspace(64)) {
 			Files.createDirectories(workspace.root().resolve(".littlechemistry"));
