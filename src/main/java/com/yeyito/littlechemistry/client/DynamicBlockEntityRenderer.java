@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import com.yeyito.littlechemistry.content.DynamicBlockEntity;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
+import com.yeyito.littlechemistry.content.DynamicBlockAssemblyRuntime;
 import com.yeyito.littlechemistry.content.DynamicCarrierBlock;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
@@ -38,7 +39,14 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		DynamicContentDefinition definition = DynamicContentCatalog.find(contentId);
 		state.textureHash = definition == null ? null : definition.textureHash();
 		state.model = definition == null ? null : definition.blockModel();
-		state.visualState = blockEntity.generatedState("visual");
+		boolean assembled = definition != null && definition.block() != null && definition.block().assembly() != null;
+		state.assemblyElements = assembled
+				? DynamicBlockAssemblyRuntime.selectedElements(definition, blockEntity.assemblyOffset(), blockEntity.getBlockState())
+				: null;
+		state.visualState = blockEntity.visualState();
+		if (state.visualState == null && assembled) {
+			state.visualState = DynamicBlockAssemblyRuntime.selectedVariantId(definition, blockEntity.getBlockState());
+		}
 		if (state.textureHash != null && blockEntity.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
 			DynamicParticleTextures.remember(clientLevel, blockEntity.getBlockPos(), state.textureHash);
 		}
@@ -106,9 +114,9 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 						RenderTypes.entityCutout(texture),
 						(pose, vertices) -> renderLegacyGeometry(state, pose, vertices)
 				);
-			} else {
-					int order = 0;
-					for (String textureId : state.model.referencedTextureIds()) {
+				} else {
+						int order = 0;
+						for (String textureId : renderedTextureIds(state)) {
 						var texture = textureForState(state.model, textureId, state.visualState);
 						nodes.order(order++).submitCustomGeometry(
 							poseStack,
@@ -119,7 +127,7 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 			}
 			if (state.breakProgress != null) {
 				int progress = Math.clamp(state.breakProgress.progress(), 0, ModelBakery.DESTROY_TYPES.size() - 1);
-					int breakOrder = state.model == null ? 1 : state.model.referencedTextureIds().size();
+						int breakOrder = state.model == null ? 1 : renderedTextureIds(state).size();
 				nodes.order(breakOrder).submitCustomGeometry(
 						poseStack,
 						ModelBakery.DESTROY_TYPES.get(progress),
@@ -134,6 +142,14 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 		} finally {
 			if (rotated) poseStack.popPose();
 		}
+	}
+
+	static java.util.List<String> renderedTextureIds(DynamicBlockRenderState state) {
+		if (state.assemblyElements == null) return state.model.referencedTextureIds().stream().sorted().toList();
+		return state.assemblyElements.stream()
+				.flatMap(element -> element.faces().values().stream())
+				.map(com.yeyito.littlechemistry.content.DynamicBlockModelFace::texture)
+				.distinct().sorted().toList();
 	}
 
 	static com.yeyito.littlechemistry.content.DynamicBlockTexture textureForState(
@@ -159,8 +175,13 @@ public final class DynamicBlockEntityRenderer implements BlockEntityRenderer<Dyn
 
 	private static void renderModelGeometry(DynamicBlockRenderState state, String textureFilter,
 			PoseStack.Pose pose, VertexConsumer vertices) {
-		DynamicBlockModelRenderer.render(state.shape, state.model, textureFilter, pose, vertices,
-				state.faceLightCoords, OverlayTexture.NO_OVERLAY, state.fenceNorth, state.fenceEast,
-				state.fenceSouth, state.fenceWest);
+		if (state.assemblyElements != null) {
+			DynamicBlockModelRenderer.renderElements(state.assemblyElements, textureFilter, pose, vertices,
+					state.faceLightCoords, OverlayTexture.NO_OVERLAY);
+		} else {
+			DynamicBlockModelRenderer.render(state.shape, state.model, textureFilter, pose, vertices,
+					state.faceLightCoords, OverlayTexture.NO_OVERLAY, state.fenceNorth, state.fenceEast,
+					state.fenceSouth, state.fenceWest);
+		}
 	}
 }

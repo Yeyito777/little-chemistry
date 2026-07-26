@@ -14,6 +14,7 @@ import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.context.UseOnContext;
@@ -22,6 +23,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
 
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /** Native bow carrier; vanilla remains authoritative when generated behavior does not handle an action. */
 final class DynamicBowCarrierItem extends BowItem implements DynamicItemCarrier {
@@ -80,6 +82,29 @@ final class DynamicBowCarrierItem extends BowItem implements DynamicItemCarrier 
 				level, shooter, weapon, ammunition, critical);
 	}
 
+	@Override public boolean releaseUsing(ItemStack stack, Level level, LivingEntity shooter, int remainingTicks) {
+		Boolean custom = DynamicProjectileCarrierHooks.customRelease(stack, level, shooter, remainingTicks);
+		return custom == null ? super.releaseUsing(stack, level, shooter, remainingTicks) : custom;
+	}
+
+	@Override public void onUseTick(Level level, LivingEntity shooter, ItemStack stack, int remainingTicks) {
+		if (!DynamicProjectileCarrierHooks.customUseTick(stack, level, shooter, remainingTicks)) {
+			super.onUseTick(level, shooter, stack, remainingTicks);
+		}
+	}
+
+	@Override public int getUseDuration(ItemStack stack, LivingEntity user) {
+		return DynamicProjectileCarrierHooks.useDuration(stack, user, super.getUseDuration(stack, user));
+	}
+
+	@Override public ItemUseAnimation getUseAnimation(ItemStack stack) {
+		return DynamicProjectileCarrierHooks.useAnimation(stack, super.getUseAnimation(stack));
+	}
+
+	@Override public boolean useOnRelease(ItemStack stack) {
+		return DynamicProjectileCarrierHooks.useOnRelease(stack, super.useOnRelease(stack));
+	}
+
 	@Override public Component getName(ItemStack stack) {
 		return DynamicProjectileCarrierHooks.name(stack);
 	}
@@ -95,6 +120,11 @@ final class DynamicBowCarrierItem extends BowItem implements DynamicItemCarrier 
 final class DynamicCrossbowCarrierItem extends CrossbowItem implements DynamicItemCarrier {
 	DynamicCrossbowCarrierItem(Item.Properties properties) {
 		super(properties);
+	}
+
+	/** Vanilla limits rockets to held ammo; generated crossbows expose both native ammo types throughout inventory. */
+	@Override public Predicate<ItemStack> getAllSupportedProjectiles() {
+		return DynamicProjectileCarrierHooks.crossbowAmmunition();
 	}
 
 	@Override public void inventoryTick(ItemStack stack, ServerLevel level, Entity owner, @Nullable EquipmentSlot slot) {
@@ -146,6 +176,29 @@ final class DynamicCrossbowCarrierItem extends CrossbowItem implements DynamicIt
 		return DynamicProjectileCarrierHooks.projectileCreated(
 				super.createProjectile(level, shooter, weapon, ammunition, critical),
 				level, shooter, weapon, ammunition, critical);
+	}
+
+	@Override public boolean releaseUsing(ItemStack stack, Level level, LivingEntity shooter, int remainingTicks) {
+		Boolean custom = DynamicProjectileCarrierHooks.customRelease(stack, level, shooter, remainingTicks);
+		return custom == null ? super.releaseUsing(stack, level, shooter, remainingTicks) : custom;
+	}
+
+	@Override public void onUseTick(Level level, LivingEntity shooter, ItemStack stack, int remainingTicks) {
+		if (!DynamicProjectileCarrierHooks.customUseTick(stack, level, shooter, remainingTicks)) {
+			super.onUseTick(level, shooter, stack, remainingTicks);
+		}
+	}
+
+	@Override public int getUseDuration(ItemStack stack, LivingEntity user) {
+		return DynamicProjectileCarrierHooks.useDuration(stack, user, super.getUseDuration(stack, user));
+	}
+
+	@Override public ItemUseAnimation getUseAnimation(ItemStack stack) {
+		return DynamicProjectileCarrierHooks.useAnimation(stack, super.getUseAnimation(stack));
+	}
+
+	@Override public boolean useOnRelease(ItemStack stack) {
+		return DynamicProjectileCarrierHooks.useOnRelease(stack, super.useOnRelease(stack));
 	}
 
 	@Override public Component getName(ItemStack stack) {

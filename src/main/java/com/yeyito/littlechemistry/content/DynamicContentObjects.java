@@ -152,9 +152,10 @@ public final class DynamicContentObjects {
 		stack.set(DataComponents.RARITY, definition.rarity());
 		if (definition.item() != null) {
 			DynamicItemProperties properties = definition.item();
-			if (properties.heldType().isNativeProjectileWeapon() && properties.maxStack() == 1) {
+			int projectileDurability = projectileDurability(properties);
+			if (properties.heldType().isNativeProjectileWeapon() && projectileDurability > 0) {
 				stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
-				stack.set(DataComponents.MAX_DAMAGE, properties.heldType().nativeDurability());
+				stack.set(DataComponents.MAX_DAMAGE, projectileDurability);
 				stack.set(DataComponents.DAMAGE, 0);
 			} else {
 				stack.set(DataComponents.MAX_STACK_SIZE, properties.maxStack());
@@ -239,11 +240,11 @@ public final class DynamicContentObjects {
 				}
 			} else stack.remove(DataComponents.ENCHANTABLE);
 			if (properties.heldType().isNativeProjectileWeapon()) {
-				if (properties.maxStack() == 1) {
+				int durability = projectileDurability(properties);
+				if (durability > 0) {
 					if (stack.getOrDefault(DataComponents.MAX_STACK_SIZE, 1) != 1) {
 						stack.set(DataComponents.MAX_STACK_SIZE, 1);
 					}
-					int durability = properties.heldType().nativeDurability();
 					if (stack.getOrDefault(DataComponents.MAX_DAMAGE, 0) != durability) {
 						stack.set(DataComponents.MAX_DAMAGE, durability);
 					}
@@ -340,6 +341,12 @@ public final class DynamicContentObjects {
 			case CROSSBOW -> DynamicCrossbowCarrierItem.class;
 			default -> DynamicCarrierItem.class;
 		};
+	}
+
+	private static int projectileDurability(DynamicItemProperties properties) {
+		if (!properties.heldType().isNativeProjectileWeapon()) return 0;
+		if (properties.projectileWeapon() != null) return properties.projectileWeapon().durability();
+		return properties.maxStack() == 1 ? properties.heldType().nativeDurability() : 0;
 	}
 
 	private static DynamicCarrierItem registerArmorCarrier(String name) {

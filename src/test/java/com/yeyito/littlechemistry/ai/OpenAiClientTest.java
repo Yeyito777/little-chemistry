@@ -892,7 +892,10 @@ class OpenAiClientTest {
 				if (current == null) throw new IllegalStateException("No websocket test handler was configured");
 				current.handle(new TestWebSocketConnection(socket));
 			} catch (Throwable error) {
-				if (!(closing.get() && error instanceof IOException)) failure.compareAndSet(null, error);
+				boolean expectedShutdown = closing.get()
+						&& (error instanceof IOException || error instanceof InterruptedException);
+				if (!expectedShutdown) failure.compareAndSet(null, error);
+				if (error instanceof InterruptedException) Thread.currentThread().interrupt();
 			} finally {
 				activeSockets.remove(socket);
 			}

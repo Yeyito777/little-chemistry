@@ -265,6 +265,22 @@ public final class DynamicBehaviorRegistry {
 				});
 	}
 
+	public static boolean projectileWeaponRelease(DynamicContentDefinition definition,
+			DynamicProjectileWeaponContext context) {
+		return invoke(definition, context.shooter() instanceof ServerPlayer player ? player : null,
+				ProjectileWeaponReleaseBehavior.class, false, false,
+				behavior -> behavior.projectileWeaponRelease(context));
+	}
+
+	public static void projectileWeaponUseTick(DynamicContentDefinition definition,
+			DynamicProjectileWeaponContext context) {
+		invoke(definition, context.shooter() instanceof ServerPlayer player ? player : null,
+				ProjectileWeaponUseTickBehavior.class, null, null, behavior -> {
+					behavior.projectileWeaponUseTick(context);
+					return null;
+				});
+	}
+
 	/**
 	 * Captures the generated recipe description for the current workstation inventory.
 	 * A thrown callback disables this definition's shared behavior and is treated as no recipe.

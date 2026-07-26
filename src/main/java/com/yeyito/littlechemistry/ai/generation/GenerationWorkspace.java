@@ -21,6 +21,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -560,13 +561,19 @@ public final class GenerationWorkspace implements AutoCloseable {
 		if (request.flexible()) {
 			encoded.addProperty("resultFile", ".littlechemistry/result.json");
 			encoded.addProperty("allowedKinds", "item, block, workstation, helmet, chestplate, leggings, boots, entity");
+			encoded.addProperty("allowedCapabilities", "ordinary, storage, projectile_weapon, workstation, armor, entity");
 		} else {
 			encoded.addProperty("requestedKind", request.fixedType().serializedName());
 			encoded.addProperty("requestedName", request.fixedDisplayName());
 			encoded.addProperty("requestedOutputCount", request.fixedOutputCount());
-			if (request.fixedType() == DynamicContentType.BLOCK) {
+			if (request.fixedType() == DynamicContentType.ITEM) {
+				encoded.addProperty("resultFile", ".littlechemistry/result.json");
+				encoded.addProperty("allowedKinds", "item");
+				encoded.addProperty("allowedCapabilities", "ordinary, storage, projectile_weapon");
+			} else if (request.fixedType() == DynamicContentType.BLOCK) {
 				encoded.addProperty("resultFile", ".littlechemistry/result.json");
 				encoded.addProperty("allowedKinds", "block, workstation");
+				encoded.addProperty("allowedCapabilities", "ordinary, storage, workstation");
 			}
 			if (request.fixedArmorSlot() != null) {
 				encoded.addProperty("requestedArmorSlot", request.fixedArmorSlot().serializedName());
@@ -580,8 +587,8 @@ public final class GenerationWorkspace implements AutoCloseable {
 			encoded.addProperty("behaviorFile", category + "/" + id + "/GeneratedBehaviorImpl.java");
 		}
 		if (request.recipeContext() != null) encoded.add("recipe", request.recipeContext());
-		// Workstation-specific natural-language policy belongs only in the API user query. Do not duplicate it in
-		// model-readable workspace metadata or let it masquerade as another instruction source.
+		// Workstation-specific natural-language policy belongs only in the API user query. Keep it out of workspace
+		// metadata so policy delivery stays focused and occurs once.
 		if (request.recipeDataSchema() != null) encoded.add("recipeDataSchema", request.recipeDataSchema());
 		return encoded;
 	}
@@ -593,7 +600,10 @@ public final class GenerationWorkspace implements AutoCloseable {
 			Files.createDirectories(normalized.resolve("classes"));
 			JavaCodeInspector.writeIndex(normalized.resolve("classes/INDEX.txt"));
 			MinecraftReferenceExporter.writeIndex(normalized.resolve("vanilla"));
-			writeText(normalized.resolve("API.md"), API_DOCUMENTATION);
+			writeText(normalized.resolve("API.md"), GenerationContracts.API_INDEX);
+			for (GenerationContracts.Contract contract : GenerationContracts.documents()) {
+				writeText(normalized.resolve(contract.path().substring("reference/".length())), contract.content());
+			}
 			PREPARED_REFERENCE_ROOTS.add(normalized);
 		} catch (IOException | RuntimeException failure) {
 			PREPARED_REFERENCE_ROOTS.remove(normalized);
@@ -640,8 +650,11 @@ public final class GenerationWorkspace implements AutoCloseable {
 	private static void copyReferenceIndexes(Path source, Path destination) throws IOException {
 		Files.createDirectories(destination.resolve("classes"));
 		Files.createDirectories(destination.resolve("vanilla"));
-		for (String relative : List.of("API.md", "classes/INDEX.txt", "vanilla/README.md", "vanilla/TEXTURES.txt",
-				"vanilla/GUI_SPRITES.txt")) {
+		List<String> indexes = new ArrayList<>(List.of("API.md", "classes/INDEX.txt", "vanilla/README.md",
+				"vanilla/TEXTURES.txt", "vanilla/GUI_SPRITES.txt"));
+		indexes.addAll(GenerationContracts.documents().stream()
+				.map(contract -> contract.path().substring("reference/".length())).toList());
+		for (String relative : indexes) {
 			Path input = source.resolve(relative);
 			Path output = destination.resolve(relative);
 			Files.createDirectories(output.getParent());
@@ -753,120 +766,4 @@ public final class GenerationWorkspace implements AutoCloseable {
 			DynamicBehaviorCompiler.Compiled compiledBehavior) {
 	}
 
-	private static final String API_DOCUMENTATION = """
-			# Generated Java API
-
-			The factory contract is `com.yeyito.littlechemistry.ai.generation.GeneratedContentFactory` and its method is
-			`GeneratedContentSpec create(String behaviorSource) throws Exception`. `GeneratedContentBuilder` is an optional
-			fluent assembly helper. `GeneratedContentApi` provides `texture`, `modelTexture`, `itemTexture`, particle-frame helpers,
-			`face`, `uniformFaces`, `presetModel`, `selfDrops`, `id`, and `json`; these are conveniences, not a restricted DSL.
-
-			All public constructors and Minecraft APIs are available directly. Search the class index and read source before
-			guessing signatures. Common definition classes are in `com.yeyito.littlechemistry.content`: `GeneratedContentSpec`,
-			`DynamicTextureSpec`, `DynamicBlockProperties`, `DynamicItemProperties`, `DynamicArmorProperties`,
-			`DynamicArmorDisplayTextureSpec`, `DynamicArmorGeometry`, `DynamicArmorGeometryPart`, `DynamicArmorAnchor`,
-			`DynamicEntityProperties`, `DynamicBlockModel`, `DynamicEntityModel`,
-				`DynamicParticleDefinition`, `DynamicItemVisuals`, `DynamicItemTexture`, `DynamicStorageSpec`, and `DynamicWorkstationSpec`. Common enums include `DynamicRarity`, `DynamicMaterial`,
-			`DynamicTool`, `DynamicBlockShape`, `DynamicItemType`, `DynamicHeldType`, `DynamicArmorSlot`,
-			`DynamicEntityMovement`, and `DynamicEntityDisposition`.
-
-			## Generated workstation contract
-			A workstation is a generated block with a non-null `DynamicWorkstationSpec`; it is not a decorative block that merely
-			looks like a furnace or bench. Recipe results must select kind `workstation` rather than ordinary kind `block`, and
-			verification requires that classification to match the generated spec. Attach the spec with
-			`GeneratedContentBuilder.workstation(...)`. It needs at least one recipe-input slot, exactly one primary `OUTPUT`
-			slot, and a `DynamicWorkstationUi` containing exactly one `MAKE_RECIPE` button. Describe deterministic input capture
-			and ingredient uses in `WorkstationBehavior.createWorkstationRecipe`; implement processing, progress, fuel, and other
-			placement-local mechanics in `WorkstationTickBehavior.workstationTick` with bounded context state. The behavior entry
-			must implement both interfaces. Put Minecraft-tick timing in `processDescription`, declarative output character and
-			balance in third-person `recipePolicy`, and bounded per-recipe fields in the closed `recipeDataSchema`.
-
-			Slot `emptySlotIcon` values are GUI-atlas sprite IDs, not ordinary item texture IDs. Choose a logical ID such as
-			`minecraft:container/slot/lapis_lazuli` from `reference/vanilla/GUI_SPRITES.txt`, or use null when no suitable sprite
-			exists. The engine automatically supplies persistent inventory, the generic generated screen, recipe locking/cache and
-			transactions, block opening, automation integration, and the aqua `AI Workstation` item-tooltip marker whenever the
-			persisted definition has a non-null workstation spec. Generated code must use that capability rather than imitating
-			a workstation through tooltip text or ordinary use callbacks. Read `DynamicWorkstationSpec`, its slot/UI records,
-				`WorkstationBehavior`, `WorkstationTickBehavior`, `DynamicWorkstationContext`, and `WorkstationRecipeRequest` from the
-				class index before constructing them.
-
-				Workstation block models must contain at least one visibly distinct active texture named `<baseTextureId>_active`.
-				The engine automatically selects visual state `active` while machine inventory or processing is present. Generated
-				workstation behavior may also use `DynamicWorkstationContext.state()` for other synchronized persistent visual state.
-
-				## Native generated storage and block visual state
-				Attach `new DynamicStorageSpec(rows)` with `GeneratedContentBuilder.storage(...)` to an ordinary block or a regular-held,
-				max-stack-one item. The engine supplies persistent contents, a native one-to-six-row chest menu, nesting protection,
-				container drops, and presentation. Select storage from the concept's primary opening/carrying-inventory interaction,
-				not from a hard-coded object-name list or an unrelated substitute effect. Storage block models need a
-				`<baseTextureId>_open` texture.
-				The engine selects `open` while the menu is viewed. Do not implement fake open sounds or custom inventory menus.
-
-				Ordinary placed-block callbacks can call `DynamicPlacedBlockUseContext.persistentState()`; workstation callbacks can call
-				`DynamicWorkstationContext.state()`. Setting key `visual` to `foo` substitutes any authored model texture named
-				`<baseTextureId>_foo`, with base-texture fallback. Other values in `DynamicBlockState` are bounded, persisted, and synced.
-
-				## Generated world objects and entities
-				Choose entity for an independently placed world object, creature, vehicle, or mount whose primary gameplay happens in the
-				world. Every generated entity is represented in inventory by a native spawner item whose use-on-block path creates the
-				configured `DynamicCarrierEntity`; do not substitute an ordinary held item that only manipulates a pre-existing entity.
-				Define dimensions, movement/disposition, and a complete `DynamicEntityModel`. Use `EntityInteractBehavior` for mounting or
-				other direct interaction and the entity lifecycle callbacks for its actual concept-specific behavior. Descriptions must not
-				promise placement, entering, riding, or persistent world behavior unless the selected entity carrier implements it.
-
-			A typical factory returns:
-			```
-			return GeneratedContentBuilder.create()
-			    .texture(Textures.icon())
-			    .item(properties)
-			    .rarity(DynamicRarity.RARE)
-			    .description("A concise sentence.")
-			    .particles(Particles.definitions())
-			    .build(behaviorSource);
-			```
-			The vanilla `Rarity` stored in block/item/armor properties must equal `DynamicRarity.vanillaRarity()`.
-			Indexed texture rows contain hexadecimal palette indices and palettes contain `RRGGBBAA` colors. Icons are exactly
-			16 rows of 16; equipped armor is 32 rows of 64. Use `GeneratedContentApi.modelTexture` and particle-frame helpers
-			or `DynamicTextureAsset.sha256(texture.renderPng())` so persisted hashes are exact.
-
-			## Armor display routes and authored UV geometry
-			Every armor result supplies a 16x16 inventory icon and a separate 64x32 `DynamicArmorDisplayTextureSpec`. Leave
-			`armorGeometry` null to use Minecraft's fixed humanoid armor shell and ordinary vanilla UV wrapping. For the outer-head
-			cube, top is x=40..47,y=0..7; right/front/left/back are x=32..39/40..47/48..55/56..63 at y=8..15. Side row y=8 is
-			the top edge and y=15 is the chin/neck edge.
-
-			When the intended silhouette cannot be represented by that fixed shell, attach `new DynamicArmorGeometry(parts)` through
-			`GeneratedContentBuilder.armorGeometry(...)`. This route replaces the fixed armor mesh only for that definition while
-			retaining the same equipment slot, texture, animation, glint, and vanilla route for every old/null-geometry definition.
-			Each `DynamicArmorGeometryPart` is one UV-wrapped cuboid. Coordinates are Minecraft model pixels relative to its animated
-			`DynamicArmorAnchor`: HEAD uses the familiar head box origin (-4,-8,-4), BODY (0,0,0), arms pivot at (+/-5,2,0), and legs
-			pivot at (+/-1.9,12,0). Part x/y/z are local to the declared pivot; width/height/depth are positive; pitch/yaw/roll are
-			degrees. `textureU`,`textureV` are the upper-left corner of Minecraft's conventional cuboid unwrap, which consumes
-			`2*(depth+width)` by `depth+height` pixels on the 64x32 sheet. Pack those nets without overlap when they need independent
-			pixels. Geometry is bounded to 32 parts and anchors valid for the equipment slot. Choose this route from spatial needs,
-			not object-name rules; a thin open ring, raised ornament, brim, or rear volume is geometry, while close-fitting plating is
-			usually the vanilla shell. Authored geometry follows the selected adult humanoid/armor-stand anchor poses; baby humanoids
-			fall back to the vanilla wrapped shell, and vanilla trim overlays are omitted because their fixed-shell UVs cannot map to
-			arbitrary authored cuboid nets.
-
-			## Native projectile visuals
-			Generated bows and crossbows use vanilla mechanics but must author their visual animation states. Attach a
-			`DynamicItemVisuals` with `GeneratedContentBuilder.itemVisuals(...)`; create each state with
-			`GeneratedContentApi.itemTexture(id, texture)`. Bows require `pulling_0`, `pulling_1`, and `pulling_2`. Crossbows require
-			those plus `charged` and `charged_firework`. Every 16x16 frame must be visibly distinct from the base and every other
-				frame. Read vanilla state textures with `read_texture` and work directly from their palettes and indexed rows rather
-				than guessing their silhouettes. Native firing remains authoritative, but generated bows/crossbows must implement
-				`ProjectileCreatedBehavior` and/or `ProjectileImpactBehavior` so their concept affects actual launched shots. The creation
-				hook may mutate the vanilla projectile or return a compatible replacement; the impact hook handles the common native
-				collision path. Inventory/crafting particles are not a substitute for shot behavior.
-
-			## Text-only texture references
-			All model-facing texture data is deliberately textual. `read_texture` returns installed artwork as the exact RRGGBBAA
-				palette and hexadecimal row format used by `DynamicTextureSpec`; no PNG, raster preview, or vision attachment is
-				available. Every provided recipe item's conventional inventory/state textures and associated equipped layers are
-				automatically included in a separate user-message section before coding starts. Installed sources larger than 64 pixels
-				are coordinate-labelled textual tiles in that same format. Search the installed index and use `read_texture` for
-				additional carrier, entity, animation, or block-state inspiration. `verify` enforces source/runtime structure, not a
-				post-generation aesthetic review gate.
-			""";
 }

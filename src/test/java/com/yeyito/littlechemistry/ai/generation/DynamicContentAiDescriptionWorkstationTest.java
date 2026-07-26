@@ -9,6 +9,8 @@ import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicRarity;
 import com.yeyito.littlechemistry.content.DynamicWorkstationButton;
 import com.yeyito.littlechemistry.content.DynamicWorkstationButtonRole;
+import com.yeyito.littlechemistry.content.DynamicWorkstationParticleEffect;
+import com.yeyito.littlechemistry.content.DynamicWorkstationParticles;
 import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlot;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole;
@@ -70,7 +72,10 @@ class DynamicContentAiDescriptionWorkstationTest {
 								"Make Recipe", 70, 48, 76, 20, null)), List.of()),
 				"Condenses one input into a stable crystal.",
 				"Choose outputs consistent with pressure crystallization and conserve material.",
-				new DynamicWorkstationRecipeDataSchema(schema));
+				new DynamicWorkstationRecipeDataSchema(schema),
+				new DynamicWorkstationParticles(
+						new DynamicWorkstationParticleEffect("crit", 2, 0.32, 0.08, 0.04),
+						new DynamicWorkstationParticleEffect("happy_villager", 2, 0.32, 0.08, 0.04)));
 		DynamicContentDefinition definition = new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "crystal_press", "Crystal Press", "Presses crystals.",
 				DynamicRarity.COMMON, 0L, "0".repeat(64), null, null, null,

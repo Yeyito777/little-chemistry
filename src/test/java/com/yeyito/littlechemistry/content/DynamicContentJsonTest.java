@@ -8,6 +8,7 @@ import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.ItemUseAnimation;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
 import net.minecraft.SharedConstants;
@@ -55,13 +56,30 @@ class DynamicContentJsonTest {
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
 				DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition)));
 
-		assertEquals(24, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(27, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(DynamicContentJson.CURRENT_FORMAT, decoded.format());
 		assertEquals(DynamicItemType.ITEM, decoded.definitions().getFirst().item().itemType());
 		assertEquals(DynamicHeldType.TOOL, decoded.definitions().getFirst().item().heldType());
 		assertEquals(DynamicCraftingUse.KEEP, decoded.definitions().getFirst().item().craftingUse());
 		assertEquals(1600, decoded.definitions().getFirst().item().fuelBurnTicks());
 		DynamicBehaviorCompiler.compile(decoded.definitions().getFirst().behaviorSource());
+	}
+
+	@Test
+	void roundTripPreservesCustomProjectileMechanicsAndAmmunition() {
+		DynamicProjectileWeaponSpec projectile = new DynamicProjectileWeaponSpec(
+				DynamicProjectileMechanics.CUSTOM, true, 48, ItemUseAnimation.SPEAR, true,
+				List.of("minecraft:firework_rocket", "#minecraft:arrows", "dynamic:petal_charge"),
+				"minecraft:firework_rocket", 777);
+		DynamicItemProperties item = new DynamicItemProperties(
+				DynamicItemType.ITEM, DynamicHeldType.BOW, 1, Rarity.UNCOMMON, false, 3, 0.0,
+				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
+				0, 0, 0, null, null, DynamicCraftingUse.CONSUME, 0, projectile);
+
+		DynamicContentDefinition decoded = DynamicContentJson.decode(DynamicContentJson.encode(
+				UUID.randomUUID(), 1, List.of(definition("free_bow", item)))).definitions().getFirst();
+
+		assertEquals(projectile, decoded.item().projectileWeapon());
 	}
 
 	@Test
@@ -464,7 +482,7 @@ class DynamicContentJsonTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 9, List.of(workstation, entity));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(24, decoded.format());
+		assertEquals(27, decoded.format());
 		assertEquals(2, decoded.definitions().size());
 		assertEquals("separator", decoded.definitions().get(0).name());
 		assertTrue(decoded.definitions().get(0).workstation().recipeDataSchema()

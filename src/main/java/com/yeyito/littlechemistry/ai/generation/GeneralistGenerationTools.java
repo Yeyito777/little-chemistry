@@ -34,15 +34,22 @@ final class GeneralistGenerationTools {
 	 * mappings must use the exact palette/rows representation generated code authors.
 	 */
 	private static final Set<String> NAMES = Set.of(
-			"bash", "read", "read_texture",
+			"bash", "read", "read_texture", "read_entity_reference",
 			"grep", "glob", "write", "edit", "patch", "verify");
 
 	private final GenerationWorkspace workspace;
 	private final GenerationRequest request;
+	private final String entityReferenceSection;
+	private String deliveredContractPath;
 
 	GeneralistGenerationTools(GenerationWorkspace workspace, GenerationRequest request) {
+		this(workspace, request, "");
+	}
+
+	GeneralistGenerationTools(GenerationWorkspace workspace, GenerationRequest request, String entityReferenceSection) {
 		this.workspace = workspace;
 		this.request = request;
+		this.entityReferenceSection = entityReferenceSection == null ? "" : entityReferenceSection;
 	}
 
 	static JsonArray definitions() {
@@ -55,6 +62,11 @@ final class GeneralistGenerationTools {
 						property("offset", integerSchema(1, 1_000_000)), property("limit", integerSchema(1, 2_000)))));
 		tools.add(tool("read_texture", "Read one installed texture reference as exact textual RRGGBBAA palette entries and hexadecimal pixel-index rows. This is the same indexed format generated textures must author; no PNG or vision input is sent.",
 				objectSchema(new String[] {"path"}, property("path", stringSchema(1, 1_024)))));
+		tools.add(tool("read_entity_reference", "Pair one installed entity texture with a native model factory and translate its CubeListBuilder cuboids, inherited pivots/rotations, and exact per-face UV rectangles into Little Chemistry's 0-16 generated model/UV conventions. Texture pixels remain text-only palette/rows data.",
+				objectSchema(new String[] {"texture_path", "model_class", "factory_method"},
+						property("texture_path", stringSchema(1, 1_024)),
+						property("model_class", stringSchema(1, 512)),
+						property("factory_method", stringSchema(1, 128)))));
 		tools.add(tool("grep", "Search UTF-8 files recursively with a Java regular expression and optional glob filter.",
 				objectSchema(new String[] {"pattern"}, property("pattern", stringSchema(1, 4_096)),
 						property("path", stringSchema(0, 1_024)), property("glob", stringSchema(0, 512)),
@@ -80,10 +92,11 @@ final class GeneralistGenerationTools {
 		if (!NAMES.contains(name)) return failure("UNKNOWN_TOOL", "Unknown generalist tool: " + name);
 		try {
 			if (arguments.has("_malformed")) throw new IllegalArgumentException("Tool arguments were not valid JSON");
-			return switch (name) {
+			ToolResult result = switch (name) {
 				case "bash" -> bash(arguments);
-				case "read" -> read(arguments);
-				case "read_texture" -> readTexture(arguments);
+					case "read" -> read(arguments);
+					case "read_texture" -> readTexture(arguments);
+					case "read_entity_reference" -> readEntityReference(arguments);
 				case "grep" -> grep(arguments);
 				case "glob" -> glob(arguments);
 				case "write" -> write(arguments);
@@ -92,6 +105,8 @@ final class GeneralistGenerationTools {
 				case "verify" -> verify(arguments);
 				default -> throw new AssertionError(name);
 			};
+			return Set.of("bash", "write", "edit", "patch").contains(name)
+					? attachFocusedContract(result) : result;
 		} catch (InterruptedException interrupted) {
 			Thread.currentThread().interrupt();
 			return failure("INTERRUPTED", "Tool execution was interrupted");
@@ -99,6 +114,33 @@ final class GeneralistGenerationTools {
 			return failure(name.equals("verify") ? "VERIFICATION_FAILED" : "TOOL_FAILED",
 					name.equals("verify") ? verificationMessage(error) : safeMessage(error));
 		}
+	}
+
+	/**
+	 * Selection and implementation context are deliberately staged. Once any mutating tool observes a valid result file,
+	 * return exactly that kind's contract once; this also covers a model that creates the file through bash or patch.
+	 */
+	private ToolResult attachFocusedContract(ToolResult result) throws IOException {
+		if (!selectionRequired() || !result.output().has("ok") || !result.output().get("ok").getAsBoolean()) return result;
+		Path selection = workspace.root().resolve(".littlechemistry/result.json");
+		if (!Files.isRegularFile(selection) || Files.size(selection) == 0
+				|| Files.size(selection) > MAX_TEXT_ARGUMENT) return result;
+		try {
+			GenerationContracts.Contract contract = GenerationContracts.contractForResult(
+					request, Files.readString(selection, StandardCharsets.UTF_8));
+			if (contract.path().equals(deliveredContractPath)) return result;
+			deliveredContractPath = contract.path();
+				result.output().addProperty("selectedContractPath", contract.path());
+				result.output().addProperty("selectedContract", contract.content());
+				if (contract.path().equals("reference/contracts/entity.md") && !entityReferenceSection.isBlank()) {
+					result.output().addProperty("selectedEntityReferences", entityReferenceSection);
+				}
+			result.output().addProperty("nextStep", "Follow only the selected contract before authoring source; read "
+					+ "reference/API.md and exact class source only as that contract requires.");
+		} catch (IllegalArgumentException invalid) {
+			result.output().addProperty("selectionContractError", invalid.getMessage());
+		}
+		return result;
 	}
 
 	private ToolResult bash(JsonObject arguments) throws IOException, InterruptedException {
@@ -132,14 +174,27 @@ final class GeneralistGenerationTools {
 		if (!Files.isExecutable(bubblewrap)) {
 			throw new IOException("General process tools require /usr/bin/bwrap so the world job can be isolated from the host");
 		}
+		boolean awaitingSelection = selectionRequired() && deliveredContractPath == null;
+		boolean terminalRejection = "reference/contracts/rejection.md".equals(deliveredContractPath);
+		boolean restrictedWorkspace = awaitingSelection || terminalRejection;
+		Path selectionFile = workspace.root().resolve(".littlechemistry/result.json");
+		if (awaitingSelection) {
+			Files.createDirectories(selectionFile.getParent());
+			if (!Files.exists(selectionFile)) Files.createFile(selectionFile);
+		}
 		List<String> sandbox = new ArrayList<>(List.of(
 				bubblewrap.toString(), "--die-with-parent", "--unshare-all", "--new-session", "--clearenv",
 				"--ro-bind", "/usr", "/usr", "--ro-bind", "/bin", "/bin",
 				"--ro-bind", "/lib", "/lib", "--ro-bind", "/etc", "/etc",
 				"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-				"--bind", workspace.root().toString(), "/workspace", "--chdir", "/workspace",
+				restrictedWorkspace ? "--ro-bind" : "--bind", workspace.root().toString(), "/workspace",
+				"--chdir", "/workspace",
 				"--setenv", "HOME", "/workspace", "--setenv", "PATH", "/usr/bin:/bin",
 				"--setenv", "LANG", "C.UTF-8", "--setenv", "LC_ALL", "C.UTF-8"));
+		if (awaitingSelection) {
+			// Bind only the control file, never the directory: pre-contract bash cannot stage source payloads beside it.
+			sandbox.addAll(List.of("--bind", selectionFile.toString(), "/workspace/.littlechemistry/result.json"));
+		}
 		if (Files.exists(Path.of("/lib64"))) {
 			sandbox.addAll(11, List.of("--ro-bind", "/lib64", "/lib64"));
 		}
@@ -222,6 +277,39 @@ final class GeneralistGenerationTools {
 				+ "large sources are coordinate-labelled tiles in that same format");
 		output.addProperty("javaAuthoringHint", "Reuse the closest palette/row silhouette directly in "
 				+ "DynamicTextureSpec, then make deliberate ingredient-specific pixel edits instead of redrawing from memory.");
+		return new ToolResult(output, null);
+	}
+
+	private ToolResult readEntityReference(JsonObject arguments) throws IOException {
+		requireOnly(arguments, "texture_path", "model_class", "factory_method");
+		String texturePath = canonicalTextureReference(requiredString(arguments, "texture_path"));
+		String modelClass = requiredString(arguments, "model_class");
+		String factoryMethod = requiredString(arguments, "factory_method");
+		if (!modelClass.matches("[A-Za-z_$][A-Za-z0-9_$.]{0,510}")) {
+			throw new IllegalArgumentException("model_class must be a fully qualified Java class name");
+		}
+		if (!factoryMethod.matches("[A-Za-z_$][A-Za-z0-9_$]{0,127}")) {
+			throw new IllegalArgumentException("factory_method must be a Java method name");
+		}
+		String modelSourcePath = "reference/classes/" + modelClass.replace('.', '/') + ".java";
+		workspace.materializeReference(texturePath);
+		workspace.materializeReference(modelSourcePath);
+		Path sourcePath = workspace.resolve(modelSourcePath);
+		if (!Files.isRegularFile(sourcePath)) {
+			throw new IllegalArgumentException("Native model class is not available in reference/classes: " + modelClass);
+		}
+		JsonObject texture = JsonParser.parseString(Files.readString(
+				workspace.resolve(texturePath), StandardCharsets.UTF_8)).getAsJsonObject();
+		validateIndexedTextureReference(texture);
+		JsonObject output = success();
+		output.addProperty("texturePath", texturePath);
+		output.add("texture", texture.deepCopy());
+		output.add("nativeModel", NativeEntityModelReference.translate(modelClass, factoryMethod,
+				Files.readString(sourcePath, StandardCharsets.UTF_8), texture));
+		output.addProperty("representation", "text-only native entity reference: exact indexed texture pixels plus "
+				+ "cuboids, pivots, rotations, and per-face pixel/normalized UV rectangles");
+		output.addProperty("authoringFreedom", "Use this as faithful source material. Generated content may preserve, "
+				+ "simplify, extend, or replace the native geometry and texture rather than being forced to clone it.");
 		return new ToolResult(output, null);
 	}
 
@@ -350,6 +438,7 @@ final class GeneralistGenerationTools {
 		requireOnly(arguments, "path", "content");
 		String relative = requiredString(arguments, "path");
 		String content = requiredString(arguments, "content");
+		requireSelectionBeforeSourceMutation(relative);
 		workspace.requireWritable(relative);
 		Path path = workspace.resolve(relative);
 		Files.createDirectories(path.getParent());
@@ -364,6 +453,7 @@ final class GeneralistGenerationTools {
 	private ToolResult edit(JsonObject arguments) throws IOException {
 		requireOnly(arguments, "path", "old_text", "new_text");
 		String relative = requiredString(arguments, "path");
+		requireSelectionBeforeSourceMutation(relative);
 		workspace.requireWritable(relative);
 		Path path = workspace.resolve(relative);
 		String original = Files.readString(path, StandardCharsets.UTF_8);
@@ -390,6 +480,7 @@ final class GeneralistGenerationTools {
 			String path = line.substring(4).split("[\\t ]", 2)[0];
 			if (path.equals("/dev/null")) continue;
 			while (path.startsWith("a/") || path.startsWith("b/")) path = path.substring(2);
+			requireSelectionBeforeSourceMutation(path);
 			workspace.requireWritable(path);
 			workspace.resolve(path);
 		}
@@ -409,6 +500,24 @@ final class GeneralistGenerationTools {
 		JsonObject result = success();
 		result.addProperty("output", output);
 		return new ToolResult(result, null);
+	}
+
+	private boolean selectionRequired() {
+		return request.flexible() || request.fixedType() == com.yeyito.littlechemistry.content.DynamicContentType.ITEM
+				|| request.fixedType() == com.yeyito.littlechemistry.content.DynamicContentType.BLOCK;
+	}
+
+	private void requireSelectionBeforeSourceMutation(String relative) {
+		if (!selectionRequired()) return;
+		Path normalized = normalizedWorkspacePath(relative);
+		if ("reference/contracts/rejection.md".equals(deliveredContractPath)) {
+			throw new IllegalArgumentException("A workstation recipe rejection is terminal; call verify without changing the "
+					+ "selection or authoring source");
+		}
+		if (deliveredContractPath != null && !deliveredContractPath.equals("reference/contracts/rejection.md")) return;
+		if (normalized.equals(Path.of(".littlechemistry/result.json"))) return;
+		throw new IllegalArgumentException("Select the result capability in .littlechemistry/result.json and receive its "
+				+ "focused contract before modifying source");
 	}
 
 	private ToolResult verify(JsonObject arguments) throws Exception {

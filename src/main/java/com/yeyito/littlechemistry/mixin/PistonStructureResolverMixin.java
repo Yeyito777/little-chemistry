@@ -2,6 +2,7 @@ package com.yeyito.littlechemistry.mixin;
 
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.content.DynamicBlockEntity;
+import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -28,6 +29,14 @@ public abstract class PistonStructureResolverMixin {
 			result.setReturnValue(false);
 		}
 		if (toPush.stream().anyMatch(pos -> serverLevel.getBlockEntity(pos) instanceof DynamicBlockEntity workstation
-				&& workstation.isWorkstation())) result.setReturnValue(false);
+				&& (workstation.isWorkstation() || isAssembly(workstation)))) {
+			result.setReturnValue(false);
+		}
+	}
+
+	private static boolean isAssembly(DynamicBlockEntity blockEntity) {
+		if (!blockEntity.assemblyOffset().equals(BlockPos.ZERO)) return true;
+		var definition = blockEntity.contentId() == null ? null : DynamicContentCatalog.find(blockEntity.contentId());
+		return definition != null && definition.block() != null && definition.block().assembly() != null;
 	}
 }

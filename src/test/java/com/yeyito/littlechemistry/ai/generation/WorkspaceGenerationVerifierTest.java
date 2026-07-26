@@ -1,5 +1,6 @@
 package com.yeyito.littlechemistry.ai.generation;
 
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.content.DynamicArmorDisplayTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
@@ -8,6 +9,8 @@ import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.DynamicTextureAsset;
 import com.yeyito.littlechemistry.content.DynamicWorkstationButton;
 import com.yeyito.littlechemistry.content.DynamicWorkstationButtonRole;
+import com.yeyito.littlechemistry.content.DynamicWorkstationParticleEffect;
+import com.yeyito.littlechemistry.content.DynamicWorkstationParticles;
 import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlot;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole;
@@ -60,7 +63,7 @@ final class WorkspaceGenerationVerifierTest {
 		try (GenerationWorkspace workspace = itemWorkspace(64)) {
 			Files.createDirectories(workspace.root().resolve(".littlechemistry"));
 			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"), """
-					{"kind":"item","displayName":"Prismatic Dust","outputCount":9,
+					{"kind":"item","capability":"ordinary","displayName":"Prismatic Dust","outputCount":9,
 					 "recipeData":{"duration_ticks":200}}
 					""");
 			var context = JsonParser.parseString("""
@@ -178,7 +181,8 @@ final class WorkspaceGenerationVerifierTest {
 			assertTrue(missing.getMessage().contains("Write .littlechemistry/result.json"));
 
 			Files.createDirectories(workspace.root().resolve(".littlechemistry"));
-			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"), "{\"kind\":\"item\"}");
+			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"),
+					"{\"kind\":\"item\",\"capability\":\"ordinary\"}");
 			IllegalArgumentException invalid = assertThrows(IllegalArgumentException.class,
 					() -> WorkspaceGenerationVerifier.verify(workspace, request));
 			assertTrue(invalid.getMessage().contains("must be block or workstation"));
@@ -246,6 +250,42 @@ final class WorkspaceGenerationVerifierTest {
 		assertTrue(failure.getMessage().contains("third-person output-design data"));
 	}
 
+	@Test
+	void resultCapabilityMustMatchBothKindAndExecutedFactory() throws Exception {
+		try (GenerationWorkspace workspace = itemWorkspace(64)) {
+			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"),
+					"{\"kind\":\"item\",\"capability\":\"armor\","
+							+ "\"displayName\":\"Prismatic Dust\",\"outputCount\":1}");
+			GenerationRequest flexible = GenerationRequest.recipe(new JsonObject(), null, null);
+			IllegalArgumentException invalidCombination = assertThrows(IllegalArgumentException.class,
+					() -> WorkspaceGenerationVerifier.verify(workspace, flexible));
+			assertTrue(invalidCombination.getMessage().contains("not valid for result kind"));
+
+			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"),
+					"{\"kind\":\"item\",\"capability\":\"storage\"}");
+			GenerationRequest fixed = GenerationRequest.fixed(
+					DynamicContentType.ITEM, null, "Prismatic Dust", 1, null);
+			IllegalArgumentException missingStorage = assertThrows(IllegalArgumentException.class,
+					() -> WorkspaceGenerationVerifier.verify(workspace, fixed));
+			assertTrue(missingStorage.getMessage().contains("requires a non-null DynamicStorageSpec"));
+		}
+	}
+
+	@Test
+	void fixedItemRejectsAnIncidentalMismatchedResultKind() throws Exception {
+		try (GenerationWorkspace workspace = itemWorkspace(64)) {
+			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"),
+					"{\"kind\":\"workstation\",\"capability\":\"workstation\"}");
+			GenerationRequest request = GenerationRequest.fixed(
+					DynamicContentType.ITEM, null, "Prismatic Dust", 1, null);
+
+			IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+					() -> WorkspaceGenerationVerifier.verify(workspace, request));
+
+			assertTrue(failure.getMessage().contains("Fixed item result kind must be item"));
+		}
+	}
+
 	private GenerationWorkspace itemWorkspace(int maxStack) throws Exception {
 		return itemWorkspace(temporaryDirectory.resolve("world-" + maxStack),
 				temporaryDirectory.resolve("job-" + maxStack), maxStack);
@@ -262,6 +302,9 @@ final class WorkspaceGenerationVerifierTest {
 				}
 				""");
 		Files.writeString(item.resolve("C_prismatic_dust_Content.java"), factory(maxStack));
+		Files.createDirectories(job.resolve(".littlechemistry"));
+		Files.writeString(job.resolve(".littlechemistry/result.json"),
+				"{\"kind\":\"item\",\"capability\":\"ordinary\"}");
 		return workspace;
 	}
 
@@ -337,6 +380,9 @@ final class WorkspaceGenerationVerifierTest {
 								"Make", 70, 48, 76, 20, null)), List.of()),
 				processDescription,
 				policy,
-				new DynamicWorkstationRecipeDataSchema(schema));
+				new DynamicWorkstationRecipeDataSchema(schema),
+				new DynamicWorkstationParticles(
+						new DynamicWorkstationParticleEffect("electric_spark", 2, 0.32, 0.08, 0.04),
+						new DynamicWorkstationParticleEffect("happy_villager", 2, 0.32, 0.08, 0.04)));
 	}
 }

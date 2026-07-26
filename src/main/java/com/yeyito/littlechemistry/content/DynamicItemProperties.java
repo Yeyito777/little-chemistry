@@ -21,11 +21,23 @@ public record DynamicItemProperties(
 		DynamicFoodProperties food,
 		DynamicPlacementProperties placement,
 		DynamicCraftingUse craftingUse,
-		int fuelBurnTicks
+		int fuelBurnTicks,
+		DynamicProjectileWeaponSpec projectileWeapon
 ) {
 	/** Furnace fields store their remaining burn duration as a signed short in world data. */
 	public static final int MAX_FUEL_BURN_TICKS = Short.MAX_VALUE;
 	public static final DynamicItemProperties DEFAULT = ordinary(64, Rarity.COMMON, false, 0, 0.0);
+
+	/** Compatibility constructor for definitions predating selectable native/custom projectile mechanics. */
+	public DynamicItemProperties(DynamicItemType itemType, DynamicHeldType heldType, int maxStack, Rarity rarity,
+			boolean foil, int enchantability, double reach, DynamicTool tool, DynamicBreakingPower breakingPower,
+			float breakingSpeed, double attackDamage, double attackSpeed, int durability, int damagePerBlock,
+			int damagePerAttack, DynamicFoodProperties food, DynamicPlacementProperties placement,
+			DynamicCraftingUse craftingUse, int fuelBurnTicks) {
+		this(itemType, heldType, maxStack, rarity, foil, enchantability, reach, tool, breakingPower,
+				breakingSpeed, attackDamage, attackSpeed, durability, damagePerBlock, damagePerAttack,
+				food, placement, craftingUse, fuelBurnTicks, null);
+	}
 
 	/** Compatibility constructor for definitions predating reusable crafting ingredients. */
 	public DynamicItemProperties(DynamicItemType itemType, DynamicHeldType heldType, int maxStack, Rarity rarity,
@@ -85,6 +97,14 @@ public record DynamicItemProperties(
 			}
 			if (maxStack != 1 || durability < 1) {
 				throw new IllegalArgumentException("Tools must have maxStack 1 and positive durability");
+			}
+		}
+		if (projectileWeapon != null) {
+			if (!heldType.isNativeProjectileWeapon() || itemType != DynamicItemType.ITEM) {
+				throw new IllegalArgumentException("Only bow/crossbow items may define projectile mechanics");
+			}
+			if (projectileWeapon.durability() > 0 && maxStack != 1) {
+				throw new IllegalArgumentException("Damageable projectile weapons must have maxStack 1");
 			}
 		}
 	}

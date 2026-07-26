@@ -115,6 +115,17 @@ final class MinecraftReferenceExporter {
 	}
 
 	static List<String> referencesForItem(Identifier itemId, Identifier equipmentAssetId, Identifier itemModelId) {
+		return referencesForItem(itemId, equipmentAssetId, itemModelId, true);
+	}
+
+	/** Compatibility view used only to migrate recipe digests written before world-carrier sheets were supplied. */
+	static List<String> referencesForItemWithoutWorldCarriers(
+			Identifier itemId, Identifier equipmentAssetId, Identifier itemModelId) {
+		return referencesForItem(itemId, equipmentAssetId, itemModelId, false);
+	}
+
+	private static List<String> referencesForItem(Identifier itemId, Identifier equipmentAssetId,
+			Identifier itemModelId, boolean includeWorldCarriers) {
 		String itemPath = "item/" + itemId.getPath();
 		String blockPath = "block/" + itemId.getPath();
 		Set<TextureReference> available = new TreeSet<>(Comparator.comparing(TextureReference::qualifiedPath));
@@ -137,7 +148,62 @@ final class MinecraftReferenceExporter {
 		available.addAll(modelTextures(Identifier.fromNamespaceAndPath(
 				effectiveModel.getNamespace(), "item/" + effectiveModel.getPath()), new java.util.HashSet<>()));
 		available.addAll(equipmentTextures(itemId, equipmentAssetId));
+		if (includeWorldCarriers) available.addAll(nativeWorldCarrierTextures(itemId));
 		return available.stream().map(reference -> reference.virtualPath() + ".json").toList();
+	}
+
+	/** World-render artwork is not reachable from item-definition JSON, so bridge native carrier classes by convention. */
+	private static Set<TextureReference> nativeWorldCarrierTextures(Identifier itemId) {
+		String path = itemId.getPath();
+		String material = null;
+		boolean chest = false;
+		for (String suffix : List.of("_chest_boat", "_chest_raft", "_boat", "_raft")) {
+			if (path.endsWith(suffix) && path.length() > suffix.length()) {
+				material = path.substring(0, path.length() - suffix.length());
+				chest = suffix.startsWith("_chest_");
+				break;
+			}
+		}
+		if (material == null) return Set.of();
+		return Set.of(new TextureReference(itemId.getNamespace(),
+				(chest ? "entity/chest_boat/" : "entity/boat/") + material));
+	}
+
+	/** Native item carriers whose world texture and model factory can be paired without guessing from a filename. */
+	static List<NativeEntityProfile> nativeEntityProfiles(Identifier itemId) {
+		String path = itemId.getPath();
+		for (String suffix : List.of("_chest_boat", "_chest_raft", "_boat", "_raft")) {
+			if (!path.endsWith(suffix) || path.length() <= suffix.length()) continue;
+			String material = path.substring(0, path.length() - suffix.length());
+			boolean chest = suffix.startsWith("_chest_");
+			boolean raft = suffix.endsWith("_raft");
+			String texturePath = (chest ? "entity/chest_boat/" : "entity/boat/") + material + ".json";
+			String texture = itemId.getNamespace().equals("minecraft")
+					? texturePath : itemId.getNamespace() + "/" + texturePath;
+			String model = raft ? "net.minecraft.client.model.object.boat.RaftModel"
+					: "net.minecraft.client.model.object.boat.BoatModel";
+			String factory = raft ? chest ? "createChestRaftModel" : "createRaftModel"
+					: chest ? "createChestBoatModel" : "createBoatModel";
+			return List.of(new NativeEntityProfile(texture, model, factory));
+		}
+		return List.of();
+	}
+
+	static JsonObject materializeNativeEntityProfile(NativeEntityProfile profile) throws IOException {
+		JsonObject texture = JsonParser.parseString(materialize(profile.texturePath())).getAsJsonObject();
+		try {
+			Class<?> modelType = Class.forName(profile.modelClass(), false,
+					MinecraftReferenceExporter.class.getClassLoader());
+			String source = JavaSourceDecompiler.decompile(modelType).javaSource();
+			JsonObject result = new JsonObject();
+			result.addProperty("texturePath", "reference/vanilla/" + profile.texturePath());
+			result.add("texture", texture);
+			result.add("nativeModel", NativeEntityModelReference.translate(
+					profile.modelClass(), profile.factoryMethod(), source, texture));
+			return result;
+		} catch (ClassNotFoundException | LinkageError unavailable) {
+			throw new IOException("Native entity model class is unavailable: " + profile.modelClass(), unavailable);
+		}
 	}
 
 	/** Traverses the 26.2 item-definition dispatch graph and every legacy model it references. */
@@ -440,4 +506,6 @@ final class MinecraftReferenceExporter {
 			return namespace + ':' + path;
 		}
 	}
+
+	record NativeEntityProfile(String texturePath, String modelClass, String factoryMethod) { }
 }

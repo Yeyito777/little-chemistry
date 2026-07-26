@@ -113,9 +113,9 @@ public final class DynamicCarrierItem extends Item implements DynamicItemCarrier
 				int inventorySlot = hand == InteractionHand.OFF_HAND
 						? net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND
 						: serverPlayer.getInventory().getSelectedSlot();
-				UUID storageId = uniqueStorageId(serverPlayer, stack);
-				DynamicItemStorageContainer container = new DynamicItemStorageContainer(
-						serverPlayer, storageId, inventorySlot, storage.slots());
+					UUID storageId = uniqueStorageId(serverPlayer, stack);
+					DynamicItemStorageContainer container = new DynamicItemStorageContainer(
+							serverPlayer, storageId, inventorySlot, storage);
 				serverPlayer.openMenu(new SimpleMenuProvider(
 						(id, inventory, ignored) -> new DynamicItemStorageMenu(menuType(storage.rows()), id,
 								inventory, container, storage.rows(), inventorySlot),

@@ -32,7 +32,7 @@ final class GeneralistGenerationToolsTest {
 			Files.createDirectories(job.resolve(".existing-sourcepath"));
 			Files.writeString(job.resolve("request.json"), "immutable");
 			GenerationRequest request = GenerationRequest.fixed(
-					DynamicContentType.ITEM, null, "Sandbox Item", 1, null);
+					DynamicContentType.ENTITY, null, "Sandbox Entity", 1, null);
 			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace, request);
 			JsonObject arguments = new JsonObject();
 			arguments.addProperty("command",
@@ -69,7 +69,7 @@ final class GeneralistGenerationToolsTest {
 		Set<String> names = new HashSet<>();
 		definitions.forEach(element -> names.add(element.getAsJsonObject().get("name").getAsString()));
 
-		assertEquals(Set.of("bash", "read", "read_texture",
+		assertEquals(Set.of("bash", "read", "read_texture", "read_entity_reference",
 				"grep", "glob", "write", "edit", "patch", "verify"), names);
 		assertFalse(names.contains("inspect_generated_textures"));
 		assertFalse(names.contains("view_image"));
@@ -226,6 +226,236 @@ final class GeneralistGenerationToolsTest {
 
 			assertFalse(result.output().get("ok").getAsBoolean());
 			assertTrue(result.output().get("message").getAsString().contains("Only workstation recipes"));
+		}
+	}
+
+	@Test
+	void focusedContractsAreMaterializedInEveryGenerationJob() throws Exception {
+		Path world = temporaryDirectory.resolve("contract-reference-world");
+		for (int job = 0; job < 2; job++) {
+			try (GenerationWorkspace workspace = GenerationWorkspace.open(world,
+					GenerationRequest.recipe(new JsonObject(), null, null))) {
+				assertTrue(Files.readString(workspace.root().resolve("reference/API.md"))
+						.contains("Choose the result before studying implementation details"));
+				for (GenerationContracts.Contract contract : GenerationContracts.documents()) {
+					Path materialized = workspace.root().resolve(contract.path());
+					assertTrue(Files.isRegularFile(materialized), contract.path());
+					assertEquals(contract.content(), Files.readString(materialized));
+				}
+			}
+		}
+	}
+
+	@Test
+	void sourceMutationIsRejectedUntilTheFocusedContractIsDelivered() throws Exception {
+		Path world = temporaryDirectory.resolve("staged-world");
+		Path job = temporaryDirectory.resolve("staged-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(new JsonObject(), null, null));
+			JsonObject prematureWrite = new JsonObject();
+			prematureWrite.addProperty("path", "items/premature/source.txt");
+			prematureWrite.addProperty("content", "too early");
+			JsonObject rejectedWrite = tools.execute("write", prematureWrite).output();
+			assertFalse(rejectedWrite.get("ok").getAsBoolean());
+			assertTrue(rejectedWrite.get("message").getAsString().contains("receive its focused contract"));
+
+			JsonObject bundledPatch = new JsonObject();
+			bundledPatch.addProperty("diff", """
+					--- /dev/null
+					+++ .littlechemistry/result.json
+					@@ -0,0 +1 @@
+					+{"kind":"item","capability":"ordinary","displayName":"Staged Item","outputCount":1}
+					--- /dev/null
+					+++ items/premature/source.txt
+					@@ -0,0 +1 @@
+					+too early
+					""");
+			JsonObject rejectedPatch = tools.execute("patch", bundledPatch).output();
+			assertFalse(rejectedPatch.get("ok").getAsBoolean());
+			assertFalse(Files.exists(job.resolve(".littlechemistry/result.json")));
+			assertFalse(Files.exists(job.resolve("items/premature/source.txt")));
+		}
+	}
+
+	@Test
+	void incompleteSelectionDoesNotUnlockSourceMutation() throws Exception {
+		Path world = temporaryDirectory.resolve("incomplete-selection-world");
+		Path job = temporaryDirectory.resolve("incomplete-selection-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(new JsonObject(), null, null));
+			JsonObject incomplete = new JsonObject();
+			incomplete.addProperty("path", ".littlechemistry/result.json");
+			incomplete.addProperty("content", "{\"kind\":\"item\",\"capability\":\"ordinary\"}");
+
+			JsonObject result = tools.execute("write", incomplete).output();
+
+			assertFalse(result.has("selectedContract"));
+			assertTrue(result.get("selectionContractError").getAsString().contains("displayName"));
+			JsonObject source = new JsonObject();
+			source.addProperty("path", "items/premature/source.txt");
+			source.addProperty("content", "still too early");
+			assertFalse(tools.execute("write", source).output().get("ok").getAsBoolean());
+
+			incomplete.addProperty("content", "{\"kind\":\"item\",\"capability\":\"ordinary\","
+					+ "\"displayName\":\"Complete Item\",\"outputCount\":1}");
+			assertEquals("reference/contracts/item.md",
+					tools.execute("write", incomplete).output().get("selectedContractPath").getAsString());
+		}
+	}
+
+	@Test
+	void bashCannotBundleFirstSelectionWithSourceAuthoring() throws Exception {
+		Path world = temporaryDirectory.resolve("staged-bash-world");
+		Path job = temporaryDirectory.resolve("staged-bash-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(new JsonObject(), null, null));
+			JsonObject arguments = new JsonObject();
+			arguments.addProperty("command", "printf '%s' '{\"kind\":\"item\",\"capability\":\"ordinary\","
+					+ "\"displayName\":\"Staged Item\",\"outputCount\":1}' > .littlechemistry/result.json; "
+					+ "printf staged-source > .littlechemistry/Early.java; printf too-early > items/premature.txt");
+
+			JsonObject selected = tools.execute("bash", arguments).output();
+
+			assertTrue(selected.has("selectedContract"), selected.toString());
+			assertEquals("reference/contracts/item.md", selected.get("selectedContractPath").getAsString());
+			assertFalse(Files.exists(job.resolve(".littlechemistry/Early.java")));
+			assertFalse(Files.exists(job.resolve("items/premature.txt")));
+			JsonObject afterContract = new JsonObject();
+			afterContract.addProperty("command", "mkdir -p items/staged && printf after-contract > items/staged/source.txt");
+			JsonObject authored = tools.execute("bash", afterContract).output();
+			assertEquals(0, authored.get("exitCode").getAsInt(), authored.toString());
+			assertEquals("after-contract", Files.readString(job.resolve("items/staged/source.txt")));
+		}
+	}
+
+	@Test
+	void selectedItemCapabilityDeliversOnlyItsExactSubtypeContract() throws Exception {
+		for (var scenario : List.of(
+				List.of("storage", "reference/contracts/storage.md", "DynamicStorageSpec", "context.firework"),
+				List.of("projectile_weapon", "reference/contracts/projectile-weapon.md", "context.firework", "DynamicStorageSpec"))) {
+			Path world = temporaryDirectory.resolve("subtype-world-" + scenario.get(0));
+			Path job = temporaryDirectory.resolve("subtype-job-" + scenario.get(0));
+			try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+				GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+						GenerationRequest.recipe(new JsonObject(), null, null));
+				JsonObject selection = new JsonObject();
+				selection.addProperty("path", ".littlechemistry/result.json");
+				selection.addProperty("content", "{\"kind\":\"item\",\"capability\":\"" + scenario.get(0)
+						+ "\",\"displayName\":\"Focused Item\",\"outputCount\":1}");
+
+				JsonObject selected = tools.execute("write", selection).output();
+
+				assertEquals(scenario.get(1), selected.get("selectedContractPath").getAsString());
+				assertTrue(selected.get("selectedContract").getAsString().contains(scenario.get(2)));
+				assertFalse(selected.get("selectedContract").getAsString().contains(scenario.get(3)));
+				assertFalse(selected.get("selectedContract").getAsString().contains("DynamicWorkstationParticles"));
+				assertFalse(selected.get("selectedContract").getAsString().contains("DynamicArmorGeometryPart"));
+			}
+		}
+	}
+
+	@Test
+	void resultSelectionReturnsOnlyTheFocusedContractOnce() throws Exception {
+		Path world = temporaryDirectory.resolve("contract-world");
+		Path job = temporaryDirectory.resolve("contract-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(new JsonObject(), null, null));
+			JsonObject selection = new JsonObject();
+			selection.addProperty("path", ".littlechemistry/result.json");
+			selection.addProperty("content", "{\"kind\":\"helmet\",\"capability\":\"armor\","
+					+ "\"displayName\":\"Moonlit Crown\",\"outputCount\":1}");
+
+			JsonObject selected = tools.execute("write", selection).output();
+
+			assertEquals("reference/contracts/armor.md", selected.get("selectedContractPath").getAsString());
+			assertTrue(selected.get("selectedContract").getAsString().contains("DynamicArmorGeometryPart"));
+			assertFalse(selected.get("selectedContract").getAsString().contains("DynamicWorkstationParticles"));
+			assertFalse(selected.get("selectedContract").getAsString().contains("context.firework"));
+			JsonObject source = new JsonObject();
+			source.addProperty("path", "armors/moonlit_crown/notes.txt");
+			source.addProperty("content", "focused");
+			JsonObject subsequent = tools.execute("write", source).output();
+			assertFalse(subsequent.has("selectedContract"));
+		}
+	}
+
+	@Test
+	void rejectionContractIsTerminalAndPreventsSourceAuthoring() throws Exception {
+		Path world = temporaryDirectory.resolve("terminal-rejection-world");
+		Path job = temporaryDirectory.resolve("terminal-rejection-job");
+		var schema = JsonParser.parseString(
+				"{\"type\":\"object\",\"properties\":{},\"required\":[],\"additionalProperties\":false}")
+				.getAsJsonObject();
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.recipe(new JsonObject(), "Results are modest utilities.", schema));
+			JsonObject selection = new JsonObject();
+			selection.addProperty("path", ".littlechemistry/result.json");
+			selection.addProperty("content", "{\"kind\":\"rejection\","
+					+ "\"category\":\"workstation_too_weak\","
+					+ "\"description\":\"This workstation is too weak to stabilize that transformation.\"}");
+
+			JsonObject selected = tools.execute("write", selection).output();
+			assertEquals("reference/contracts/rejection.md", selected.get("selectedContractPath").getAsString());
+			JsonObject source = new JsonObject();
+			source.addProperty("path", "items/forbidden/source.txt");
+			source.addProperty("content", "must not exist");
+			JsonObject rejected = tools.execute("write", source).output();
+			assertFalse(rejected.get("ok").getAsBoolean());
+			assertTrue(rejected.get("message").getAsString().contains("rejection is terminal"));
+			assertFalse(Files.exists(job.resolve("items/forbidden/source.txt")));
+			selection.addProperty("content", "{\"kind\":\"item\",\"capability\":\"ordinary\","
+					+ "\"displayName\":\"Changed Mind\",\"outputCount\":1,\"recipeData\":{}}");
+			JsonObject reclassified = tools.execute("write", selection).output();
+			assertFalse(reclassified.get("ok").getAsBoolean());
+			assertTrue(reclassified.get("message").getAsString().contains("without changing the selection"));
+			assertTrue(Files.readString(job.resolve(".littlechemistry/result.json")).contains("\"kind\":\"rejection\""));
+		}
+	}
+
+	@Test
+	void fixedKnownKindsIgnoreIncidentalResultFiles() throws Exception {
+		Path world = temporaryDirectory.resolve("fixed-known-world");
+		Path job = temporaryDirectory.resolve("fixed-known-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.fixed(DynamicContentType.ARMOR,
+							com.yeyito.littlechemistry.content.DynamicArmorSlot.HEAD, "Known Crown", 1, null));
+			JsonObject incidental = new JsonObject();
+			incidental.addProperty("path", ".littlechemistry/result.json");
+			incidental.addProperty("content", "{\"kind\":\"workstation\",\"capability\":\"workstation\"}");
+
+			JsonObject written = tools.execute("write", incidental).output();
+
+			assertFalse(written.has("selectedContract"));
+			assertFalse(written.has("selectionContractError"));
+			JsonObject source = new JsonObject();
+			source.addProperty("path", "armors/known_crown/source.txt");
+			source.addProperty("content", "allowed");
+			assertTrue(tools.execute("write", source).output().get("ok").getAsBoolean());
+		}
+	}
+
+	@Test
+	void fixedBlockSelectionReturnsWorkstationContractAfterClassification() throws Exception {
+		Path world = temporaryDirectory.resolve("block-contract-world");
+		Path job = temporaryDirectory.resolve("block-contract-job");
+		try (GenerationWorkspace workspace = GenerationWorkspace.testing(world, job)) {
+			GeneralistGenerationTools tools = new GeneralistGenerationTools(workspace,
+					GenerationRequest.fixed(DynamicContentType.BLOCK, null, "Twin Furnace", 1, null));
+			JsonObject selection = new JsonObject();
+			selection.addProperty("path", ".littlechemistry/result.json");
+			selection.addProperty("content", "{\"kind\":\"workstation\",\"capability\":\"workstation\"}");
+
+			JsonObject selected = tools.execute("write", selection).output();
+
+			assertEquals("reference/contracts/workstation.md", selected.get("selectedContractPath").getAsString());
+			assertTrue(selected.get("selectedContract").getAsString().contains("DynamicWorkstationParticles"));
+			assertFalse(selected.get("selectedContract").getAsString().contains("DynamicArmorGeometryPart"));
 		}
 	}
 

@@ -160,14 +160,13 @@ public record GeneratedContentSpec(
 			}
 		}
 		if (item != null && item.heldType().isNativeProjectileWeapon()
-				&& (item.itemType() != DynamicItemType.ITEM || item.maxStack() != 1
-				|| item.enchantability() < 1)) {
-			throw new IllegalArgumentException(
-					"Generated bows and crossbows must be ordinary items with maxStack 1 and positive enchantability");
+				&& item.itemType() != DynamicItemType.ITEM) {
+			throw new IllegalArgumentException("Generated bows and crossbows must use ordinary item properties");
 		}
 		if (block != null) {
 			if (blockModel == null) throw new IllegalArgumentException("Generated blocks require a visual model");
 			blockModel.validateFor(block.shape());
+			if (block.assembly() != null) block.assembly().validateTextures(blockModel);
 			DynamicBlockTexture primary = blockModel.particleTextureAsset();
 			if (!primary.texture().equals(texture)) {
 				throw new IllegalArgumentException("Generated block primary texture must match its particle texture");
@@ -214,6 +213,7 @@ public record GeneratedContentSpec(
 				behaviorSource, DynamicBehaviorCapability.WORKSTATION_TICK)) {
 			throw new IllegalArgumentException("Generated workstations must implement WorkstationTickBehavior");
 		}
-		DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
-	}
+			DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
+			DynamicParticleDefinition.validateWorkstationParticles(workstation, customParticles);
+		}
 }

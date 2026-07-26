@@ -17,6 +17,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DynamicWorkstationPersistenceTest {
 	private static final String TEXTURE_HASH = "0".repeat(64);
@@ -52,7 +53,7 @@ class DynamicWorkstationPersistenceTest {
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 7, List.of(definition));
 		DynamicContentJson.Decoded catalog = DynamicContentJson.decode(encoded);
 
-		assertEquals(24, DynamicContentJson.CURRENT_FORMAT);
+		assertEquals(27, DynamicContentJson.CURRENT_FORMAT);
 		assertEquals(workstation, catalog.definitions().getFirst().workstation());
 		assertEquals("Separates mixed materials through controlled rotational force over 200 Minecraft ticks.",
 				catalog.definitions().getFirst().workstation().processDescription());
@@ -69,6 +70,23 @@ class DynamicWorkstationPersistenceTest {
 				legacy.toString().getBytes(StandardCharsets.UTF_8)).definitions().getFirst();
 
 		assertNull(decoded.workstation());
+	}
+
+	@Test
+	void formatTwentyFourWorkstationsReceiveLifecycleFallbackWithoutLosingRecoveryIdentity() {
+		byte[] current = DynamicContentJson.encode(
+				UUID.randomUUID(), 2, List.of(blockDefinition(DynamicWorkstationSpecTest.workstation())));
+		JsonObject legacy = JsonParser.parseString(new String(current, StandardCharsets.UTF_8)).getAsJsonObject();
+		legacy.addProperty("format", 24);
+		legacy.getAsJsonArray("definitions").get(0).getAsJsonObject()
+				.getAsJsonObject("workstation").remove("lifecycleParticles");
+
+		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(
+				legacy.toString().getBytes(StandardCharsets.UTF_8));
+
+		assertEquals("crit", decoded.definitions().getFirst().workstation().particles().inventing().particle());
+		assertEquals("happy_villager", decoded.definitions().getFirst().workstation().particles().ready().particle());
+		assertTrue(decoded.recoveryDefinitionDigests().containsKey("centrifuge"));
 	}
 
 	@Test

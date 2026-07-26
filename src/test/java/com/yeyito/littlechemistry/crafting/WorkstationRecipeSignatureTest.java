@@ -71,7 +71,12 @@ final class WorkstationRecipeSignatureTest {
 								"Make Recipe", 70, 48, 76, 20, null)), List.of()),
 				"Presses one input into a compact result over 40 Minecraft ticks.",
 				"Results are coherent compact forms that preserve the input material's practical character.",
-				new DynamicWorkstationRecipeDataSchema(schema));
+				new DynamicWorkstationRecipeDataSchema(schema),
+				new com.yeyito.littlechemistry.content.DynamicWorkstationParticles(
+						new com.yeyito.littlechemistry.content.DynamicWorkstationParticleEffect(
+								"crit", 2, 0.32, 0.08, 0.04),
+						new com.yeyito.littlechemistry.content.DynamicWorkstationParticleEffect(
+								"happy_villager", 2, 0.32, 0.08, 0.04)));
 		return new DynamicContentDefinition(
 				DynamicContentType.BLOCK, "test_press", "Test Press", "Presses material.",
 				DynamicRarity.COMMON, 0L, "0".repeat(64), null, null, null,

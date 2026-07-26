@@ -1318,6 +1318,9 @@ public final class AiCraftingManager {
 					}
 					String visualDigest = format >= 6 ? encoded.get("visualReferenceDigest").getAsString() : null;
 					RecipeSignature signature = new RecipeSignature(width, height, ingredients, visualDigest);
+					if (visualDigest != null && !visualDigest.equals(signature.visualReferenceDigest())) {
+						recipesNeedRewrite = true;
+					}
 					recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount));
 				}
 				case "smelting" -> {
@@ -1328,6 +1331,9 @@ public final class AiCraftingManager {
 					if (ingredient.isEmpty()) throw new IOException("Invalid empty AI smelting recipe ingredient");
 					String visualDigest = format >= 6 ? encoded.get("visualReferenceDigest").getAsString() : null;
 					SmeltingRecipeSignature signature = new SmeltingRecipeSignature(ingredient, visualDigest);
+					if (visualDigest != null && !visualDigest.equals(signature.visualReferenceDigest())) {
+						recipesNeedRewrite = true;
+					}
 					ResourceKey<Recipe<?>> recipeKey = readSmeltingRecipeKey(encoded, signature, output);
 					if (!encoded.has("experience") || !encoded.has("cookingTime")) recipesNeedRewrite = true;
 					float experience = encoded.has("experience") ? encoded.get("experience").getAsFloat()
@@ -1367,6 +1373,9 @@ public final class AiCraftingManager {
 					String visualDigest = format >= 6 ? encoded.get("visualReferenceDigest").getAsString() : null;
 					WorkstationRecipeSignature signature = new WorkstationRecipeSignature(
 							workstation, process, discriminator, ingredients, visualDigest);
+					if (visualDigest != null && !visualDigest.equals(signature.visualReferenceDigest())) {
+						recipesNeedRewrite = true;
+					}
 					if (rejected) {
 						try {
 							workstationRecipes.put(signature, AiWorkstationRecipe.rejected(signature,

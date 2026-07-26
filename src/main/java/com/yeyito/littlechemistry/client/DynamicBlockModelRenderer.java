@@ -11,6 +11,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.util.LightCoordsUtil;
 
 import java.util.Map;
+import java.util.List;
 
 /** Draws preset and AI-authored cuboid block models while filtering faces by named texture. */
 final class DynamicBlockModelRenderer {
@@ -21,6 +22,15 @@ final class DynamicBlockModelRenderer {
 			PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int overlay,
 			boolean north, boolean east, boolean south, boolean west) {
 		render(shape, model, textureFilter, pose, vertices, faceLight, 0, overlay, north, east, south, west);
+	}
+
+	static void renderElements(List<DynamicBlockModelElement> elements, String textureFilter,
+			PoseStack.Pose pose, VertexConsumer vertices, int[] faceLight, int overlay) {
+		for (DynamicBlockModelElement element : elements) {
+			cuboid(pose, vertices, faceLight, 0, overlay,
+					element.fromX(), element.fromY(), element.fromZ(),
+					element.toX(), element.toY(), element.toZ(), element.faces(), textureFilter);
+		}
 	}
 
 	static void render(DynamicBlockShape shape, DynamicBlockModel model, String textureFilter,

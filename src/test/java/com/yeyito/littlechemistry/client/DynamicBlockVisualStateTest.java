@@ -3,6 +3,7 @@ package com.yeyito.littlechemistry.client;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
 import com.yeyito.littlechemistry.content.DynamicBlockModelFace;
 import com.yeyito.littlechemistry.content.DynamicBlockTexture;
+import com.yeyito.littlechemistry.content.DynamicBlockModelElement;
 import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import net.minecraft.core.Direction;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,24 @@ final class DynamicBlockVisualStateTest {
 		assertEquals(active, DynamicBlockEntityRenderer.textureForState(model, "front", "active"));
 		assertEquals(base, DynamicBlockEntityRenderer.textureForState(model, "front", "open"));
 		assertEquals(java.util.Set.of("front"), model.referencedTextureIds());
+	}
+
+	@Test
+	void assemblyRenderingUsesTexturesReferencedOnlyByTheSelectedCellVariant() {
+		EnumMap<Direction, DynamicBlockModelFace> baseFaces = new EnumMap<>(Direction.class);
+		EnumMap<Direction, DynamicBlockModelFace> openFaces = new EnumMap<>(Direction.class);
+		for (Direction direction : Direction.values()) {
+			baseFaces.put(direction, new DynamicBlockModelFace("closed", null));
+			openFaces.put(direction, new DynamicBlockModelFace("hinge", null));
+		}
+		DynamicBlockRenderState state = new DynamicBlockRenderState();
+		state.model = new DynamicBlockModel(List.of(
+				new DynamicBlockTexture("closed", "0".repeat(64), texture("1")),
+				new DynamicBlockTexture("hinge", "1".repeat(64), texture("2"))),
+				"closed", baseFaces, List.of(new DynamicBlockModelElement(0, 0, 0, 16, 16, 16, true, baseFaces)));
+		state.assemblyElements = List.of(new DynamicBlockModelElement(0, 0, 0, 2, 16, 2, true, openFaces));
+
+		assertEquals(List.of("hinge"), DynamicBlockEntityRenderer.renderedTextureIds(state));
 	}
 
 	private static DynamicTextureSpec texture(String key) {

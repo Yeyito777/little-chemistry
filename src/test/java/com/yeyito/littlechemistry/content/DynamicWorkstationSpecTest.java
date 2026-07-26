@@ -14,6 +14,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DynamicWorkstationSpecTest {
 	@Test
+	void ordinarySlotConstructorKeepsMaterialsRecoverableWhileOutputsRejectInsertion() {
+		DynamicWorkstationSlot input = new DynamicWorkstationSlot(
+				"input", DynamicWorkstationSlotRole.INPUT, 20, 20, 64, null, null);
+		DynamicWorkstationSlot fuel = new DynamicWorkstationSlot(
+				"fuel", DynamicWorkstationSlotRole.FUEL, 40, 20, 64, null, null);
+		DynamicWorkstationSlot output = new DynamicWorkstationSlot(
+				"output", DynamicWorkstationSlotRole.OUTPUT, 120, 20, 64, null, null);
+
+		assertTrue(input.allowPlayerInsert());
+		assertTrue(input.allowPlayerExtract());
+		assertTrue(fuel.allowPlayerInsert());
+		assertTrue(fuel.allowPlayerExtract());
+		assertFalse(output.allowPlayerInsert());
+		assertTrue(output.allowPlayerExtract());
+	}
+
+	@Test
 	void recipeDataSchemaValidatesRequiredClosedAndBoundedValues() {
 		DynamicWorkstationRecipeDataSchema schema = recipeDataSchema();
 		JsonObject valid = JsonParser.parseString("""
@@ -80,10 +97,36 @@ class DynamicWorkstationSpecTest {
 		assertEquals(DynamicWorkstationSlotRole.CATALYST, decoded.slot("catalyst").role());
 		assertEquals(10_000, decoded.ui().stateChannel("progress").maximum());
 		assertEquals("minecraft:item/empty_slot_amethyst_shard", decoded.slot("catalyst").emptySlotIcon());
+		assertEquals("electric_spark", decoded.particles().inventing().particle());
+		assertEquals("happy_villager", decoded.particles().ready().particle());
 		assertTrue(decoded.recipeDataSchema().schema().getAsJsonObject("properties").has("duration_ticks"));
 		assertTrue(decoded.recipeDataSchema().schema().getAsJsonObject("properties").has("mode"));
 		assertThrows(UnsupportedOperationException.class,
 				() -> decoded.slots().add(decoded.slots().getFirst()));
+	}
+
+	@Test
+	void oldWorkstationJsonReceivesTheNativeCraftingTableLifecycleEffects() {
+		JsonObject encoded = DynamicWorkstationJson.encode(workstation());
+		encoded.remove("lifecycleParticles");
+
+		DynamicWorkstationSpec decoded = DynamicWorkstationJson.decode(encoded);
+
+		assertEquals("crit", decoded.particles().inventing().particle());
+		assertEquals("happy_villager", decoded.particles().ready().particle());
+	}
+
+	@Test
+	void customLifecycleParticlesMustBelongToTheGeneratedDefinition() {
+		DynamicWorkstationSpec valid = workstation();
+		DynamicWorkstationSpec custom = new DynamicWorkstationSpec(
+				valid.slots(), valid.ui(), valid.processDescription(), valid.recipePolicy(), valid.recipeDataSchema(),
+				new DynamicWorkstationParticles(
+						new DynamicWorkstationParticleEffect("custom:inventing", 2, 0.32, 0.08, 0.04),
+						valid.particles().ready()));
+
+		assertThrows(IllegalArgumentException.class,
+				() -> DynamicParticleDefinition.validateWorkstationParticles(custom, List.of()));
 	}
 
 	@Test
@@ -92,18 +135,20 @@ class DynamicWorkstationSpecTest {
 		List<DynamicWorkstationSlot> duplicateSlots = List.of(valid.slots().getFirst(), valid.slots().getFirst(),
 				valid.slots().getLast());
 		assertThrows(IllegalArgumentException.class, () -> new DynamicWorkstationSpec(
-				duplicateSlots, valid.ui(), "Separate materials.", "Create separation recipes.", recipeDataSchema()));
+				duplicateSlots, valid.ui(), "Separate materials.", "Create separation recipes.", recipeDataSchema(),
+				valid.particles()));
 
 		List<DynamicWorkstationSlot> noPrimaryOutput = List.of(valid.slots().getFirst(), valid.slots().get(1));
 		assertThrows(IllegalArgumentException.class, () -> new DynamicWorkstationSpec(
-				noPrimaryOutput, valid.ui(), "Separate materials.", "Create separation recipes.", recipeDataSchema()));
+				noPrimaryOutput, valid.ui(), "Separate materials.", "Create separation recipes.", recipeDataSchema(),
+				valid.particles()));
 		List<DynamicWorkstationSlot> multiplePrimaryOutputs = List.of(
 				valid.slots().getFirst(), valid.slots().getLast(),
 				new DynamicWorkstationSlot("second_result", DynamicWorkstationSlotRole.OUTPUT,
 						120, 50, 64, false, true, null, null));
 		IllegalArgumentException primaryOutputError = assertThrows(IllegalArgumentException.class,
 				() -> new DynamicWorkstationSpec(multiplePrimaryOutputs, valid.ui(),
-						"Separate materials.", "Create separation recipes.", recipeDataSchema()));
+						"Separate materials.", "Create separation recipes.", recipeDataSchema(), valid.particles()));
 		assertTrue(primaryOutputError.getMessage().contains("exactly one primary OUTPUT"));
 
 		assertThrows(IllegalArgumentException.class, () -> new DynamicWorkstationUi(
@@ -132,7 +177,8 @@ class DynamicWorkstationSpecTest {
 
 		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
 				() -> new DynamicWorkstationSpec(valid.slots(), largeUi, "界".repeat(1_024),
-						"界".repeat(DynamicWorkstationSpec.MAX_RECIPE_SYSTEM_PROMPT_LENGTH), recipeDataSchema()));
+						"界".repeat(DynamicWorkstationSpec.MAX_RECIPE_SYSTEM_PROMPT_LENGTH), recipeDataSchema(),
+						valid.particles()));
 
 		assertTrue(error.getMessage().contains("UTF-8 byte opening-data limit"), error.getMessage());
 	}
@@ -155,7 +201,7 @@ class DynamicWorkstationSpecTest {
 	}
 
 	@Test
-	void legacyImperativePolicyRemainsLoadableAsUntrustedCompatibilityData() {
+	void legacyImperativePolicyRemainsLoadableForCompatibility() {
 		JsonObject encoded = DynamicWorkstationJson.encode(workstation());
 		String legacy = "Generate coherent separation recipes. Catalysts are retained and duration_ticks controls spin time.";
 		encoded.addProperty("recipeSystemPrompt", legacy);
@@ -191,7 +237,10 @@ class DynamicWorkstationSpecTest {
 		return new DynamicWorkstationSpec(slots, ui,
 				"Separates mixed materials through controlled rotational force over 200 Minecraft ticks.",
 				"Results are coherent separated or clarified forms grounded in the supplied mixture and catalyst.",
-				schema);
+				schema,
+				new DynamicWorkstationParticles(
+						new DynamicWorkstationParticleEffect("electric_spark", 2, 0.32, 0.08, 0.04),
+						new DynamicWorkstationParticleEffect("happy_villager", 2, 0.32, 0.08, 0.04)));
 	}
 
 	static DynamicWorkstationRecipeDataSchema recipeDataSchema() {

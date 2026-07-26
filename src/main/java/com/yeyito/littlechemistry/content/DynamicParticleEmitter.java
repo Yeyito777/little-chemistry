@@ -39,7 +39,7 @@ public record DynamicParticleEmitter(
 		return custom() ? null : DynamicParticleType.parse(particle);
 	}
 
-	private static String normalizeParticle(String value) {
+	static String normalizeParticle(String value) {
 		if (value == null) throw new IllegalArgumentException("Particle is required");
 		String normalized = value.strip().toLowerCase(java.util.Locale.ROOT);
 		if (normalized.startsWith("custom:")) {

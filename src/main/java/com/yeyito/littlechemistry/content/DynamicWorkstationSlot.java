@@ -12,6 +12,15 @@ public record DynamicWorkstationSlot(
 		String emptySlotIcon,
 		String tooltip
 ) {
+	/**
+	 * Native-style default slot policy: players may recover their items, and only output roles reject insertion.
+	 * Use the full constructor only for a deliberate permanent rule; invention locking is applied separately by the engine.
+	 */
+	public DynamicWorkstationSlot(String id, DynamicWorkstationSlotRole role, int x, int y, int maxStack,
+			String emptySlotIcon, String tooltip) {
+		this(id, role, x, y, maxStack, !role.isOutput(), true, emptySlotIcon, tooltip);
+	}
+
 	public DynamicWorkstationSlot {
 		id = DynamicWorkstationValidation.id(id, "Workstation slot");
 		if (role == null) throw new IllegalArgumentException("Workstation slot role is required");

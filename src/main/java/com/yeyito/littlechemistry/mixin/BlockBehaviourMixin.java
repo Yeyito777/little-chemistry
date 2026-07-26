@@ -2,6 +2,7 @@ package com.yeyito.littlechemistry.mixin;
 
 import com.yeyito.littlechemistry.crafting.AiCraftingManager;
 import com.yeyito.littlechemistry.content.DynamicBlockEntity;
+import com.yeyito.littlechemistry.content.DynamicBlockAssemblyRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
@@ -23,21 +24,25 @@ public abstract class BlockBehaviourMixin {
 	@Inject(method = "getDestroyProgress", at = @At("HEAD"), cancellable = true)
 	private void littleChemistry$noLockedTableProgress(BlockState state, net.minecraft.world.entity.player.Player player,
 			BlockGetter level, BlockPos pos, CallbackInfoReturnable<Float> result) {
+		DynamicBlockEntity root = DynamicBlockAssemblyRuntime.rootEntity(level, pos);
+		BlockPos lockPosition = root == null ? pos : root.getBlockPos();
 		AiCraftingManager manager = AiCraftingManager.active();
 		if (state.is(Blocks.CRAFTING_TABLE) && level instanceof ServerLevel serverLevel
-				&& manager != null && manager.isLocked(serverLevel, pos)) {
+				&& manager != null && manager.isLocked(serverLevel, lockPosition)) {
 			result.setReturnValue(0.0F);
 		}
-		if (level.getBlockEntity(pos) instanceof DynamicBlockEntity workstation
+		if ((root != null ? root : level.getBlockEntity(pos)) instanceof DynamicBlockEntity workstation
 				&& workstation.isWorkstationLocked()) result.setReturnValue(0.0F);
 	}
 
 	@Inject(method = "onExplosionHit", at = @At("HEAD"), cancellable = true)
 	private void littleChemistry$protectLockedTableFromExplosion(BlockState state, ServerLevel level, BlockPos pos,
 			Explosion explosion, BiConsumer<ItemStack, BlockPos> onHit, CallbackInfo callback) {
+		DynamicBlockEntity root = DynamicBlockAssemblyRuntime.rootEntity(level, pos);
+		BlockPos lockPosition = root == null ? pos : root.getBlockPos();
 		AiCraftingManager manager = AiCraftingManager.active();
-		if (state.is(Blocks.CRAFTING_TABLE) && manager != null && manager.isLocked(level, pos)) callback.cancel();
-		if (level.getBlockEntity(pos) instanceof DynamicBlockEntity workstation
+		if (state.is(Blocks.CRAFTING_TABLE) && manager != null && manager.isLocked(level, lockPosition)) callback.cancel();
+		if ((root != null ? root : level.getBlockEntity(pos)) instanceof DynamicBlockEntity workstation
 				&& workstation.isWorkstationLocked()) callback.cancel();
 	}
 

@@ -16,7 +16,8 @@ public record DynamicWorkstationSpec(
 		DynamicWorkstationUi ui,
 		String processDescription,
 		String recipePolicy,
-		DynamicWorkstationRecipeDataSchema recipeDataSchema
+		DynamicWorkstationRecipeDataSchema recipeDataSchema,
+		DynamicWorkstationParticles particles
 ) {
 	public static final int MAX_SLOTS = 54;
 	public static final int MAX_PROCESS_DESCRIPTION_LENGTH = 1_024;
@@ -24,6 +25,15 @@ public record DynamicWorkstationSpec(
 	/** Legacy source-compatibility alias; workstation policy is never an API system prompt. */
 	@Deprecated
 	public static final int MAX_RECIPE_SYSTEM_PROMPT_LENGTH = MAX_RECIPE_POLICY_LENGTH;
+
+	/** Source compatibility for factories authored before workstation lifecycle effects became explicit. */
+	@Deprecated
+	public DynamicWorkstationSpec(List<DynamicWorkstationSlot> slots, DynamicWorkstationUi ui,
+			String processDescription, String recipePolicy,
+			DynamicWorkstationRecipeDataSchema recipeDataSchema) {
+		this(slots, ui, processDescription, recipePolicy, recipeDataSchema,
+				DynamicWorkstationParticles.LEGACY_DEFAULTS);
+	}
 
 	public DynamicWorkstationSpec {
 		if (slots == null) throw new IllegalArgumentException("Workstation slot list is required");
@@ -38,6 +48,9 @@ public record DynamicWorkstationSpec(
 				"Workstation recipe policy", MAX_RECIPE_POLICY_LENGTH, true);
 		if (recipeDataSchema == null) {
 			throw new IllegalArgumentException("Workstation recipeData schema is required");
+		}
+		if (particles == null) {
+			throw new IllegalArgumentException("Workstation invention lifecycle particles are required");
 		}
 
 		HashSet<String> ids = new HashSet<>();
@@ -57,7 +70,7 @@ public record DynamicWorkstationSpec(
 			throw new IllegalArgumentException("Workstations require exactly one primary OUTPUT slot");
 		}
 		DynamicWorkstationJson.validateSerializedSize(
-				slots, ui, processDescription, recipePolicy, recipeDataSchema);
+				slots, ui, processDescription, recipePolicy, recipeDataSchema, particles);
 	}
 
 	/**

@@ -12,24 +12,40 @@ import net.minecraft.world.item.ItemStack;
 
 /** Server-side generic-chest menu that pins the portable-storage carrier while its own inventory is open. */
 final class DynamicItemStorageMenu extends ChestMenu {
+	private final Container storage;
+	private final int storageSlots;
 	private final int carrierInventorySlot;
 	private final int carrierMenuSlot;
 
 	DynamicItemStorageMenu(MenuType<?> type, int containerId, Inventory inventory, Container storage,
 			int rows, int carrierInventorySlot) {
 		super(type, containerId, inventory, storage, rows);
+		this.storage = storage;
+		this.storageSlots = rows * 9;
 		this.carrierInventorySlot = carrierInventorySlot;
-		this.carrierMenuSlot = findSlot(inventory, carrierInventorySlot).orElse(-1);
+		for (int index = 0; index < storageSlots; index++) {
+			Slot original = slots.get(index);
+			GuardedStorageSlot guarded = new GuardedStorageSlot(storage, index, original.x, original.y);
+			guarded.index = original.index;
+			slots.set(index, guarded);
+		}
+		this.carrierMenuSlot = carrierInventorySlot < 0
+				? -1 : findSlot(inventory, carrierInventorySlot).orElse(-1);
 		if (carrierMenuSlot >= 0) {
 			Slot original = slots.get(carrierMenuSlot);
-			slots.set(carrierMenuSlot, new PinnedCarrierSlot(
-					inventory, carrierInventorySlot, original.x, original.y));
+			PinnedCarrierSlot pinned = new PinnedCarrierSlot(
+					inventory, carrierInventorySlot, original.x, original.y);
+			pinned.index = original.index;
+			slots.set(carrierMenuSlot, pinned);
 		}
 	}
 
 	@Override
 	public ItemStack quickMoveStack(Player player, int slot) {
 		if (slot == carrierMenuSlot || !stillValid(player)) return ItemStack.EMPTY;
+		if (slot >= storageSlots && slot < slots.size() && !storage.canPlaceItem(0, slots.get(slot).getItem())) {
+			return ItemStack.EMPTY;
+		}
 		return super.quickMoveStack(player, slot);
 	}
 
@@ -54,5 +70,14 @@ final class DynamicItemStorageMenu extends ChestMenu {
 		@Override public boolean mayPickup(Player player) { return false; }
 		@Override public boolean mayPlace(ItemStack stack) { return false; }
 		@Override public boolean allowModification(Player player) { return false; }
+	}
+
+	/** ChestMenu otherwise uses plain slots whose mayPlace does not consult Container.canPlaceItem. */
+	static final class GuardedStorageSlot extends Slot {
+		GuardedStorageSlot(Container storage, int index, int x, int y) {
+			super(storage, index, x, y);
+		}
+
+		@Override public boolean mayPlace(ItemStack stack) { return container.canPlaceItem(getContainerSlot(), stack); }
 	}
 }

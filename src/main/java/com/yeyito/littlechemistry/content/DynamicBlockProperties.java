@@ -15,14 +15,24 @@ public record DynamicBlockProperties(
 			int redstonePower,
 			int comparatorPower,
 			int lightLevel,
-			boolean visuallyEmissive,
-			List<DynamicParticleEmitter> particles,
-			DynamicBlockDrops drops
+		boolean visuallyEmissive,
+		List<DynamicParticleEmitter> particles,
+		DynamicBlockDrops drops,
+		DynamicBlockAssembly assembly
 ) {
 	public static final DynamicBlockProperties DEFAULT = new DynamicBlockProperties(
 			DynamicMaterial.STONE, 1.5F, DynamicTool.NONE, false, DynamicBlockShape.FULL_CUBE,
 			false, Rarity.COMMON, 0, 0, 0, false, List.of(), DynamicBlockDrops.DEFAULT
 	);
+
+	/** Compatibility constructor for blocks created before multiblock assemblies. */
+	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
+			boolean requiresCorrectTool, DynamicBlockShape shape, boolean directional, Rarity rarity,
+			int redstonePower, int comparatorPower, int lightLevel, boolean visuallyEmissive,
+			List<DynamicParticleEmitter> particles, DynamicBlockDrops drops) {
+		this(material, hardness, preferredTool, requiresCorrectTool, shape, directional, rarity,
+				redstonePower, comparatorPower, lightLevel, visuallyEmissive, particles, drops, null);
+	}
 
 	/** Compatibility constructor for catalogs and callers predating directional blocks and block rarity. */
 	public DynamicBlockProperties(DynamicMaterial material, float hardness, DynamicTool preferredTool,
@@ -62,5 +72,8 @@ public record DynamicBlockProperties(
 		if (lightLevel < 0 || lightLevel > 15) throw new IllegalArgumentException("Block light level must be between 0 and 15");
 		particles = List.copyOf(particles);
 		if (particles.size() > 2) throw new IllegalArgumentException("A block may have at most two particle emitters");
+		if (assembly != null && (shape != DynamicBlockShape.CUSTOM || !directional)) {
+			throw new IllegalArgumentException("Block assemblies require shape=custom and directional=true");
+		}
 	}
 }

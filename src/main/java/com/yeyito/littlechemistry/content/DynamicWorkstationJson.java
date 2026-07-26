@@ -22,13 +22,13 @@ public final class DynamicWorkstationJson {
 	public static JsonObject encode(DynamicWorkstationSpec workstation) {
 		if (workstation == null) throw new IllegalArgumentException("Workstation specification is required");
 		return encode(workstation.slots(), workstation.ui(), workstation.processDescription(),
-				workstation.recipePolicy(), workstation.recipeDataSchema());
+				workstation.recipePolicy(), workstation.recipeDataSchema(), workstation.particles());
 	}
 
 	static void validateSerializedSize(List<DynamicWorkstationSlot> slots, DynamicWorkstationUi ui,
 			String processDescription, String recipePolicy,
-			DynamicWorkstationRecipeDataSchema recipeDataSchema) {
-		JsonObject encoded = encode(slots, ui, processDescription, recipePolicy, recipeDataSchema);
+			DynamicWorkstationRecipeDataSchema recipeDataSchema, DynamicWorkstationParticles particles) {
+		JsonObject encoded = encode(slots, ui, processDescription, recipePolicy, recipeDataSchema, particles);
 		String json = encoded.toString();
 		if (json.length() > MAX_SERIALIZED_CHARACTERS
 				|| json.getBytes(StandardCharsets.UTF_8).length > MAX_SERIALIZED_UTF8_BYTES) {
@@ -39,12 +39,16 @@ public final class DynamicWorkstationJson {
 
 	private static JsonObject encode(List<DynamicWorkstationSlot> slots, DynamicWorkstationUi ui,
 			String processDescription, String recipePolicy,
-			DynamicWorkstationRecipeDataSchema recipeDataSchema) {
+			DynamicWorkstationRecipeDataSchema recipeDataSchema, DynamicWorkstationParticles particles) {
 		JsonObject encoded = new JsonObject();
 		encoded.addProperty("processDescription", processDescription);
 		// Preserve the legacy key so existing definition digests, pending journals, saves, and clients remain compatible.
 		encoded.addProperty("recipeSystemPrompt", recipePolicy);
 		encoded.add("recipeDataSchema", recipeDataSchema.schema());
+		JsonObject lifecycleParticles = new JsonObject();
+		lifecycleParticles.add("inventing", encodeParticleEffect(particles.inventing()));
+		lifecycleParticles.add("ready", encodeParticleEffect(particles.ready()));
+		encoded.add("lifecycleParticles", lifecycleParticles);
 		JsonArray encodedSlots = new JsonArray();
 		for (DynamicWorkstationSlot slot : slots) encodedSlots.add(encodeSlot(slot));
 		encoded.add("slots", encodedSlots);
@@ -53,7 +57,8 @@ public final class DynamicWorkstationJson {
 	}
 
 	public static DynamicWorkstationSpec decode(JsonObject encoded) {
-		requireOnly(encoded, "processDescription", "recipePolicy", "recipeSystemPrompt", "recipeDataSchema", "slots", "ui");
+		requireOnly(encoded, "processDescription", "recipePolicy", "recipeSystemPrompt", "recipeDataSchema",
+				"lifecycleParticles", "slots", "ui");
 		if (encoded.has("recipePolicy") && encoded.has("recipeSystemPrompt")) {
 			throw new IllegalArgumentException("Workstation JSON cannot contain both recipePolicy and recipeSystemPrompt");
 		}
@@ -63,13 +68,42 @@ public final class DynamicWorkstationJson {
 		}
 		List<DynamicWorkstationSlot> slots = new ArrayList<>();
 		for (JsonElement element : encodedSlots) slots.add(decodeSlot(requiredObject(element, "workstation slot")));
+		DynamicWorkstationParticles particles = encoded.has("lifecycleParticles")
+				? decodeParticles(requiredObject(encoded, "lifecycleParticles"))
+				: DynamicWorkstationParticles.LEGACY_DEFAULTS;
 		return new DynamicWorkstationSpec(
 				slots,
 				decodeUi(requiredObject(encoded, "ui")),
 				requiredString(encoded, "processDescription"),
 				requiredString(encoded, encoded.has("recipePolicy") ? "recipePolicy" : "recipeSystemPrompt"),
-				new DynamicWorkstationRecipeDataSchema(requiredObject(encoded, "recipeDataSchema"))
+				new DynamicWorkstationRecipeDataSchema(requiredObject(encoded, "recipeDataSchema")),
+				particles
 		);
+	}
+
+	private static JsonObject encodeParticleEffect(DynamicWorkstationParticleEffect effect) {
+		JsonObject encoded = new JsonObject();
+		encoded.addProperty("particle", effect.particle());
+		encoded.addProperty("count", effect.count());
+		encoded.addProperty("horizontalSpread", effect.horizontalSpread());
+		encoded.addProperty("verticalSpread", effect.verticalSpread());
+		encoded.addProperty("speed", effect.speed());
+		return encoded;
+	}
+
+	private static DynamicWorkstationParticles decodeParticles(JsonObject encoded) {
+		requireOnly(encoded, "inventing", "ready");
+		return new DynamicWorkstationParticles(
+				decodeParticleEffect(requiredObject(encoded, "inventing")),
+				decodeParticleEffect(requiredObject(encoded, "ready")));
+	}
+
+	private static DynamicWorkstationParticleEffect decodeParticleEffect(JsonObject encoded) {
+		requireOnly(encoded, "particle", "count", "horizontalSpread", "verticalSpread", "speed");
+		return new DynamicWorkstationParticleEffect(
+				requiredString(encoded, "particle"), requiredInt(encoded, "count"),
+				requiredDouble(encoded, "horizontalSpread"), requiredDouble(encoded, "verticalSpread"),
+				requiredDouble(encoded, "speed"));
 	}
 
 	private static JsonObject encodeSlot(DynamicWorkstationSlot slot) {
@@ -307,5 +341,15 @@ public final class DynamicWorkstationJson {
 			throw new IllegalArgumentException("Missing workstation JSON boolean: " + key);
 		}
 		return primitive.getAsBoolean();
+	}
+
+	private static double requiredDouble(JsonObject object, String key) {
+		JsonElement element = object.get(key);
+		if (!(element instanceof JsonPrimitive primitive) || !primitive.isNumber()) {
+			throw new IllegalArgumentException("Missing workstation JSON number: " + key);
+		}
+		double value = primitive.getAsDouble();
+		if (!Double.isFinite(value)) throw new IllegalArgumentException("Invalid workstation JSON number: " + key);
+		return value;
 	}
 }

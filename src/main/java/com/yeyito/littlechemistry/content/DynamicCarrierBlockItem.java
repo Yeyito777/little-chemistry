@@ -27,6 +27,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.function.Consumer;
 
 public final class DynamicCarrierBlockItem extends BlockItem {
@@ -144,6 +147,7 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		}
 		state = state
 				.setValue(DynamicCarrierBlock.LIGHT_LEVEL, definition.block().lightLevel())
+				.setValue(DynamicCarrierBlock.ASSEMBLY_VARIANT, 0)
 				.setValue(DynamicCarrierBlock.MATERIAL, definition.block().material());
 		if (definition.block().directional()) {
 			state = state.setValue(DynamicCarrierBlock.FACING, context.getHorizontalDirection().getOpposite());
@@ -156,10 +160,63 @@ public final class DynamicCarrierBlockItem extends BlockItem {
 		DynamicContentDefinition definition = DynamicContentObjects.definition(context.getItemInHand());
 		if (definition == null || definition.block() == null) return super.canPlace(context, stateForPlacement);
 		BlockPos position = context.getClickedPos();
+		DynamicBlockAssembly assembly = definition.block().assembly();
+		if (assembly != null) {
+			var level = context.getLevel();
+			var player = context.getPlayer();
+			var facing = stateForPlacement.getValue(DynamicCarrierBlock.FACING);
+			for (DynamicBlockAssemblyCell cell : assembly.initialVariant().cells()) {
+				BlockPos member = DynamicBlockAssemblyRuntime.worldPosition(position, cell.offset(), facing);
+				if (!level.isInWorldBounds(member) || !level.getWorldBorder().isWithinBounds(member)
+						|| level.getBlockEntity(member) != null || !level.getBlockState(member).canBeReplaced()
+						|| player != null && !player.mayUseItemAt(member, context.getClickedFace(), context.getItemInHand())) {
+					return false;
+				}
+				var shape = DynamicCarrierBlock.customShape(cell.elements(), true, facing).move(member);
+				if (!level.isUnobstructed(null, shape)) return false;
+			}
+			return true;
+		}
 		return stateForPlacement.canSurvive(context.getLevel(), position)
 				&& context.getLevel().isUnobstructed(null,
 						DynamicCarrierBlock.collisionShape(
 								definition, stateForPlacement, context.getLevel(), position).move(position));
+	}
+
+	@Override
+	protected boolean placeBlock(BlockPlaceContext context, BlockState state) {
+		DynamicContentDefinition definition = DynamicContentObjects.definition(context.getItemInHand());
+		DynamicBlockAssembly assembly = definition == null || definition.block() == null
+				? null : definition.block().assembly();
+		if (assembly == null) return super.placeBlock(context, state);
+		var level = context.getLevel();
+		BlockPos root = context.getClickedPos();
+		var facing = state.getValue(DynamicCarrierBlock.FACING);
+		var contentId = context.getItemInHand().get(DynamicContentObjects.CONTENT_ID);
+		if (contentId == null) return false;
+		List<DynamicBlockAssemblyCell> cells = new ArrayList<>(assembly.initialVariant().cells());
+		cells.sort(Comparator.comparing(cell -> !cell.offset().equals(BlockPos.ZERO)));
+		List<BlockPos> placed = new ArrayList<>();
+		List<BlockState> replaced = new ArrayList<>();
+		try {
+			for (DynamicBlockAssemblyCell cell : cells) {
+				BlockPos member = DynamicBlockAssemblyRuntime.worldPosition(root, cell.offset(), facing);
+				replaced.add(level.getBlockState(member));
+				if (!level.setBlock(member, state, 11)) throw new IllegalStateException("Could not reserve assembly cell");
+				placed.add(member);
+				if (!(level.getBlockEntity(member) instanceof DynamicBlockEntity blockEntity)) {
+					throw new IllegalStateException("Assembly cell did not create its carrier block entity");
+				}
+				blockEntity.initializeAssembly(contentId, cell.offset());
+				level.sendBlockUpdated(member, state, state, 3);
+			}
+			return true;
+		} catch (RuntimeException failure) {
+			for (int index = placed.size() - 1; index >= 0; index--) {
+				level.setBlock(placed.get(index), replaced.get(index), 11);
+			}
+			return false;
+		}
 	}
 
 	@Override

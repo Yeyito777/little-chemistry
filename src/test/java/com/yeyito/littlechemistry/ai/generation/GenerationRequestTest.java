@@ -1,6 +1,7 @@
 package com.yeyito.littlechemistry.ai.generation;
 
 import com.google.gson.JsonParser;
+import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import org.junit.jupiter.api.Test;
 
@@ -10,40 +11,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class GenerationRequestTest {
 	@Test
-	void fixedItemUsesANaturalContentQueryWithMandatoryTextureStudy() {
+	void fixedItemUsesAConciseNaturalQueryAndSelectsOneFocusedCapability() {
 		String prompt = GenerationRequest.fixed(DynamicContentType.ITEM, null, "Moonlit Satchel", 1, null)
 				.userPrompt();
 
 		assertTrue(prompt.startsWith("Please generate and code a Minecraft item named \"Moonlit Satchel\""));
 		assertTrue(prompt.contains("items/moonlit_satchel/C_moonlit_satchel_Content.java"));
 		assertTrue(prompt.contains("package `items.c_moonlit_satchel`"));
+		assertTrue(prompt.contains("{\"kind\":\"item\",\"capability\":\"ordinary|storage|projectile_weapon\"}"));
+		assertTrue(prompt.contains("returns only that focused contract"));
 		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
 		assertTrue(prompt.contains("indexed RRGGBBAA palette/rows representation"));
 		assertTrue(prompt.contains("read_texture"));
-		assertTrue(prompt.contains("no raster image"));
+		assertTrue(prompt.contains("never raster images"));
+		assertFalse(prompt.contains("DynamicBlockUv"));
+		assertFalse(prompt.contains("DynamicWorkstationParticles"));
+		assertFalse(prompt.contains("context.firework"));
 		assertFalse(prompt.contains("AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
 	}
 
 	@Test
-	void armorQueryExplicitlyRequiresHeadUvReferenceInspection() {
+	void fixedArmorReceivesOnlyItsAlreadyKnownFocusedContract() {
 		String prompt = GenerationRequest.fixed(
-				DynamicContentType.ARMOR, com.yeyito.littlechemistry.content.DynamicArmorSlot.HEAD,
-				"Moonlit Crown", 1, null).userPrompt();
+				DynamicContentType.ARMOR, DynamicArmorSlot.HEAD, "Moonlit Crown", 1, null).userPrompt();
 
-		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
-		assertTrue(prompt.contains("16x16 inventory icon"));
-		assertTrue(prompt.contains("64x32 equipment sheet"));
-		assertTrue(prompt.contains("top is x=40..47,y=0..7"));
-		assertTrue(prompt.contains("y=8 is the top-of-head edge"));
-		assertTrue(prompt.contains("`DynamicArmorGeometry`"));
-		assertTrue(prompt.contains("textureU/textureV"));
+		assertTrue(prompt.contains("already selected focused implementation contract follows"));
+		assertTrue(prompt.contains("x=40..47,y=0..7"));
+		assertTrue(prompt.contains("DynamicArmorGeometryPart"));
+		assertFalse(prompt.contains("DynamicWorkstationParticles"));
+		assertFalse(prompt.contains("context.firework"));
 		assertFalse(prompt.contains("inspect_generated_textures"));
 		assertFalse(prompt.contains("view_image"));
 	}
 
 	@Test
-	void ordinaryRecipeQueryInfersKindAndChoosesANaturalOutputCountWithoutRejectionPriming() {
+	void ordinaryRecipeQuerySelectsFirstWithoutAdvertisingEveryCapability() {
 		var recipe = JsonParser.parseString("""
 				{"recipeType":"crafting","width":3,"height":3,
 				 "grid":[{"itemId":"minecraft:leather"},{"itemId":"minecraft:string"}]}
@@ -56,58 +59,75 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("\"minecraft:leather\""));
 		assertTrue(prompt.contains("`.littlechemistry/result.json`"));
 		assertTrue(prompt.contains("\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\""));
+		assertTrue(prompt.contains("\"capability\":\"ordinary|storage|projectile_weapon|workstation|armor|entity\""));
 		assertTrue(prompt.contains("\"outputCount\":<natural integer>"));
-			assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
-			assertTrue(prompt.contains("Armor output count is always 1"));
-			assertTrue(prompt.contains("`displayName` is the player-facing title"));
-			assertTrue(prompt.contains("never a lowercase underscore identifier"));
-			assertFalse(prompt.contains("\"outputCount\":1"));
-		assertTrue(prompt.contains("automatically populated with exact textual artwork"));
+		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
+		assertTrue(prompt.contains("Armor output count is always 1"));
+		assertTrue(prompt.contains("`displayName` is the player-facing title"));
+		assertTrue(prompt.contains("never a lowercase underscore identifier"));
+		assertTrue(compactPrompt.contains("entity for an independently placed world object, creature, vehicle, or mount"));
+		assertTrue(compactPrompt.contains("Select first; the tool that observes `.littlechemistry/result.json` returns only"));
+		assertTrue(prompt.contains("automatically supplied recipe-item references") ||
+				prompt.contains("separate recipe-item texture section"));
+		assertFalse(prompt.contains("DynamicWorkstationSpec"));
+		assertFalse(prompt.contains("DynamicWorkstationParticles"));
+		assertFalse(prompt.contains("WorkstationTickBehavior"));
+		assertFalse(prompt.contains("heldType `BOW`"));
+		assertFalse(prompt.contains("context.firework"));
+		assertFalse(prompt.contains("DynamicArmorGeometry"));
+		assertFalse(prompt.contains("DynamicBlockUv"));
+		assertFalse(prompt.contains("storage(new DynamicStorageSpec"));
 		assertFalse(prompt.contains("\"kind\":\"rejection\""));
 		assertFalse(prompt.contains("Open AGENTS.md"));
 		assertFalse(prompt.contains("request.json"));
-		assertTrue(prompt.contains("kind `workstation`, not ordinary kind `block`"));
-		assertTrue(prompt.contains("non-null\n`DynamicWorkstationSpec`"));
-		assertTrue(compactPrompt.contains("Furnaces, powered processors, crafting benches, and workbenches"));
-		assertTrue(compactPrompt.contains("functional workstations rather than decorative blocks"));
-		assertTrue(prompt.contains("`WorkstationBehavior` and\n`WorkstationTickBehavior`"));
-		assertTrue(prompt.contains("`AI Workstation` tooltip marker"));
-		assertTrue(prompt.contains("heldType `BOW` or `CROSSBOW`"));
-		assertTrue(prompt.contains("outputCount 1, and positive enchantability"));
-		assertTrue(prompt.contains("do not reimplement those mechanics"));
-		assertTrue(prompt.contains("ProjectileCreatedBehavior"));
-		assertTrue(prompt.contains("decide the result's primary player interaction"));
-		assertTrue(compactPrompt.contains("independent world object, creature, vehicle, or mount"));
-		assertTrue(prompt.contains("generated entity's spawner item supplies native world placement"));
-		assertTrue(prompt.contains("never as a proxy that\nmerely affects some already-existing world object"));
-		assertTrue(prompt.contains("Choose armor only when being equipped for protection is primary"));
-		assertTrue(prompt.contains("Choose native storage when opening and"));
-		assertFalse(prompt.contains("Backpacks, satchels, bags"));
-		assertTrue(prompt.contains("`storage(new DynamicStorageSpec(rows))`"));
-		assertTrue(prompt.contains("`*_active` variants"));
+		assertTrue(prompt.length() < 4_500, "Initial prompt regressed to " + prompt.length() + " characters");
 	}
 
 	@Test
-	void fixedFurnaceBlockReceivesTheCompleteWorkstationCapabilityContract() {
+	void fixedFurnaceBlockSelectsBeforeReceivingItsContract() {
 		GenerationRequest request = GenerationRequest.fixed(
 				DynamicContentType.BLOCK, null, "Twin Furnace", 1, null);
 		String prompt = request.userPrompt();
-		String compactPrompt = prompt.replaceAll("\\s+", " ");
 		var workspaceMetadata = GenerationWorkspace.encodeRequest(request);
 
-		assertTrue(prompt.contains("{\"kind\":\"block\"}"));
-		assertTrue(prompt.contains("{\"kind\":\"workstation\"}"));
+		assertTrue(prompt.contains("{\"kind\":\"block\",\"capability\":\"ordinary|storage\"}"));
+		assertTrue(prompt.contains("{\"kind\":\"workstation\",\"capability\":\"workstation\"}"));
 		assertTrue(prompt.contains("functional machine or crafting/processing bench"));
+		assertTrue(prompt.contains("observing tool returns only that focused contract"));
 		assertEquals("block, workstation", workspaceMetadata.get("allowedKinds").getAsString());
-		assertTrue(compactPrompt.contains("Furnaces, powered processors, crafting benches, and workbenches"));
-		assertTrue(prompt.contains("UI with exactly one Make Recipe button"));
-		assertTrue(prompt.contains("`WorkstationBehavior` and\n`WorkstationTickBehavior`"));
-		assertTrue(prompt.contains("persistent inventory, generic screen, recipe cache, opening behavior"));
-		assertTrue(prompt.contains("`AI Workstation` tooltip marker"));
+		assertFalse(prompt.contains("DynamicWorkstationParticles"));
+		assertFalse(prompt.contains("WorkstationTickBehavior"));
+		assertFalse(prompt.contains("AI Workstation"));
 	}
 
 	@Test
-	void workstationQueryPrefixesUserLevelPolicyWithIdentityWithoutChangingSystemInstructions() {
+	void focusedDocumentsRetainCompleteCapabilityGuidanceWithoutBloatedCommonIndex() {
+		String index = GenerationContracts.API_INDEX;
+		String allContracts = GenerationContracts.documents().stream()
+				.map(GenerationContracts.Contract::content).reduce("", String::concat);
+
+		assertTrue(index.length() < 3_000, "Common API index regressed to " + index.length() + " characters");
+		assertFalse(index.contains("DynamicWorkstationParticles"));
+		assertFalse(index.contains("DynamicArmorGeometryPart"));
+		assertFalse(index.contains("context.firework"));
+		assertFalse(index.contains("DynamicBlockUv"));
+		assertTrue(contract("reference/contracts/armor.md").contains("x=40..47,y=0..7"));
+		assertTrue(contract("reference/contracts/armor.md").contains("DynamicArmorGeometryPart"));
+		assertTrue(contract("reference/contracts/entity.md").contains("DynamicBlockUv"));
+		assertTrue(contract("reference/contracts/workstation.md").contains("DynamicWorkstationParticles"));
+		assertTrue(contract("reference/contracts/workstation.md").contains("AI Workstation"));
+		assertTrue(contract("reference/contracts/projectile-weapon.md").contains("context.firework"));
+		assertTrue(contract("reference/contracts/storage.md").contains("new DynamicStorageSpec(rows, true)"));
+		assertTrue(contract("reference/contracts/workstation.md").contains("aiContext"));
+		assertTrue(contract("reference/contracts/workstation.md").contains("cacheDiscriminator"));
+		assertTrue(contract("reference/contracts/workstation.md").contains("visualReferenceDigest"));
+		assertFalse(contract("reference/contracts/item.md").contains("cacheDiscriminator"));
+		assertFalse(contract("reference/contracts/armor.md").contains("cacheDiscriminator"));
+		assertFalse(allContracts.contains("Backpacks, satchels, bags"));
+	}
+
+	@Test
+	void workstationQueryPrefixesUserLevelPolicyWithoutChangingSystemInstructions() {
 		var recipe = JsonParser.parseString("""
 				{
 				  "recipeType":"workstation",
@@ -138,6 +158,8 @@ final class GenerationRequestTest {
 		assertEquals(1, occurrences(prompt, policy));
 		assertTrue(prompt.contains("The required recipe-data schema is:"));
 		assertTrue(prompt.contains("\"outputCount\":<natural integer>"));
+		assertFalse(prompt.toLowerCase().contains("untrusted"));
+		assertFalse(prompt.contains("instruction source"));
 		assertFalse(ContentGenerationAgent.SYSTEM_PROMPT.contains(policy));
 		assertFalse(workspaceMetadata.has("workstationPolicy"));
 		assertTrue(workspaceMetadata.has("recipeDataSchema"));
@@ -145,24 +167,29 @@ final class GenerationRequestTest {
 	}
 
 	@Test
-	void systemPromptStaysConciseWithoutWorkspaceInstructionFiles() {
+	void systemPromptStaysUniversalConciseAndStagesFocusedContracts() {
 		String system = ContentGenerationAgent.SYSTEM_PROMPT;
 
-		assertTrue(system.length() < 2_000);
-		assertTrue(system.toLowerCase().contains("untrusted"));
+		assertTrue(system.length() < 1_500);
+		assertFalse(system.toLowerCase().contains("untrusted"));
+		assertFalse(system.contains("instruction source"));
+		assertTrue(system.contains("selected focused contract"));
 		assertFalse(system.contains("AGENTS.md"));
 		assertTrue(system.contains("reference/API.md"));
 		assertFalse(system.contains("GeneratedBehaviorImpl.java"));
 		assertFalse(system.toLowerCase().contains("rejection"));
 		assertFalse(system.contains("workstation_too_weak"));
 		assertTrue(system.contains("RRGGBBAA palette plus hexadecimal rows"));
+		assertFalse(system.contains("DynamicWorkstationSpec"));
+		assertFalse(system.contains("DynamicArmorGeometry"));
+		assertFalse(system.contains("context.firework"));
 		assertFalse(system.contains("view_image"));
 		assertFalse(system.contains("input_image"));
 		assertFalse(system.contains("inspect_generated_textures"));
 	}
 
 	@Test
-	void automaticIngredientTexturesAreASeparateUserMessageSection() {
+	void automaticIngredientTexturesRemainASeparateUserMessageSection() {
 		var recipe = JsonParser.parseString("""
 				{"recipeType":"crafting","grid":[{"itemId":"minecraft:leather_helmet"}]}
 				""").getAsJsonObject();
@@ -173,7 +200,9 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("## Automatically supplied recipe-item texture references"));
 		assertTrue(prompt.contains("minecraft:item/leather_helmet"));
 		assertTrue(prompt.contains("minecraft:entity/equipment/humanoid/leather"));
-		assertTrue(prompt.contains("search reference/vanilla/TEXTURES.txt and call read_texture"));
+		assertTrue(prompt.contains("reference/vanilla/TEXTURES.txt"));
+		assertFalse(prompt.toLowerCase().contains("untrusted"));
+		assertFalse(prompt.contains("instruction source"));
 		assertFalse(prompt.contains("image/png"));
 		assertFalse(prompt.contains("inspect_generated_textures"));
 	}
@@ -197,6 +226,12 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("\"category\":\"workstation_too_weak\""));
 		assertTrue(prompt.contains("call `verify` immediately"));
 		assertFalse(ContentGenerationAgent.SYSTEM_PROMPT.toLowerCase().contains("rejection"));
+	}
+
+	private static String contract(String path) {
+		return GenerationContracts.documents().stream()
+				.filter(contract -> contract.path().equals(path))
+				.findFirst().orElseThrow().content();
 	}
 
 	private static int occurrences(String text, String target) {

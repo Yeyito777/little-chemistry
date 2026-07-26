@@ -54,6 +54,8 @@ import java.util.List;
 
 public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	public static final IntegerProperty LIGHT_LEVEL = IntegerProperty.create("light_level", 0, 15);
+	public static final IntegerProperty ASSEMBLY_VARIANT = IntegerProperty.create(
+			"assembly_variant", 0, DynamicBlockAssembly.MAX_VARIANTS - 1);
 	public static final EnumProperty<DynamicMaterial> MATERIAL = EnumProperty.create("material", DynamicMaterial.class);
 	public static final EnumProperty<Direction> FACING = BlockStateProperties.HORIZONTAL_FACING;
 
@@ -61,13 +63,14 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 		super(properties);
 		registerDefaultState(stateDefinition.any()
 				.setValue(LIGHT_LEVEL, 0)
+				.setValue(ASSEMBLY_VARIANT, 0)
 				.setValue(MATERIAL, DynamicMaterial.STONE)
 				.setValue(FACING, Direction.NORTH));
 	}
 
 	@Override
 	protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-		builder.add(LIGHT_LEVEL, MATERIAL, FACING);
+		builder.add(LIGHT_LEVEL, ASSEMBLY_VARIANT, MATERIAL, FACING);
 	}
 
 	@Override
@@ -107,6 +110,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected InteractionResult useItemOn(ItemStack heldStack, BlockState state, Level level, BlockPos position,
 			Player player, InteractionHand hand, BlockHitResult hit) {
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && definition.storage() != null) return openStorage(level, position, player, definition);
 		if (definition != null && DynamicBehaviorSource.supports(
@@ -127,6 +135,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos position,
 			Player player, BlockHitResult hit) {
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && definition.storage() != null) return openStorage(level, position, player, definition);
 		if (definition != null && DynamicBehaviorSource.supports(
@@ -162,7 +175,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 				&& level.getBlockEntity(position) instanceof DynamicBlockEntity storage && storage.isStorage()) {
 			int rows = definition.storage().rows();
 			serverPlayer.openMenu(new SimpleMenuProvider(
-					(id, inventory, ignored) -> new ChestMenu(storageMenuType(rows), id, inventory, storage, rows),
+					(id, inventory, ignored) -> new DynamicItemStorageMenu(
+							storageMenuType(rows), id, inventory, storage, rows, -1),
 					DynamicContentObjects.displayName(definition)));
 			return InteractionResult.CONSUME;
 		}
@@ -190,6 +204,10 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 					: Shapes.box(1.0 / 16.0, 0, 1.0 / 16.0, 15.0 / 16.0, 1, 15.0 / 16.0);
 		}
 		if (definition == null || definition.block() == null) return Shapes.block();
+		if (definition.block().assembly() != null) {
+			return customShape(assemblyElements(definition, state, level, position), false,
+					modelFacing(definition, state));
+		}
 		return switch (definition.block().shape()) {
 			case FULL_CUBE, NO_COLLISION -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
@@ -210,6 +228,10 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			BlockGetter level, BlockPos position) {
 		if (definition != null && definition.item() != null && definition.item().placement() != null) return Shapes.empty();
 		if (definition == null || definition.block() == null) return Shapes.block();
+		if (definition.block().assembly() != null) {
+			return customShape(assemblyElements(definition, state, level, position), true,
+					modelFacing(definition, state));
+		}
 		return switch (definition.block().shape()) {
 			case FULL_CUBE -> Shapes.block();
 			case SLAB -> Shapes.box(0, 0, 0, 1, 0.5, 1);
@@ -221,8 +243,12 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 
 	static VoxelShape customShape(DynamicBlockModel model, boolean collisionOnly, Direction facing) {
 		if (model == null) return collisionOnly ? Shapes.empty() : Shapes.block();
+		return customShape(model.elements(), collisionOnly, facing);
+	}
+
+	static VoxelShape customShape(List<DynamicBlockModelElement> elements, boolean collisionOnly, Direction facing) {
 		VoxelShape result = Shapes.empty();
-		for (DynamicBlockModelElement element : model.elements()) {
+		for (DynamicBlockModelElement element : elements) {
 			if (collisionOnly && !element.collision()) continue;
 			result = Shapes.or(result, Shapes.box(
 					element.fromX() / 16.0, element.fromY() / 16.0, element.fromZ() / 16.0,
@@ -234,6 +260,13 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			case WEST -> Shapes.rotate(result, Rotation.COUNTERCLOCKWISE_90.rotation());
 			default -> result;
 		};
+	}
+
+	private static List<DynamicBlockModelElement> assemblyElements(DynamicContentDefinition definition,
+			BlockState state, BlockGetter level, BlockPos position) {
+		BlockPos offset = level.getBlockEntity(position) instanceof DynamicBlockEntity blockEntity
+				? blockEntity.assemblyOffset() : BlockPos.ZERO;
+		return DynamicBlockAssemblyRuntime.selectedElements(definition, offset, state);
 	}
 
 	private static Direction modelFacing(DynamicContentDefinition definition, BlockState state) {
@@ -313,6 +346,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 
 	@Override
 	protected float getDestroyProgress(BlockState state, Player player, BlockGetter level, BlockPos position) {
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) position = target.getBlockPos();
 		if (level.getBlockEntity(position) instanceof DynamicBlockEntity workstation
 				&& workstation.isWorkstationLocked()) return 0.0F;
 		DynamicContentDefinition definition = definition(level, position);
@@ -328,8 +363,31 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	}
 
 	@Override
+	public BlockState playerWillDestroy(Level level, BlockPos position, BlockState state, Player player) {
+		if (!DynamicBlockAssemblyRuntime.removing()
+				&& level.getBlockEntity(position) instanceof DynamicBlockEntity member) {
+			DynamicContentDefinition definition = DynamicContentCatalog.find(member.contentId());
+			if (definition != null && definition.block() != null && definition.block().assembly() != null) {
+				DynamicBlockEntity root = DynamicBlockAssemblyRuntime.rootEntity(level, position);
+				if (root != null) {
+					DynamicBlockAssemblyRuntime.beginRemoval();
+					try {
+						DynamicBlockAssemblyRuntime.removeOtherMembers(level, root, root.getBlockPos());
+						if (member != root) level.destroyBlock(root.getBlockPos(), true, player);
+					} finally {
+						DynamicBlockAssemblyRuntime.endRemoval();
+					}
+				}
+			}
+		}
+		return super.playerWillDestroy(level, position, state, player);
+	}
+
+	@Override
 	public void playerDestroy(Level level, Player player, BlockPos position, BlockState state,
 			BlockEntity blockEntity, ItemStack destroyedWith) {
+		if (blockEntity instanceof DynamicBlockEntity member
+				&& !member.assemblyOffset().equals(BlockPos.ZERO)) return;
 		DynamicContentDefinition definition = blockEntity instanceof DynamicBlockEntity dynamic
 				? DynamicContentCatalog.find(dynamic.contentId()) : null;
 		if (definition == null || definition.block() == null || !definition.block().requiresCorrectTool()
@@ -348,8 +406,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos position,
 			boolean movedByPiston) {
-		if (level.getBlockEntity(position) instanceof DynamicBlockEntity dynamic && !dynamic.isEmpty()) {
-			net.minecraft.world.Containers.dropContents(level, position, dynamic.drainWorkstationItems());
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity dynamic) {
+			DynamicContentDefinition definition = DynamicContentCatalog.find(dynamic.contentId());
+			if (dynamic.assemblyOffset().equals(BlockPos.ZERO) && !dynamic.isEmpty()) {
+				net.minecraft.world.Containers.dropContents(level, position, dynamic.drainWorkstationItems());
+			}
 		}
 		super.affectNeighborsAfterRemoval(state, level, position, movedByPiston);
 	}
@@ -366,6 +427,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected void attack(BlockState state, Level level, BlockPos position, Player player) {
 		super.attack(state, level, position, player);
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && level instanceof ServerLevel serverLevel
 				&& player instanceof ServerPlayer serverPlayer) {
@@ -376,6 +442,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	public void stepOn(Level level, BlockPos position, BlockState state, Entity entity) {
 		super.stepOn(level, position, state, entity);
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.stepOnBlock(definition, serverLevel, position, state, entity);
@@ -385,6 +456,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	public void fallOn(Level level, BlockState state, BlockPos position, Entity entity, double fallDistance) {
 		super.fallOn(level, state, position, entity, fallDistance);
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.fallOnBlock(definition, serverLevel, position, state, entity, fallDistance);
@@ -395,6 +471,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected void entityInside(BlockState state, Level level, BlockPos position, Entity entity,
 			InsideBlockEffectApplier effects, boolean isEntry) {
 		super.entityInside(state, level, position, entity, effects, isEntry);
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.entityInsideBlock(
@@ -405,6 +486,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected void randomTick(BlockState state, ServerLevel level, BlockPos position, RandomSource random) {
 		super.randomTick(state, level, position, random);
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity member
+				&& !member.assemblyOffset().equals(BlockPos.ZERO)) return;
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null) {
 			DynamicBehaviorRegistry.randomTickBlock(definition, level, position, state, random);
@@ -414,6 +497,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected void tick(BlockState state, ServerLevel level, BlockPos position, RandomSource random) {
 		super.tick(state, level, position, random);
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity member
+				&& !member.assemblyOffset().equals(BlockPos.ZERO)) return;
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null) {
 			DynamicBehaviorRegistry.scheduledTickBlock(definition, level, position, state, random);
@@ -424,6 +509,8 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	protected void neighborChanged(BlockState state, Level level, BlockPos position, Block neighbor,
 			Orientation orientation, boolean movedByPiston) {
 		super.neighborChanged(state, level, position, neighbor, orientation, movedByPiston);
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity member
+				&& !member.assemblyOffset().equals(BlockPos.ZERO)) return;
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.neighborChangedBlock(
@@ -434,15 +521,23 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 	@Override
 	protected void onProjectileHit(Level level, BlockState state, BlockHitResult hit, Projectile projectile) {
 		super.onProjectileHit(level, state, hit, projectile);
-		DynamicContentDefinition definition = definition(level, hit.getBlockPos());
+		BlockPos position = hit.getBlockPos();
+		DynamicBlockEntity target = canonicalEntity(level, position);
+		if (target != null) {
+			position = target.getBlockPos();
+			state = target.getBlockState();
+		}
+		DynamicContentDefinition definition = definition(level, position);
 		if (definition != null && level instanceof ServerLevel serverLevel) {
 			DynamicBehaviorRegistry.projectileHitBlock(
-					definition, serverLevel, hit.getBlockPos(), state, hit, projectile);
+					definition, serverLevel, position, state, hit, projectile);
 		}
 	}
 
 	@Override
 	public void animateTick(BlockState state, Level level, BlockPos position, RandomSource random) {
+		if (level.getBlockEntity(position) instanceof DynamicBlockEntity member
+				&& !member.assemblyOffset().equals(BlockPos.ZERO)) return;
 		DynamicContentDefinition definition = definition(level, position);
 		if (definition == null || definition.block() == null) {
 			return;
@@ -519,6 +614,11 @@ public final class DynamicCarrierBlock extends Block implements EntityBlock {
 			return DynamicContentCatalog.find(blockEntity.contentId());
 		}
 		return null;
+	}
+
+	private static DynamicBlockEntity canonicalEntity(BlockGetter level, BlockPos position) {
+		DynamicBlockEntity root = DynamicBlockAssemblyRuntime.rootEntity(level, position);
+		return root != null ? root : level.getBlockEntity(position) instanceof DynamicBlockEntity entity ? entity : null;
 	}
 
 }

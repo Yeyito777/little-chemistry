@@ -4,11 +4,13 @@ import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
 import net.minecraft.core.Direction;
 import com.yeyito.littlechemistry.content.DynamicBlockShape;
 import com.yeyito.littlechemistry.content.DynamicBlockModel;
+import com.yeyito.littlechemistry.content.DynamicBlockModelElement;
 import com.yeyito.littlechemistry.content.DynamicPlacedShape;
 
 public final class DynamicBlockRenderState extends BlockEntityRenderState {
 	String textureHash;
 	DynamicBlockModel model;
+	java.util.List<DynamicBlockModelElement> assemblyElements;
 	String visualState;
 	boolean visuallyEmissive;
 	DynamicBlockShape shape = DynamicBlockShape.FULL_CUBE;

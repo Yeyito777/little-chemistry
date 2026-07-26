@@ -57,7 +57,8 @@ public final class WorkstationRecipeSignature {
 		this.ingredients = List.copyOf(ingredients);
 		this.visualReferenceDigest = visualReferenceDigest == null
 				? RecipeVisualReferences.digestForStacks(this.ingredients.stream().map(Ingredient::stack).toList())
-				: requireDigest(visualReferenceDigest);
+				: RecipeVisualReferences.migrateCompatibleDigestForStacks(
+						this.ingredients.stream().map(Ingredient::stack).toList(), requireDigest(visualReferenceDigest));
 		this.hashCode = Objects.hash(workstationName, processId, discriminator, this.ingredients,
 				this.visualReferenceDigest);
 	}

@@ -2,22 +2,60 @@ package com.yeyito.littlechemistry.content;
 
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.world.item.Rarity;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ItemContainerContents;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
 
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class DynamicStorageSpecTest {
+	@BeforeAll
+	static void bootstrapMinecraftRegistries() {
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
+		if (!Items.STONE.builtInRegistryHolder().areComponentsBound()) {
+			Items.STONE.builtInRegistryHolder().bindComponents(
+					DataComponentMap.builder().set(DataComponents.MAX_STACK_SIZE, 64).build());
+		}
+	}
+
 	@Test
 	void validatesNativeChestRowBounds() {
 		assertEquals(27, new DynamicStorageSpec(3).slots());
+		assertFalse(new DynamicStorageSpec(3).acceptsContainerItems());
 		assertThrows(IllegalArgumentException.class, () -> new DynamicStorageSpec(0));
 		assertThrows(IllegalArgumentException.class, () -> new DynamicStorageSpec(7));
+	}
+
+	@Test
+	void storageSlotsConsultTheContainerBeforeMutatingTheCarriedStack() {
+		SimpleContainer storage = new SimpleContainer(1) {
+			@Override public boolean canPlaceItem(int slot, ItemStack stack) {
+				return !stack.has(DataComponents.CONTAINER);
+			}
+		};
+		DynamicItemStorageMenu.GuardedStorageSlot slot =
+				new DynamicItemStorageMenu.GuardedStorageSlot(storage, 0, 0, 0);
+		ItemStack nested = new ItemStack(Items.STONE);
+		nested.set(DataComponents.CONTAINER, ItemContainerContents.EMPTY);
+
+		assertFalse(slot.mayPlace(nested));
+		assertEquals(1, nested.getCount());
+		assertEquals(ItemStack.EMPTY, storage.getItem(0));
 	}
 
 	@Test
@@ -28,13 +66,13 @@ final class DynamicStorageSpecTest {
 				DynamicRarity.COMMON, 0L, "0".repeat(64), texture, null, null,
 				null, DynamicItemProperties.ordinary(1, Rarity.COMMON, false, 0, 0), null,
 				DynamicBehaviorSource.completeLegacySource(null), null, List.of(), null, null, null,
-				DynamicItemVisuals.NONE, new DynamicStorageSpec(2));
+					DynamicItemVisuals.NONE, new DynamicStorageSpec(2, true));
 
 		byte[] encoded = DynamicContentJson.encode(UUID.randomUUID(), 1, List.of(definition));
 		DynamicContentJson.Decoded decoded = DynamicContentJson.decode(encoded);
 
-		assertEquals(24, decoded.format());
-		assertEquals(new DynamicStorageSpec(2), decoded.definitions().getFirst().storage());
+		assertEquals(27, decoded.format());
+		assertEquals(new DynamicStorageSpec(2, true), decoded.definitions().getFirst().storage());
 
 		var legacyJson = com.google.gson.JsonParser.parseString(
 				new String(encoded, java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();

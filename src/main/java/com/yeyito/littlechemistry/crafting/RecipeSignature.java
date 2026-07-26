@@ -44,7 +44,9 @@ public final class RecipeSignature {
 		}
 		this.ingredients = List.copyOf(normalized);
 		this.visualReferenceDigest = visualReferenceDigest == null
-				? RecipeVisualReferences.digestForStacks(this.ingredients) : requireDigest(visualReferenceDigest);
+				? RecipeVisualReferences.digestForStacks(this.ingredients)
+				: RecipeVisualReferences.migrateCompatibleDigestForStacks(
+						this.ingredients, requireDigest(visualReferenceDigest));
 		this.hashCode = Objects.hash(width, height, ItemStack.hashStackList(this.ingredients), this.visualReferenceDigest);
 	}
 

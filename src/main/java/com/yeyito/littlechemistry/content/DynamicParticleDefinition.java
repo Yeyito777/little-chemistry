@@ -123,6 +123,20 @@ public record DynamicParticleDefinition(
 		}
 	}
 
+	static void validateWorkstationParticles(DynamicWorkstationSpec workstation,
+			List<DynamicParticleDefinition> particles) {
+		if (workstation == null) return;
+		Set<String> ids = particles.stream().map(DynamicParticleDefinition::id)
+				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		for (DynamicWorkstationParticleEffect effect : List.of(
+				workstation.particles().inventing(), workstation.particles().ready())) {
+			if (effect.custom() && !ids.contains(effect.customParticleId())) {
+				throw new IllegalArgumentException("Workstation lifecycle references undefined custom particle: "
+						+ effect.customParticleId());
+			}
+		}
+	}
+
 	public float startRed() {
 		return channel(startColor, 0);
 	}

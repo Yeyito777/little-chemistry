@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.Rarity;
 
 import java.math.BigDecimal;
@@ -25,7 +26,7 @@ import java.util.UUID;
 
 public final class DynamicContentJson {
 	/** Formats 20 and 21 belonged to an abandoned development schema and must be restored from a format-19 backup. */
-	public static final int CURRENT_FORMAT = 24;
+	public static final int CURRENT_FORMAT = 27;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private DynamicContentJson() {
@@ -64,6 +65,7 @@ public final class DynamicContentJson {
 		if (definition.storage() != null) {
 			JsonObject storage = new JsonObject();
 			storage.addProperty("rows", definition.storage().rows());
+			storage.addProperty("acceptsContainerItems", definition.storage().acceptsContainerItems());
 			entry.add("storage", storage);
 		}
 		entry.add("customParticles", encodeCustomParticles(definition.customParticles()));
@@ -96,6 +98,7 @@ public final class DynamicContentJson {
 		Map<String, Set<String>> recoveryDefinitionDigests = new HashMap<>();
 		for (JsonElement element : encodedDefinitions) {
 			JsonObject entry = element.getAsJsonObject();
+			String persistedDigest = digestDefinition(entry);
 			DynamicContentType type = DynamicContentType.fromSerializedName(entry.get("type").getAsString());
 			String name = entry.get("name").getAsString();
 			if (!name.matches("[a-z0-9_]{1,64}")) {
@@ -152,7 +155,7 @@ public final class DynamicContentJson {
 					DynamicItemVisuals itemVisuals = format >= 22 && entry.has("itemVisuals")
 							? decodeItemVisuals(entry.getAsJsonArray("itemVisuals")) : DynamicItemVisuals.NONE;
 					DynamicStorageSpec storage = format >= 23 && entry.has("storage")
-							? new DynamicStorageSpec(entry.getAsJsonObject("storage").get("rows").getAsInt()) : null;
+							? decodeStorage(entry.getAsJsonObject("storage")) : null;
 			String behaviorSource;
 			if (format >= 9) {
 				if (!entry.has("behaviorSource")) {
@@ -181,11 +184,19 @@ public final class DynamicContentJson {
 			preNormalization.addProperty("description", description);
 			String oldDigest = digestDefinition(preNormalization);
 			String currentDigest = digestDefinition(encodeDefinition(definition));
-			if (!oldDigest.equals(currentDigest)) recoveryDefinitionDigests.put(name, Set.of(oldDigest));
+			Set<String> compatibleDigests = new java.util.HashSet<>();
+			if (!persistedDigest.equals(currentDigest)) compatibleDigests.add(persistedDigest);
+			if (!oldDigest.equals(currentDigest)) compatibleDigests.add(oldDigest);
+			if (!compatibleDigests.isEmpty()) recoveryDefinitionDigests.put(name, Set.copyOf(compatibleDigests));
 		}
 		validateUniqueNames(definitions);
 		DynamicBlockDrops.validateCatalog(definitions);
 		return new Decoded(format, serverId, revision, List.copyOf(definitions), Map.copyOf(recoveryDefinitionDigests));
+	}
+
+	private static DynamicStorageSpec decodeStorage(JsonObject encoded) {
+		return new DynamicStorageSpec(encoded.get("rows").getAsInt(),
+				encoded.has("acceptsContainerItems") && encoded.get("acceptsContainerItems").getAsBoolean());
 	}
 
 	static int storedFormat(byte[] bytes) {
@@ -373,15 +384,17 @@ public final class DynamicContentJson {
 		encoded.add("textures", textures);
 		encoded.add("faces", encodeBlockFaces(model.faces()));
 		JsonArray elements = new JsonArray();
-		for (DynamicBlockModelElement element : model.elements()) {
-			JsonObject value = new JsonObject();
-			value.add("from", coordinates(element.fromX(), element.fromY(), element.fromZ()));
-			value.add("to", coordinates(element.toX(), element.toY(), element.toZ()));
-			value.addProperty("collision", element.collision());
-			value.add("faces", encodeBlockFaces(element.faces()));
-			elements.add(value);
-		}
+		for (DynamicBlockModelElement element : model.elements()) elements.add(encodeBlockModelElement(element));
 		encoded.add("elements", elements);
+		return encoded;
+	}
+
+	private static JsonObject encodeBlockModelElement(DynamicBlockModelElement element) {
+		JsonObject encoded = new JsonObject();
+		encoded.add("from", coordinates(element.fromX(), element.fromY(), element.fromZ()));
+		encoded.add("to", coordinates(element.toX(), element.toY(), element.toZ()));
+		encoded.addProperty("collision", element.collision());
+		encoded.add("faces", encodeBlockFaces(element.faces()));
 		return encoded;
 	}
 
@@ -439,14 +452,17 @@ public final class DynamicContentJson {
 		}
 		List<DynamicBlockModelElement> elements = new ArrayList<>();
 		for (JsonElement element : encoded.getAsJsonArray("elements")) {
-			JsonObject value = element.getAsJsonObject();
-			float[] from = decodeCoordinates(value.getAsJsonArray("from"));
-			float[] to = decodeCoordinates(value.getAsJsonArray("to"));
-			elements.add(new DynamicBlockModelElement(from[0], from[1], from[2], to[0], to[1], to[2],
-					value.get("collision").getAsBoolean(), decodeBlockFaces(value.getAsJsonObject("faces"))));
+			elements.add(decodeBlockModelElement(element.getAsJsonObject()));
 		}
 		return new DynamicBlockModel(textures, encoded.get("particleTexture").getAsString(),
 				decodeBlockFaces(encoded.getAsJsonObject("faces")), elements);
+	}
+
+	private static DynamicBlockModelElement decodeBlockModelElement(JsonObject encoded) {
+		float[] from = decodeCoordinates(encoded.getAsJsonArray("from"));
+		float[] to = decodeCoordinates(encoded.getAsJsonArray("to"));
+		return new DynamicBlockModelElement(from[0], from[1], from[2], to[0], to[1], to[2],
+				encoded.get("collision").getAsBoolean(), decodeBlockFaces(encoded.getAsJsonObject("faces")));
 	}
 
 	private static JsonObject encodeBlockFaces(java.util.Map<net.minecraft.core.Direction, DynamicBlockModelFace> faces) {
@@ -532,6 +548,7 @@ public final class DynamicContentJson {
 		encoded.addProperty("lightLevel", block.lightLevel());
 		encoded.addProperty("visuallyEmissive", block.visuallyEmissive());
 		encoded.add("drops", encodeBlockDrops(block.drops()));
+		if (block.assembly() != null) encoded.add("assembly", encodeBlockAssembly(block.assembly()));
 		JsonArray particles = new JsonArray();
 		for (DynamicParticleEmitter emitter : block.particles()) {
 			JsonObject particle = new JsonObject();
@@ -544,6 +561,55 @@ public final class DynamicContentJson {
 		}
 		encoded.add("particles", particles);
 		return encoded;
+	}
+
+	private static JsonObject encodeBlockAssembly(DynamicBlockAssembly assembly) {
+		JsonObject encoded = new JsonObject();
+		JsonArray variants = new JsonArray();
+		for (DynamicBlockAssemblyVariant variant : assembly.variants()) {
+			JsonObject encodedVariant = new JsonObject();
+			encodedVariant.addProperty("id", variant.id());
+			JsonArray cells = new JsonArray();
+			for (DynamicBlockAssemblyCell cell : variant.cells()) {
+				JsonObject encodedCell = new JsonObject();
+				encodedCell.add("offset", coordinates(cell.offsetX(), cell.offsetY(), cell.offsetZ()));
+				JsonArray elements = new JsonArray();
+				for (DynamicBlockModelElement element : cell.elements()) elements.add(encodeBlockModelElement(element));
+				encodedCell.add("elements", elements);
+				cells.add(encodedCell);
+			}
+			encodedVariant.add("cells", cells);
+			variants.add(encodedVariant);
+		}
+		encoded.add("variants", variants);
+		return encoded;
+	}
+
+	private static DynamicBlockAssembly decodeBlockAssembly(JsonObject encoded) {
+		JsonArray encodedVariants = encoded.getAsJsonArray("variants");
+		if (encodedVariants == null) throw new IllegalArgumentException("Dynamic block assembly is missing variants");
+		List<DynamicBlockAssemblyVariant> variants = new ArrayList<>();
+		for (JsonElement variantElement : encodedVariants) {
+			JsonObject encodedVariant = variantElement.getAsJsonObject();
+			JsonArray encodedCells = encodedVariant.getAsJsonArray("cells");
+			if (encodedCells == null) throw new IllegalArgumentException("Dynamic block assembly variant is missing cells");
+			List<DynamicBlockAssemblyCell> cells = new ArrayList<>();
+			for (JsonElement cellElement : encodedCells) {
+				JsonObject encodedCell = cellElement.getAsJsonObject();
+				float[] offset = decodeCoordinates(encodedCell.getAsJsonArray("offset"));
+				if (offset[0] != Math.rint(offset[0]) || offset[1] != Math.rint(offset[1])
+						|| offset[2] != Math.rint(offset[2])) {
+					throw new IllegalArgumentException("Dynamic block assembly offsets must be integers");
+				}
+				JsonArray encodedElements = encodedCell.getAsJsonArray("elements");
+				if (encodedElements == null) throw new IllegalArgumentException("Dynamic block assembly cell is missing elements");
+				List<DynamicBlockModelElement> elements = new ArrayList<>();
+				for (JsonElement element : encodedElements) elements.add(decodeBlockModelElement(element.getAsJsonObject()));
+				cells.add(new DynamicBlockAssemblyCell((int) offset[0], (int) offset[1], (int) offset[2], elements));
+			}
+			variants.add(new DynamicBlockAssemblyVariant(encodedVariant.get("id").getAsString(), cells));
+		}
+		return new DynamicBlockAssembly(variants);
 	}
 
 	private static JsonObject encodeBlockDrops(DynamicBlockDrops drops) {
@@ -618,7 +684,8 @@ public final class DynamicContentJson {
 				encoded.get("lightLevel").getAsInt(),
 				encoded.get("visuallyEmissive").getAsBoolean(),
 				particles,
-				encoded.get("drops") instanceof JsonObject drops ? decodeBlockDrops(drops) : DynamicBlockDrops.DEFAULT
+				encoded.get("drops") instanceof JsonObject drops ? decodeBlockDrops(drops) : DynamicBlockDrops.DEFAULT,
+				encoded.get("assembly") instanceof JsonObject assembly ? decodeBlockAssembly(assembly) : null
 		);
 	}
 
@@ -636,6 +703,23 @@ public final class DynamicContentJson {
 		encoded.addProperty("reach", item.reach());
 		encoded.addProperty("craftingUse", item.craftingUse().serializedName());
 		encoded.addProperty("fuelBurnTicks", item.fuelBurnTicks());
+		if (item.projectileWeapon() != null) {
+			DynamicProjectileWeaponSpec weapon = item.projectileWeapon();
+			JsonObject projectile = new JsonObject();
+			projectile.addProperty("mechanics", weapon.mechanics().serializedName());
+			projectile.addProperty("startUsing", weapon.startUsing());
+			projectile.addProperty("useDurationTicks", weapon.useDurationTicks());
+			projectile.addProperty("useAnimation", weapon.useAnimation().getSerializedName());
+			projectile.addProperty("useOnRelease", weapon.useOnRelease());
+			JsonArray ammunition = new JsonArray();
+			weapon.ammunition().forEach(ammunition::add);
+			projectile.add("ammunition", ammunition);
+			if (weapon.creativeDefaultAmmunition() != null) {
+				projectile.addProperty("creativeDefaultAmmunition", weapon.creativeDefaultAmmunition());
+			}
+			projectile.addProperty("durability", weapon.durability());
+			encoded.add("projectileWeapon", projectile);
+		}
 		if (item.itemType() == DynamicItemType.TOOL) {
 			encoded.addProperty("attackDamage", item.attackDamage());
 			encoded.addProperty("attackSpeed", item.attackSpeed());
@@ -695,6 +779,8 @@ public final class DynamicContentJson {
 				? DynamicCraftingUse.parse(encoded.get("craftingUse").getAsString())
 				: DynamicCraftingUse.CONSUME;
 		int fuelBurnTicks = encoded.has("fuelBurnTicks") ? encoded.get("fuelBurnTicks").getAsInt() : 0;
+		DynamicProjectileWeaponSpec projectileWeapon = encoded.get("projectileWeapon") instanceof JsonObject projectile
+				? decodeProjectileWeapon(projectile) : null;
 		JsonObject encodedFood = encoded.get("food") instanceof JsonObject value ? value
 				: encoded.get("consumable") instanceof JsonObject legacy ? legacy : null;
 		if (itemType == DynamicItemType.ITEM && encodedFood != null) itemType = DynamicItemType.FOOD;
@@ -731,7 +817,7 @@ public final class DynamicContentJson {
 			}
 			return new DynamicItemProperties(itemType, heldType, maxStack, rarity, foil, enchantability, reach,
 					DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0, 0, 0, 0,
-					food, placement, craftingUse, fuelBurnTicks);
+					food, placement, craftingUse, fuelBurnTicks, projectileWeapon);
 		}
 		return new DynamicItemProperties(
 				DynamicItemType.TOOL, heldType, 1, rarity, foil, enchantability, reach,
@@ -745,9 +831,31 @@ public final class DynamicContentJson {
 				encoded.has("damagePerAttack") ? encoded.get("damagePerAttack").getAsInt() : 2,
 				null,
 				null,
-				craftingUse,
-				fuelBurnTicks
+					craftingUse,
+					fuelBurnTicks,
+					projectileWeapon
 		);
+	}
+
+	private static DynamicProjectileWeaponSpec decodeProjectileWeapon(JsonObject encoded) {
+		List<String> ammunition = new ArrayList<>();
+		if (encoded.get("ammunition") instanceof JsonArray values) values.forEach(value -> ammunition.add(value.getAsString()));
+		String animationName = encoded.has("useAnimation") ? encoded.get("useAnimation").getAsString() : "bow";
+		ItemUseAnimation animation = null;
+		for (ItemUseAnimation candidate : ItemUseAnimation.values()) {
+			if (candidate.getSerializedName().equals(animationName)) animation = candidate;
+		}
+		if (animation == null) throw new IllegalArgumentException("Unknown projectile use animation: " + animationName);
+		return new DynamicProjectileWeaponSpec(
+				DynamicProjectileMechanics.parse(encoded.get("mechanics").getAsString()),
+				!encoded.has("startUsing") || encoded.get("startUsing").getAsBoolean(),
+				encoded.has("useDurationTicks") ? encoded.get("useDurationTicks").getAsInt() : 72_000,
+				animation,
+				encoded.has("useOnRelease") && encoded.get("useOnRelease").getAsBoolean(),
+				ammunition,
+				encoded.has("creativeDefaultAmmunition")
+						? encoded.get("creativeDefaultAmmunition").getAsString() : null,
+				encoded.has("durability") ? encoded.get("durability").getAsInt() : 0);
 	}
 
 	private static JsonObject encodeArmor(DynamicArmorProperties armor) {

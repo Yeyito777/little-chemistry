@@ -14,6 +14,7 @@ import com.yeyito.littlechemistry.crafting.AiWorkstationRecipe;
 import com.yeyito.littlechemistry.crafting.DynamicWorkstationMenu;
 import com.yeyito.littlechemistry.crafting.WorkstationOpenData;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeSignature;
+import com.yeyito.littlechemistry.particle.DynamicParticles;
 import net.fabricmc.fabric.api.menu.v1.ExtendedMenuProvider;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -55,6 +56,7 @@ import java.util.WeakHashMap;
 public final class DynamicBlockEntity extends BlockEntity implements WorldlyContainer,
 		ExtendedMenuProvider<WorkstationOpenData>, DynamicWorkstationRuntimeAccess {
 	private static final int MAX_SLOTS = DynamicWorkstationSpec.MAX_SLOTS;
+	private static final int INVENTION_PARTICLE_INTERVAL_TICKS = 8;
 	private static final int MAX_PERSISTENT_KEYS = 64;
 	private static final Codec<Map<String, Long>> LONG_STATE_CODEC =
 			Codec.unboundedMap(Codec.STRING, Codec.LONG);
@@ -65,6 +67,8 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	private static final Set<DynamicBlockEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 
 	private Identifier contentId;
+	/** North-authored local assembly coordinate; zero also represents every legacy single-cell block. */
+	private BlockPos assemblyOffset = BlockPos.ZERO;
 	private NonNullList<ItemStack> workstationItems = NonNullList.withSize(MAX_SLOTS, ItemStack.EMPTY);
 	private final Map<String, Long> persistentState = new LinkedHashMap<>();
 	private final Map<String, Integer> uiState = new LinkedHashMap<>();
@@ -77,6 +81,8 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	private boolean capturingRecipe;
 	private boolean evaluatingSlotRule;
 	private int storageOpeners;
+	private @Nullable String transientVisualState;
+	private boolean assemblyStateNeedsReconcile;
 
 	public DynamicBlockEntity(BlockPos position, BlockState state) {
 		super(DynamicContentObjects.BLOCK_ENTITY_TYPE, position, state);
@@ -87,6 +93,15 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	public Identifier contentId() {
 		return contentId;
+	}
+
+	public BlockPos assemblyOffset() { return assemblyOffset; }
+
+	void initializeAssembly(Identifier contentId, BlockPos assemblyOffset) {
+		if (contentId == null || assemblyOffset == null) throw new IllegalArgumentException("Assembly identity is required");
+		this.contentId = contentId;
+		this.assemblyOffset = assemblyOffset.immutable();
+		super.setChanged();
 	}
 
 	public DynamicContentDefinition workstationDefinition() {
@@ -120,6 +135,9 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	}
 
 	public boolean isWorkstationLocked() {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.isWorkstationLocked();
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return true;
 		if (level instanceof ServerLevel serverLevel) {
 			AiCraftingManager manager = AiCraftingManager.active();
 			return manager != null && manager.isWorkstationLocked(serverLevel, worldPosition);
@@ -155,11 +173,18 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 			level.removeBlock(position, false);
 			return;
 		}
+		if (!entity.assemblyOffset.equals(BlockPos.ZERO)) return;
+		if (entity.assemblyStateNeedsReconcile) {
+			entity.assemblyStateNeedsReconcile = false;
+			DynamicBlockAssemblyRuntime.setVariant(level, entity, entity.generatedState.get("geometry"));
+			DynamicBlockAssemblyRuntime.synchronizeVisualState(level, entity, entity.generatedState.get("visual"));
+		}
 		DynamicContentDefinition definition = entity.workstationDefinition();
 		if (definition == null) return;
 		entity.ensureWorkstationState(definition.workstation());
 		entity.refreshRecipe();
 		entity.updateAutomaticWorkstationVisual();
+		entity.emitInventionLifecycleParticles(definition);
 		if (!entity.isWorkstationLocked()) {
 			DynamicBehaviorRegistry.workstationTick(definition, entity.workstationContext());
 		}
@@ -340,12 +365,21 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public ItemStack stack(String slotId) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.stack(slotId);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return ItemStack.EMPTY;
 		int index = slotIndex(slotId);
 		return index < 0 ? ItemStack.EMPTY : workstationItems.get(index).copy();
 	}
 
 	@Override
 	public void setStack(String slotId, ItemStack stack) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) {
+			root.setStack(slotId, stack);
+			return;
+		}
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return;
 		assertRuntimeMutable();
 		int index = slotIndex(slotId);
 		if (index < 0) throw new IllegalArgumentException("Unknown workstation slot: " + slotId);
@@ -383,9 +417,27 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	public Map<String, String> generatedStateSnapshot() { return Map.copyOf(generatedState); }
 
+	public @Nullable String visualState() {
+		return transientVisualState == null ? generatedState.get("visual") : transientVisualState;
+	}
+
 	public void setGeneratedState(String key, @Nullable String value) {
+		if (level != null && !assemblyOffset.equals(BlockPos.ZERO)) {
+			DynamicBlockEntity root = DynamicBlockAssemblyRuntime.rootEntity(level, worldPosition);
+			if (root == null) throw new IllegalStateException("Generated block assembly root is unavailable");
+			root.setGeneratedState(key, value);
+			return;
+		}
 		assertRuntimeMutable();
 		if (!validRuntimeKey(key)) throw new IllegalArgumentException("Invalid generated block state key");
+		if (key.equals("geometry") && value != null) {
+			DynamicContentDefinition definition = contentId == null ? null : DynamicContentCatalog.find(contentId);
+			DynamicBlockAssembly assembly = definition == null || definition.block() == null
+					? null : definition.block().assembly();
+			if (assembly == null || assembly.variantIndex(value) < 0) {
+				throw new IllegalArgumentException("Unknown generated block assembly geometry variant: " + value);
+			}
+		}
 		if (value != null && (value.length() > 1_024 || value.indexOf('\0') >= 0)) {
 			throw new IllegalArgumentException("Generated block state values may contain at most 1024 characters");
 		}
@@ -399,7 +451,21 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		}
 		if (java.util.Objects.equals(previous, value)) return;
 		super.setChanged();
-		if (level != null) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+		if (level != null) {
+			if (key.equals("geometry")) DynamicBlockAssemblyRuntime.setVariant(level, this, value);
+			if (key.equals("visual")) DynamicBlockAssemblyRuntime.synchronizeVisualState(level, this, value);
+			level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+		}
+	}
+
+	void setMirroredVisualState(@Nullable String value) {
+		if (value == null) generatedState.remove("visual"); else generatedState.put("visual", value);
+		super.setChanged();
+	}
+
+	void setTransientVisualState(@Nullable String value) {
+		transientVisualState = value;
+		super.setChanged();
 	}
 
 	private void updateAutomaticWorkstationVisual() {
@@ -413,6 +479,31 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		boolean active = !isEmpty() || recipeStatus == WorkstationRecipeStatus.GENERATING
 				|| recipeStatus == WorkstationRecipeStatus.READY || recipeStatus == WorkstationRecipeStatus.BLOCKED;
 		setGeneratedState("visual", active ? "active" : null);
+	}
+
+	/** Mirrors the native AI crafting-table cadence while leaving the particle artwork declarative per workstation. */
+	private void emitInventionLifecycleParticles(DynamicContentDefinition definition) {
+		if (!(level instanceof ServerLevel serverLevel)
+				|| Math.floorMod(serverLevel.getGameTime() + worldPosition.asLong(),
+				INVENTION_PARTICLE_INTERVAL_TICKS) != 0) return;
+		DynamicWorkstationParticleEffect effect;
+		if (isWorkstationLocked()) {
+			effect = definition.workstation().particles().inventing();
+		} else {
+			int output = firstSlotWithRole(DynamicWorkstationSlotRole.OUTPUT);
+			if (output < 0 || workstationItems.get(output).isEmpty()) return;
+			effect = definition.workstation().particles().ready();
+		}
+		double x = worldPosition.getX() + 0.5;
+		double y = worldPosition.getY() + 1.08;
+		double z = worldPosition.getZ() + 0.5;
+		if (effect.custom()) {
+			DynamicParticles.spawn(serverLevel, definition, effect.customParticleId(), x, y, z, effect.count(),
+					effect.horizontalSpread(), effect.verticalSpread(), effect.horizontalSpread(), effect.speed());
+		} else {
+			serverLevel.sendParticles(effect.type().particle(), x, y, z, effect.count(),
+					effect.horizontalSpread(), effect.verticalSpread(), effect.horizontalSpread(), effect.speed());
+		}
 	}
 
 	@Override
@@ -440,6 +531,9 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	}
 
 	public boolean isSlotLocked(int slot) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.isSlotLocked(slot);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return true;
 		if (level instanceof ServerLevel serverLevel) {
 			AiCraftingManager manager = AiCraftingManager.active();
 			return manager != null && manager.isWorkstationSlotLocked(serverLevel, worldPosition, slot);
@@ -448,6 +542,9 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	}
 
 	public long lockedSlotMask() {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.lockedSlotMask();
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return -1L;
 		long mask = 0L;
 		Set<Integer> slots = Set.of();
 		if (level instanceof ServerLevel serverLevel) {
@@ -462,6 +559,9 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	public boolean mayUseSlot(int slot, ItemStack stack, WorkstationSlotAction action,
 			@Nullable ServerPlayer player, @Nullable Direction automationSide) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.mayUseSlot(slot, stack, action, player, automationSide);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return false;
 		DynamicContentDefinition definition = workstationDefinition();
 		DynamicWorkstationSlot specification = slotSpec(slot);
 		if (definition == null || specification == null || isSlotLocked(slot)) return false;
@@ -554,6 +654,11 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		return id != null && LittleChemistry.MOD_ID.equals(id.getNamespace()) && DynamicContentCatalog.find(id) == null;
 	}
 
+	private @Nullable DynamicBlockEntity inventoryRoot() {
+		if (assemblyOffset.equals(BlockPos.ZERO)) return this;
+		return level == null ? null : DynamicBlockAssemblyRuntime.rootEntity(level, worldPosition);
+	}
+
 	private static boolean validRuntimeKey(String key) {
 		return key != null && key.matches("[a-z][a-z0-9_]{0,63}");
 	}
@@ -589,17 +694,26 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public boolean isEmpty() {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.isEmpty();
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return true;
 		for (ItemStack stack : workstationItems) if (!stack.isEmpty()) return false;
 		return true;
 	}
 
 	@Override
 	public ItemStack getItem(int slot) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.getItem(slot);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return ItemStack.EMPTY;
 		return slot >= 0 && slot < getContainerSize() ? workstationItems.get(slot) : ItemStack.EMPTY;
 	}
 
 	@Override
 	public ItemStack removeItem(int slot, int count) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.removeItem(slot, count);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return ItemStack.EMPTY;
 		if (isSlotLocked(slot)) return ItemStack.EMPTY;
 		ItemStack removed = ContainerHelper.removeItem(workstationItems, slot, count);
 		if (!removed.isEmpty()) setChanged();
@@ -608,17 +722,26 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public ItemStack removeItemNoUpdate(int slot) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.removeItemNoUpdate(slot);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return ItemStack.EMPTY;
 		if (isSlotLocked(slot)) return ItemStack.EMPTY;
 		return ContainerHelper.takeItem(workstationItems, slot);
 	}
 
 	@Override
 	public void setItem(int slot, ItemStack stack) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) {
+			root.setItem(slot, stack);
+			return;
+		}
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return;
 		assertRuntimeMutable();
 		if (slot < 0 || slot >= getContainerSize() || isSlotLocked(slot)) return;
 		ItemStack value = stack.copy();
 		if (isStorage()) {
-			if (value.has(net.minecraft.core.component.DataComponents.CONTAINER)) return;
+			if (!canStoreInStorage(value)) return;
 			value.limitSize(value.getMaxStackSize());
 			workstationItems.set(slot, value);
 			setChanged();
@@ -634,19 +757,31 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public boolean canPlaceItem(int slot, ItemStack stack) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.canPlaceItem(slot, stack);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return false;
 		return isStorage()
-				? slot >= 0 && slot < getContainerSize() && !stack.has(net.minecraft.core.component.DataComponents.CONTAINER)
+				? slot >= 0 && slot < getContainerSize() && canStoreInStorage(stack)
 				: canAcceptAutomationStack(slot, stack);
 	}
 
 	@Override
 	public boolean stillValid(Player player) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.stillValid(player);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return false;
 		return (isWorkstation() || isStorage()) && level != null && level.getBlockEntity(worldPosition) == this
 				&& Container.stillValidBlockEntity(this, player);
 	}
 
 	@Override
 	public void clearContent() {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) {
+			root.clearContent();
+			return;
+		}
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return;
 		if (isWorkstationLocked()) return;
 		workstationItems.clear();
 		setChanged();
@@ -663,6 +798,9 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public boolean canPlaceItemThroughFace(int slot, ItemStack stack, @Nullable Direction direction) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.canPlaceItemThroughFace(slot, stack, direction);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return false;
 		if (isStorage()) return canPlaceItem(slot, stack);
 		return canAcceptAutomationStack(slot, stack)
 				&& mayUseSlot(slot, stack, WorkstationSlotAction.INSERT, null, direction);
@@ -670,18 +808,30 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 
 	@Override
 	public boolean canTakeItemThroughFace(int slot, ItemStack stack, Direction direction) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.canTakeItemThroughFace(slot, stack, direction);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return false;
 		if (isStorage()) return slot >= 0 && slot < getContainerSize();
 		return mayUseSlot(slot, stack, WorkstationSlotAction.EXTRACT, null, direction);
 	}
 
 	/** Basic capacity/identity check shared by vanilla hopper and custom Fabric transfer automation. */
 	public boolean canAcceptAutomationStack(int slot, ItemStack stack) {
+		DynamicBlockEntity root = inventoryRoot();
+		if (root != null && root != this) return root.canAcceptAutomationStack(slot, stack);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) return false;
 		DynamicWorkstationSlot specification = slotSpec(slot);
 		if (specification == null || stack == null || stack.isEmpty() || isSlotLocked(slot)) return false;
 		ItemStack existing = getItem(slot);
 		if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return false;
 		int capacity = Math.min(specification.maxStack(), stack.getMaxStackSize());
 		return stack.getCount() <= capacity - existing.getCount();
+	}
+
+	private boolean canStoreInStorage(ItemStack stack) {
+		DynamicContentDefinition definition = storageDefinition();
+		return stack.isEmpty() || definition != null && (definition.storage().acceptsContainerItems()
+				|| !stack.has(net.minecraft.core.component.DataComponents.CONTAINER));
 	}
 
 	public NonNullList<ItemStack> drainWorkstationItems() {
@@ -713,7 +863,18 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	}
 
 	private void syncTransientStorageVisual() {
-		if (level != null) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+		if (level != null) {
+			DynamicContentDefinition definition = storageDefinition();
+			if (definition != null && definition.block() != null && definition.block().assembly() != null) {
+				if (definition.block().assembly().variantIndex("open") >= 0) {
+					DynamicBlockAssemblyRuntime.setVariant(level, this,
+							storageOpeners > 0 ? "open" : generatedState.get("geometry"));
+				}
+				DynamicBlockAssemblyRuntime.synchronizeTransientVisualState(
+						level, this, storageOpeners > 0 ? "open" : null);
+			}
+			level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+		}
 	}
 
 	@Override
@@ -762,6 +923,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 		for (DynamicBlockEntity blockEntity : snapshot) {
 			if (!(blockEntity.level instanceof ServerLevel serverLevel)
 					|| serverLevel.getServer() != server || blockEntity.contentId == null
+					|| !blockEntity.assemblyOffset.equals(BlockPos.ZERO)
 					|| !LittleChemistry.MOD_ID.equals(blockEntity.contentId.getNamespace())
 					|| !names.contains(blockEntity.contentId.getPath())) continue;
 			if (!blockEntity.isEmpty()) {
@@ -771,6 +933,34 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 			if (serverLevel.removeBlock(blockEntity.worldPosition, false)) removed++;
 		}
 		return removed;
+	}
+
+	@Override
+	public void preRemoveSideEffects(BlockPos position, BlockState state) {
+		DynamicBlockEntity root = level == null ? null : DynamicBlockAssemblyRuntime.rootEntity(level, position);
+		DynamicContentDefinition definition = root == null || root.contentId == null
+				? null : DynamicContentCatalog.find(root.contentId);
+		if (level != null && root != null && definition != null && definition.block() != null
+				&& definition.block().assembly() != null && DynamicBlockAssemblyRuntime.beginRemoval()) {
+			try {
+				DynamicBlockAssemblyRuntime.removeOtherMembers(level, root, position);
+			} finally {
+				DynamicBlockAssemblyRuntime.endRemoval();
+			}
+		}
+		if (assemblyOffset.equals(BlockPos.ZERO)) {
+			super.preRemoveSideEffects(position, state);
+		} else {
+			// Recover any inventory written by an older/broken companion implementation without delegating into the root.
+			for (int slot = 0; slot < workstationItems.size(); slot++) {
+				ItemStack stack = workstationItems.get(slot);
+				if (!stack.isEmpty() && level != null) {
+					net.minecraft.world.Containers.dropItemStack(
+							level, position.getX() + 0.5, position.getY() + 0.5, position.getZ() + 0.5, stack);
+					workstationItems.set(slot, ItemStack.EMPTY);
+				}
+			}
+		}
 	}
 
 	@Override
@@ -793,6 +983,10 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	protected void loadAdditional(ValueInput input) {
 		super.loadAdditional(input);
 		contentId = input.read("content_id", Identifier.CODEC).orElse(null);
+		assemblyOffset = new BlockPos(
+				input.read("assembly_x", Codec.INT).orElse(0),
+				input.read("assembly_y", Codec.INT).orElse(0),
+				input.read("assembly_z", Codec.INT).orElse(0));
 		workstationItems = NonNullList.withSize(MAX_SLOTS, ItemStack.EMPTY);
 		ContainerHelper.loadAllItems(input, workstationItems);
 		persistentState.clear();
@@ -810,6 +1004,8 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 			generatedState.clear();
 		}
 		storageOpeners = 0;
+		transientVisualState = input.read("transient_visual", Codec.STRING).orElse(null);
+		assemblyStateNeedsReconcile = true;
 		currentRequest = null;
 		currentSignature = null;
 		currentRecipe = null;
@@ -821,6 +1017,11 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	protected void saveAdditional(ValueOutput output) {
 		super.saveAdditional(output);
 		output.storeNullable("content_id", Identifier.CODEC, contentId);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) {
+			output.store("assembly_x", Codec.INT, assemblyOffset.getX());
+			output.store("assembly_y", Codec.INT, assemblyOffset.getY());
+			output.store("assembly_z", Codec.INT, assemblyOffset.getZ());
+		}
 		if (!isEmpty()) ContainerHelper.saveAllItems(output, workstationItems);
 		if (!persistentState.isEmpty()) output.store("workstation_state", LONG_STATE_CODEC, Map.copyOf(persistentState));
 		if (!uiState.isEmpty()) output.store("workstation_ui", UI_STATE_CODEC, Map.copyOf(uiState));
@@ -831,6 +1032,7 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	protected void applyImplicitComponents(DataComponentGetter components) {
 		super.applyImplicitComponents(components);
 		contentId = components.get(DynamicContentObjects.CONTENT_ID);
+		assemblyOffset = BlockPos.ZERO;
 		setChanged();
 	}
 
@@ -849,6 +1051,12 @@ public final class DynamicBlockEntity extends BlockEntity implements WorldlyCont
 	public CompoundTag getUpdateTag(HolderLookup.Provider lookup) {
 		CompoundTag tag = new CompoundTag();
 		if (contentId != null) tag.putString("content_id", contentId.toString());
+		if (transientVisualState != null) tag.putString("transient_visual", transientVisualState);
+		if (!assemblyOffset.equals(BlockPos.ZERO)) {
+			tag.putInt("assembly_x", assemblyOffset.getX());
+			tag.putInt("assembly_y", assemblyOffset.getY());
+			tag.putInt("assembly_z", assemblyOffset.getZ());
+		}
 		if (!generatedState.isEmpty() || storageOpeners > 0) {
 			CompoundTag state = new CompoundTag();
 			generatedState.forEach(state::putString);

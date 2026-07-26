@@ -27,7 +27,8 @@ public final class SmeltingRecipeSignature {
 		if (this.ingredient.isEmpty()) throw new IllegalArgumentException("A smelting ingredient cannot be empty");
 		this.visualReferenceDigest = visualReferenceDigest == null
 				? RecipeVisualReferences.digestForStacks(java.util.List.of(this.ingredient))
-				: requireDigest(visualReferenceDigest);
+				: RecipeVisualReferences.migrateCompatibleDigestForStacks(
+						java.util.List.of(this.ingredient), requireDigest(visualReferenceDigest));
 		this.hashCode = Objects.hash(ItemStack.hashItemAndComponents(this.ingredient), this.visualReferenceDigest);
 	}
 

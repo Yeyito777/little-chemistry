@@ -58,10 +58,11 @@ final class WorkspaceGenerationVerifier {
 		}
 		Selection selection;
 		if (request.flexible()) selection = readSelection(workspace, request);
+		else if (request.fixedType() == DynamicContentType.ITEM) selection = readFixedItemSelection(workspace, request);
 		else if (request.fixedType() == DynamicContentType.BLOCK) selection = readFixedBlockSelection(workspace, request);
 		else selection = new Selection(request.fixedType(), request.fixedArmorSlot(),
 				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
-				null, new JsonObject());
+				null, request.fixedType() == DynamicContentType.ARMOR ? "armor" : "entity", new JsonObject());
 		if (selection.type() == DynamicContentType.ARMOR && selection.outputCount() != 1) {
 			throw new IllegalArgumentException("Armor recipe outputCount must be 1");
 		}
@@ -122,6 +123,10 @@ final class WorkspaceGenerationVerifier {
 		JsonObject result = readResult(workspace);
 		if (!result.has("kind") || !result.get("kind").isJsonPrimitive()
 				|| !"rejection".equals(result.get("kind").getAsString())) return null;
+		return parseRejection(result, request);
+	}
+
+	private static WorkstationRecipeRejection parseRejection(JsonObject result, GenerationRequest request) {
 		if (request.workstationPolicy() == null) {
 			throw new IllegalArgumentException("Only workstation recipes may be rejected");
 		}
@@ -136,37 +141,66 @@ final class WorkspaceGenerationVerifier {
 
 	private static Selection readFixedBlockSelection(GenerationWorkspace workspace, GenerationRequest request)
 			throws IOException {
-		JsonObject result = readResult(workspace);
-		if (!result.keySet().equals(Set.of("kind")) || !result.get("kind").isJsonPrimitive()) {
-			throw new IllegalArgumentException("Fixed block classification requires exactly one kind field set to "
-					+ "block or workstation");
+		return parseFixedBlockSelection(readResult(workspace), request);
+	}
+
+	private static Selection parseFixedBlockSelection(JsonObject result, GenerationRequest request) {
+		if (!result.keySet().equals(Set.of("kind", "capability"))
+				|| !result.get("kind").isJsonPrimitive() || !result.get("capability").isJsonPrimitive()) {
+			throw new IllegalArgumentException("Fixed block classification requires exactly kind and capability fields");
 		}
 		String kind = result.get("kind").getAsString();
+		String capability = result.get("capability").getAsString();
 		if (!kind.equals("block") && !kind.equals("workstation")) {
 			throw new IllegalArgumentException("Fixed block result kind must be block or workstation");
 		}
+		validateKindCapability(kind, capability);
 		return new Selection(DynamicContentType.BLOCK, null,
 				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
-				kind, new JsonObject());
+				kind, capability, new JsonObject());
+	}
+
+	private static Selection readFixedItemSelection(GenerationWorkspace workspace, GenerationRequest request)
+			throws IOException {
+		return parseFixedItemSelection(readResult(workspace), request);
+	}
+
+	private static Selection parseFixedItemSelection(JsonObject result, GenerationRequest request) {
+		if (!result.keySet().equals(Set.of("kind", "capability"))
+				|| !result.get("kind").isJsonPrimitive() || !result.get("capability").isJsonPrimitive()) {
+			throw new IllegalArgumentException("Fixed item classification requires exactly kind and capability fields");
+		}
+		String kind = result.get("kind").getAsString();
+		String capability = result.get("capability").getAsString();
+		if (!kind.equals("item")) throw new IllegalArgumentException("Fixed item result kind must be item");
+		validateKindCapability(kind, capability);
+		return new Selection(DynamicContentType.ITEM, null,
+				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
+				kind, capability, new JsonObject());
 	}
 
 	private static Selection readSelection(GenerationWorkspace workspace, GenerationRequest request) throws IOException {
-		JsonObject result = readResult(workspace);
+		return parseSelection(readResult(workspace), request);
+	}
+
+	private static Selection parseSelection(JsonObject result, GenerationRequest request) {
 		Set<String> allowed = request.recipeDataSchema() == null
-				? Set.of("kind", "displayName", "outputCount")
-				: Set.of("kind", "displayName", "outputCount", "recipeData");
+				? Set.of("kind", "capability", "displayName", "outputCount")
+				: Set.of("kind", "capability", "displayName", "outputCount", "recipeData");
 		for (String key : result.keySet()) {
 			if (!allowed.contains(key)) throw new IllegalArgumentException("Unknown result field: " + key);
 		}
 		String kind;
+		String capability;
 		String displayName;
 		double rawCount;
 		try {
 			kind = result.get("kind").getAsString();
+			capability = result.get("capability").getAsString();
 			displayName = DynamicContentManager.normalizeDisplayName(result.get("displayName").getAsString());
 			rawCount = result.get("outputCount").getAsDouble();
 		} catch (RuntimeException invalid) {
-			throw new IllegalArgumentException("Result requires kind, displayName, and integer outputCount", invalid);
+			throw new IllegalArgumentException("Result requires kind, capability, displayName, and integer outputCount", invalid);
 		}
 		if (!Double.isFinite(rawCount) || rawCount != Math.rint(rawCount) || rawCount < 1 || rawCount > 64) {
 			throw new IllegalArgumentException("Recipe outputCount must be an integer from 1 to 64");
@@ -184,6 +218,7 @@ final class WorkspaceGenerationVerifier {
 			case "boots" -> { type = DynamicContentType.ARMOR; slot = DynamicArmorSlot.BOOTS; }
 			default -> throw new IllegalArgumentException("Unknown recipe result kind: " + kind);
 		}
+		validateKindCapability(kind, capability);
 		if (type == DynamicContentType.ARMOR && count != 1) {
 			throw new IllegalArgumentException("Armor recipe outputCount must be 1");
 		}
@@ -200,7 +235,42 @@ final class WorkspaceGenerationVerifier {
 			}
 			new DynamicWorkstationRecipeDataSchema(request.recipeDataSchema()).validateValue(recipeData);
 		}
-		return new Selection(type, slot, displayName, count, kind, recipeData);
+		return new Selection(type, slot, displayName, count, kind, capability, recipeData);
+	}
+
+	/** Uses the exact final result schema before source mutation is unlocked and a focused contract is delivered. */
+	static ContractChoice validateContractSelection(GenerationRequest request, String encoded) {
+		JsonObject result;
+		try {
+			result = JsonParser.parseString(encoded).getAsJsonObject();
+		} catch (RuntimeException invalid) {
+			throw new IllegalArgumentException("Result selection must be a JSON object", invalid);
+		}
+		if (result.has("kind") && result.get("kind").isJsonPrimitive()
+				&& result.get("kind").getAsString().equals("rejection")) {
+			parseRejection(result, request);
+			return new ContractChoice("rejection", null);
+		}
+		Selection selection;
+		if (request.flexible()) selection = parseSelection(result, request);
+		else if (request.fixedType() == DynamicContentType.ITEM) selection = parseFixedItemSelection(result, request);
+		else if (request.fixedType() == DynamicContentType.BLOCK) selection = parseFixedBlockSelection(result, request);
+		else throw new IllegalArgumentException("Fixed armor/entity requests do not use a result selection file");
+		return new ContractChoice(selection.resultKind(), selection.capability());
+	}
+
+	private static void validateKindCapability(String kind, String capability) {
+		boolean valid = switch (kind) {
+			case "item" -> Set.of("ordinary", "storage", "projectile_weapon").contains(capability);
+			case "block" -> Set.of("ordinary", "storage").contains(capability);
+			case "workstation" -> capability.equals("workstation");
+			case "helmet", "chestplate", "leggings", "boots" -> capability.equals("armor");
+			case "entity" -> capability.equals("entity");
+			default -> false;
+		};
+		if (!valid) {
+			throw new IllegalArgumentException("Capability '" + capability + "' is not valid for result kind '" + kind + "'");
+		}
 	}
 
 	private static JsonObject readResult(GenerationWorkspace workspace) throws IOException {
@@ -242,6 +312,7 @@ final class WorkspaceGenerationVerifier {
 		};
 		if (!typeMatches) throw new IllegalArgumentException("Factory property kind does not match the requested result");
 		validateWorkstationKind(selection.resultKind(), generated.workstation() != null);
+		validateSelectedCapability(selection, generated);
 		if (generated.description().isBlank()) {
 			throw new IllegalArgumentException("Generated content requires a non-empty tooltip description");
 		}
@@ -308,13 +379,60 @@ final class WorkspaceGenerationVerifier {
 		if ((generated.item() == null || !generated.item().heldType().isNativeProjectileWeapon())
 				&& (DynamicBehaviorSource.supports(
 				behaviorSource, DynamicBehaviorCapability.PROJECTILE_CREATED)
-				|| DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_IMPACT))) {
+				|| DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_IMPACT)
+				|| DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_WEAPON_RELEASE)
+				|| DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_WEAPON_USE_TICK))) {
 			throw new IllegalArgumentException("Projectile lifecycle callbacks apply only to generated bow/crossbow items");
 		}
-		if (generated.item() != null && generated.item().heldType().isNativeProjectileWeapon()
-				&& !DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_CREATED)
-				&& !DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.PROJECTILE_IMPACT)) {
-			throw new IllegalArgumentException("Generated bows and crossbows must implement ProjectileCreatedBehavior and/or ProjectileImpactBehavior so the concept affects actual shots");
+		if (generated.item() != null && generated.item().projectileWeapon() != null
+				&& generated.item().projectileWeapon().mechanics()
+				== com.yeyito.littlechemistry.content.DynamicProjectileMechanics.CUSTOM) {
+			if (generated.item().projectileWeapon().startUsing()
+					&& !DynamicBehaviorSource.supports(behaviorSource,
+					DynamicBehaviorCapability.PROJECTILE_WEAPON_RELEASE)) {
+				throw new IllegalArgumentException("Custom charging projectile mechanics require ProjectileWeaponReleaseBehavior");
+			}
+			if (!generated.item().projectileWeapon().startUsing()
+					&& !DynamicBehaviorSource.supports(behaviorSource, DynamicBehaviorCapability.USE_AIR)) {
+				throw new IllegalArgumentException("Immediate custom projectile mechanics require UseAirBehavior");
+			}
+		}
+	}
+
+	private static void validateSelectedCapability(Selection selection, GeneratedContentSpec generated) {
+		boolean projectileWeapon = generated.item() != null
+				&& generated.item().heldType().isNativeProjectileWeapon();
+		switch (selection.capability()) {
+			case "ordinary" -> {
+				if (generated.storage() != null || projectileWeapon) {
+					throw new IllegalArgumentException(
+							"Ordinary capability cannot produce native storage or a bow/crossbow carrier");
+				}
+			}
+			case "storage" -> {
+				if (generated.storage() == null) {
+					throw new IllegalArgumentException("Storage capability requires a non-null DynamicStorageSpec");
+				}
+				if (projectileWeapon) {
+					throw new IllegalArgumentException("Storage capability cannot also use a native projectile-weapon carrier");
+				}
+			}
+			case "projectile_weapon" -> {
+				if (!projectileWeapon) {
+					throw new IllegalArgumentException(
+							"Projectile-weapon capability requires item heldType BOW or CROSSBOW");
+				}
+				if (generated.storage() != null) {
+					throw new IllegalArgumentException("Projectile-weapon capability cannot also use native storage");
+				}
+			}
+			case "workstation" -> {
+				if (generated.workstation() == null) {
+					throw new IllegalArgumentException("Workstation capability requires a non-null DynamicWorkstationSpec");
+				}
+			}
+			case "armor", "entity" -> { }
+			default -> throw new IllegalArgumentException("Unknown selected capability: " + selection.capability());
 		}
 	}
 
@@ -353,6 +471,10 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	static void validateWorkstationDesign(com.yeyito.littlechemistry.content.DynamicWorkstationSpec workstation) {
+		if (workstation.particles().isLegacyFallback()) {
+			throw new IllegalArgumentException("New workstations must explicitly author distinct invention-in-progress and "
+					+ "result-ready lifecycle particles instead of relying on the legacy crafting-table fallback");
+		}
 		if (!workstation.processDescription().toLowerCase(java.util.Locale.ROOT).contains("tick")) {
 			throw new IllegalArgumentException("Workstation process description must express timing in Minecraft ticks");
 		}
@@ -412,7 +534,8 @@ final class WorkspaceGenerationVerifier {
 		if (type == DynamicContentType.BLOCK) return true;
 		return switch (capability) {
 			case USE_AIR, USE_ON_BLOCK, INTERACT_LIVING_ENTITY, INVENTORY_TICK, POST_HURT_ENEMY,
-					MINE_BLOCK, FINISH_USING, CRAFTED, PROJECTILE_CREATED, PROJECTILE_IMPACT -> true;
+					MINE_BLOCK, FINISH_USING, CRAFTED, PROJECTILE_CREATED, PROJECTILE_IMPACT,
+					PROJECTILE_WEAPON_RELEASE, PROJECTILE_WEAPON_USE_TICK -> true;
 			default -> false;
 		};
 	}
@@ -572,7 +695,7 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	private record Selection(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
-			int outputCount, String resultKind, JsonObject recipeData) {
+			int outputCount, String resultKind, String capability, JsonObject recipeData) {
 		private Selection {
 			recipeData = recipeData == null ? new JsonObject() : recipeData.deepCopy();
 		}
@@ -591,5 +714,8 @@ final class WorkspaceGenerationVerifier {
 		}
 
 		@Override public JsonObject recipeData() { return recipeData.deepCopy(); }
+	}
+
+	record ContractChoice(String kind, String capability) {
 	}
 }

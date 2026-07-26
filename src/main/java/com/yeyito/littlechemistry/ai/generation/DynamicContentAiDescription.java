@@ -107,8 +107,9 @@ public final class DynamicContentAiDescription {
 			result.addProperty("isWorkstation", definition.workstation() != null);
 			if (definition.storage() != null) {
 				JsonObject storage = new JsonObject();
-				storage.addProperty("rows", definition.storage().rows());
-				storage.addProperty("slots", definition.storage().slots());
+					storage.addProperty("rows", definition.storage().rows());
+					storage.addProperty("slots", definition.storage().slots());
+					storage.addProperty("acceptsContainerItems", definition.storage().acceptsContainerItems());
 				result.add("storage", storage);
 			}
 		if (definition.workstation() != null) {
@@ -146,6 +147,12 @@ public final class DynamicContentAiDescription {
 		result.addProperty("redstonePower", block.redstonePower());
 		result.addProperty("comparatorPower", block.comparatorPower());
 		result.addProperty("lightLevel", block.lightLevel());
+		if (block.assembly() != null) {
+			result.addProperty("assemblyCells", block.assembly().initialVariant().cells().size());
+			JsonArray variants = new JsonArray();
+			block.assembly().variants().forEach(variant -> variants.add(variant.id()));
+			result.add("assemblyVariants", variants);
+		}
 		result.addProperty("visuallyEmissive", block.visuallyEmissive());
 		JsonObject drops = new JsonObject();
 		JsonArray dropEntries = new JsonArray();

@@ -13,6 +13,8 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
 
@@ -21,6 +23,7 @@ import java.util.List;
 
 /** Generic declarative screen used by every AI-defined workstation. */
 public final class DynamicWorkstationScreen extends AbstractContainerScreen<DynamicWorkstationMenu> {
+	static final Identifier SLOT_SPRITE = Identifier.withDefaultNamespace("container/slot");
 	private final List<ButtonBinding> generatedButtons = new ArrayList<>();
 
 	public DynamicWorkstationScreen(DynamicWorkstationMenu menu, Inventory inventory, Component title) {
@@ -65,8 +68,7 @@ public final class DynamicWorkstationScreen extends AbstractContainerScreen<Dyna
 			if (!slot.isActive()) continue;
 			int x = leftPos + slot.x;
 			int y = topPos + slot.y;
-			graphics.fill(x - 1, y - 1, x + 17, y + 17, 0xFF202020);
-			graphics.outline(x - 1, y - 1, 18, 18, 0xFFB8B8B8);
+			graphics.blitSprite(RenderPipelines.GUI_TEXTURED, SLOT_SPRITE, x - 1, y - 1, 18, 18);
 		}
 		for (DynamicWorkstationGauge gauge : ui.gauges()) {
 			drawGauge(graphics, gauge);

@@ -16,13 +16,15 @@ final class DynamicItemStorageContainer implements Container {
 	private final ServerPlayer player;
 	private final UUID storageId;
 	private final int carrierInventorySlot;
+	private final boolean acceptsContainerItems;
 	private final NonNullList<ItemStack> items;
 
-	DynamicItemStorageContainer(ServerPlayer player, UUID storageId, int carrierInventorySlot, int slots) {
+	DynamicItemStorageContainer(ServerPlayer player, UUID storageId, int carrierInventorySlot, DynamicStorageSpec storage) {
 		this.player = player;
 		this.storageId = storageId;
 		this.carrierInventorySlot = carrierInventorySlot;
-		this.items = NonNullList.withSize(slots, ItemStack.EMPTY);
+		this.acceptsContainerItems = storage.acceptsContainerItems();
+		this.items = NonNullList.withSize(storage.slots(), ItemStack.EMPTY);
 		liveCarrier().getOrDefault(DataComponents.CONTAINER, ItemContainerContents.EMPTY).copyInto(items);
 	}
 
@@ -62,7 +64,7 @@ final class DynamicItemStorageContainer implements Container {
 	private boolean mayStore(ItemStack stack) {
 		// Container-bearing items are rejected generally, not only by ID, so generated storage cannot nest itself or
 		// another portable inventory and create recursive/oversized component trees.
-		return stack.isEmpty() || !stack.has(DataComponents.CONTAINER);
+		return stack.isEmpty() || acceptsContainerItems || !stack.has(DataComponents.CONTAINER);
 	}
 
 	private ItemStack liveCarrier() {

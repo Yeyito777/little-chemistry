@@ -220,6 +220,7 @@ public record DynamicContentDefinition(
 				}
 				if (blockModel != null) {
 					blockModel.validateFor(block.shape());
+					if (block.assembly() != null) block.assembly().validateTextures(blockModel);
 					DynamicBlockTexture primary = blockModel.particleTextureAsset();
 					if (!primary.hash().equals(textureHash) || !primary.texture().equals(texture)) {
 						throw new IllegalArgumentException("Block primary texture must match its model particle texture");
@@ -278,8 +279,9 @@ public record DynamicContentDefinition(
 				com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability.WORKSTATION_TICK)) {
 			throw new IllegalArgumentException("Dynamic workstations must implement WorkstationTickBehavior");
 		}
-		DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
-	}
+			DynamicParticleDefinition.validateAmbientEmitters(block, customParticles);
+			DynamicParticleDefinition.validateWorkstationParticles(workstation, customParticles);
+		}
 
 	public String idPath() {
 		return name;

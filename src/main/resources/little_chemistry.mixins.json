@@ -12,6 +12,7 @@
     "FuelValuesMixin",
     "ItemCooldownsMixin",
     "PistonStructureResolverMixin",
+    "PlayerProjectileMixin",
     "ProjectileMixin",
     "RecipeManagerMixin",
     "ServerGamePacketListenerMixin",

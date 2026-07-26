@@ -4,9 +4,17 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorSource;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemUseAnimation;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.Rarity;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -14,6 +22,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -23,7 +32,19 @@ final class DynamicProjectileCarrierTest {
 			        com.yeyito.littlechemistry.behavior.DynamicBehavior {
 			    public GeneratedBehaviorImpl() {}
 			}
-			""";
+				""";
+
+	@BeforeAll
+	static void bootstrapMinecraftRegistries() {
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
+		for (net.minecraft.world.item.Item item : List.of(Items.ARROW, Items.FIREWORK_ROCKET, Items.STONE)) {
+			if (!item.builtInRegistryHolder().areComponentsBound()) {
+				item.builtInRegistryHolder().bindComponents(
+						DataComponentMap.builder().set(DataComponents.MAX_STACK_SIZE, 64).build());
+			}
+		}
+	}
 
 	@Test
 	void projectileCarrierIdsUseNativeMinecraftClasses() {
@@ -57,20 +78,70 @@ final class DynamicProjectileCarrierTest {
 				      com.yeyito.littlechemistry.content.DynamicContentDefinition definition) {}
 				}
 				""";
-
 		assertTrue(DynamicBehaviorSource.supports(source, DynamicBehaviorCapability.PROJECTILE_CREATED));
 		assertTrue(DynamicBehaviorSource.supports(source, DynamicBehaviorCapability.PROJECTILE_IMPACT));
 	}
 
 	@Test
-	void newlyGeneratedProjectileWeaponsMustBeUnstackable() {
-		DynamicItemProperties stackableBow = projectileProperties(DynamicHeldType.BOW, 64);
+	void customUseAndReleaseCapabilitiesAreDiscoverableFromSource() {
+		String source = """
+				public final class GeneratedBehaviorImpl implements
+				    com.yeyito.littlechemistry.behavior.ProjectileWeaponReleaseBehavior,
+				    com.yeyito.littlechemistry.behavior.ProjectileWeaponUseTickBehavior {
+				  public boolean projectileWeaponRelease(
+				      com.yeyito.littlechemistry.behavior.DynamicProjectileWeaponContext context) { return true; }
+				  public void projectileWeaponUseTick(
+				      com.yeyito.littlechemistry.behavior.DynamicProjectileWeaponContext context) {}
+				}
+				""";
+		assertTrue(DynamicBehaviorSource.supports(source, DynamicBehaviorCapability.PROJECTILE_WEAPON_RELEASE));
+		assertTrue(DynamicBehaviorSource.supports(source, DynamicBehaviorCapability.PROJECTILE_WEAPON_USE_TICK));
+	}
 
-		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-				() -> new GeneratedContentSpec(texture(), null, stackableBow, null, null,
-						MARKER_BEHAVIOR, null, DynamicRarity.COMMON, "A test bow.", List.of(), null, null, null));
+	@Test
+	void generatedCrossbowsSelectNativeFireworksFromInventoryAsWellAsArrows() {
+		var ammunition = DynamicProjectileCarrierHooks.crossbowAmmunition();
 
-		assertTrue(failure.getMessage().contains("maxStack 1 and positive enchantability"));
+		assertTrue(ammunition.test(new ItemStack(Items.ARROW)));
+		assertTrue(ammunition.test(new ItemStack(Items.FIREWORK_ROCKET)));
+		assertFalse(ammunition.test(new ItemStack(Items.STONE)));
+		assertTrue(java.util.Arrays.stream(DynamicCrossbowCarrierItem.class.getDeclaredMethods())
+				.anyMatch(method -> method.getName().equals("getAllSupportedProjectiles")));
+	}
+
+	@Test
+	void projectileContextExposesComposableReplacementAndFireworkPaths() throws Exception {
+		assertEquals(net.minecraft.world.entity.projectile.Projectile.class,
+				com.yeyito.littlechemistry.behavior.DynamicProjectileContext.class
+						.getMethod("replacement", net.minecraft.world.entity.projectile.Projectile.class).getReturnType());
+		assertEquals(net.minecraft.world.entity.projectile.FireworkRocketEntity.class,
+				com.yeyito.littlechemistry.behavior.DynamicProjectileContext.class
+						.getMethod("firework").getReturnType());
+		assertEquals(net.minecraft.world.entity.projectile.FireworkRocketEntity.class,
+				com.yeyito.littlechemistry.behavior.DynamicProjectileContext.class
+						.getMethod("firework", ItemStack.class).getReturnType());
+	}
+
+	@Test
+	void projectileDefaultsDoNotPreventIntentionalCustomMechanics() {
+		DynamicProjectileWeaponSpec custom = new DynamicProjectileWeaponSpec(
+				DynamicProjectileMechanics.CUSTOM, true, 36, ItemUseAnimation.SPEAR, true,
+				List.of("minecraft:firework_rocket", "minecraft:arrow", "#minecraft:arrows", "dynamic:flower_charge"),
+				"minecraft:firework_rocket", 912);
+		DynamicItemProperties item = new DynamicItemProperties(
+				DynamicItemType.ITEM, DynamicHeldType.BOW, 1, Rarity.COMMON, false, 0, 0.0,
+				DynamicTool.NONE, DynamicBreakingPower.NONE, 1.0F, 0.0, 4.0,
+				0, 0, 0, null, null, DynamicCraftingUse.CONSUME, 0, custom);
+
+		assertEquals(DynamicProjectileMechanics.CUSTOM, item.projectileWeapon().mechanics());
+		assertTrue(item.projectileWeapon().matchesAmmunition(new ItemStack(Items.FIREWORK_ROCKET)));
+		assertTrue(item.projectileWeapon().matchesAmmunition(new ItemStack(Items.ARROW)));
+		assertFalse(item.projectileWeapon().matchesAmmunition(new ItemStack(Items.STONE)));
+		assertEquals(912, item.projectileWeapon().durability());
+		assertTrue(java.util.Arrays.stream(DynamicBowCarrierItem.class.getDeclaredMethods())
+				.anyMatch(method -> method.getName().equals("releaseUsing")));
+		assertTrue(java.util.Arrays.stream(DynamicBowCarrierItem.class.getDeclaredMethods())
+				.anyMatch(method -> method.getName().equals("onUseTick")));
 	}
 
 	@Test
