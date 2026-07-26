@@ -9,6 +9,9 @@ import java.util.List;
  * here; duplicating them into the system prompt or initial query dilutes the recipe and its visual references.</p>
  */
 final class GenerationContracts {
+	static final String OPTIONAL_PARTICLES_DIRECTION = "If the selected interaction genuinely warrants distinct particle "
+			+ "artwork, read `reference/contracts/particles.md`; otherwise use an appropriate vanilla particle or none.";
+
 	static final String API_INDEX = """
 			# Generated Java API index
 
@@ -35,7 +38,8 @@ final class GenerationContracts {
 			message. Search `reference/vanilla/TEXTURES.txt` and call `read_texture` only for additional relevant inspiration.
 
 			Focused contracts are under `reference/contracts/`: `item.md`, `block.md`, `armor.md`, `entity.md`,
-			`workstation.md`, `projectile-weapon.md`, and `storage.md`.
+			`workstation.md`, `projectile-weapon.md`, and `storage.md`. `particles.md` is an optional cross-cutting contract;
+			read it only when the selected interaction genuinely warrants distinct authored particle artwork.
 			""";
 
 	private static final Contract ITEM = new Contract("reference/contracts/item.md", """
@@ -173,6 +177,25 @@ final class GenerationContracts {
 				`DynamicBlockAssembly`; inspect its three record sources.
 			""");
 
+	private static final Contract PARTICLES = new Contract("reference/contracts/particles.md", """
+			# Optional custom-particle contract
+
+			Particles support a real interaction; they never replace the gameplay the recipe promises. Prefer an appropriate
+			vanilla particle when one already communicates the effect. Define custom particles only when distinct authored pixel
+			art or animation materially expresses the concept.
+
+			Attach the bounded library through `GeneratedContentBuilder.particles(List<DynamicParticleDefinition>)`. Author each
+			`DynamicParticleFrame` with the same textual RRGGBBAA palette/rows representation as every generated texture;
+			`GeneratedContentApi.particleFrame(...)` computes the exact hash. Read `DynamicParticleDefinition` and
+			`DynamicParticleFrame` source for the current limits and motion/render fields.
+
+			Emit custom particles only from server behavior through the budgeted `DynamicParticles.spawn(...)` API, passing the
+			live context definition and a literal local particle ID declared by the generated content. Choose bounded event-driven
+			bursts or restrained cadence; do not hand-roll particle packets or substitute ambient spam for meaningful behavior.
+			Blocks may also reference `custom:<id>` from `DynamicParticleEmitter`, and workstation lifecycle effects may reference
+			`custom:<id>` from `DynamicWorkstationParticles`.
+			""");
+
 	private static final Contract REJECTION = new Contract("reference/contracts/rejection.md", """
 			# Workstation recipe rejection
 
@@ -183,7 +206,7 @@ final class GenerationContracts {
 	}
 
 	static List<Contract> documents() {
-		return List.of(ITEM, BLOCK, ARMOR, ENTITY, WORKSTATION, PROJECTILE, STORAGE, REJECTION);
+		return List.of(ITEM, BLOCK, ARMOR, ENTITY, WORKSTATION, PROJECTILE, STORAGE, PARTICLES, REJECTION);
 	}
 
 	static Contract contractForResult(GenerationRequest request, String encoded) {

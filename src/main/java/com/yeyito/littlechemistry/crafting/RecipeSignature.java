@@ -66,6 +66,15 @@ public final class RecipeSignature {
 		return equals(candidate) || equals(candidate == null ? null : candidate.mirrored());
 	}
 
+	boolean matchesDirect(CraftingInput input) {
+		CraftingInput normalized = CraftingInput.ofPositioned(input.width(), input.height(), input.items()).input();
+		if (normalized.width() != width || normalized.height() != height) return false;
+		for (int slot = 0; slot < ingredients.size(); slot++) {
+			if (!RecipeIngredient.matches(ingredients.get(slot), normalized.getItem(slot))) return false;
+		}
+		return true;
+	}
+
 	static boolean matchesIngredient(ItemStack expected, ItemStack candidate) {
 		return RecipeIngredient.matches(expected, candidate);
 	}
@@ -125,6 +134,12 @@ public final class RecipeSignature {
 			cell.addProperty("x", slot % width);
 			cell.addProperty("y", slot / width);
 			RecipeIngredient.describe(stack, cell, contentManager, dynamicIngredients);
+			if (!stack.isEmpty()) {
+				cell.addProperty("damageable", stack.isDamageableItem());
+				CraftingIngredientUse defaultUse = CraftingIngredientUse.defaultFor(stack);
+				cell.addProperty("defaultIngredientUse", defaultUse == CraftingIngredientUse.DEFAULT
+						? "native_remainder" : defaultUse.serializedName());
+			}
 			grid.add(cell);
 		}
 		context.add("grid", grid);

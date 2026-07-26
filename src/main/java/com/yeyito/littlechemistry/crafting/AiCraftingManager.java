@@ -86,7 +86,7 @@ import java.util.concurrent.Future;
 /** Owns physical and portable crafting grids, persistent AI recipes, and active recipe jobs. */
 public final class AiCraftingManager {
 	private static final int TABLES_FORMAT = 2;
-	private static final int RECIPES_FORMAT = 6;
+	private static final int RECIPES_FORMAT = 7;
 	// This is the canonical server-wide limit for concurrent crafts of every supported kind.
 	private static final int MAX_ACTIVE_JOBS = 32;
 	private static final int PARTICLE_INTERVAL_TICKS = 8;
@@ -754,7 +754,7 @@ public final class AiCraftingManager {
 			createdDefinition = generated.armorSlot() == null
 					? contentManager.createGenerated(generated.type(), displayName, generated.content())
 					: contentManager.createGenerated(generated.type(), generated.armorSlot(), displayName, generated.content());
-			installRecipe(job.signature, createdDefinition.name(), generated.outputCount());
+			installRecipe(job.signature, createdDefinition.name(), generated.outputCount(), generated.ingredientUses());
 			finishRecipeTransactionQuietly(recipeTransaction);
 			recipeTransaction = null;
 			String quantity = generated.outputCount() == 1 ? "" : generated.outputCount() + " × ";
@@ -819,9 +819,10 @@ public final class AiCraftingManager {
 		}
 	}
 
-	private void installRecipe(RecipeSignature signature, String outputName, int outputCount) throws IOException {
+	private void installRecipe(RecipeSignature signature, String outputName, int outputCount,
+			List<CraftingIngredientUse> ingredientUses) throws IOException {
 		Map<RecipeSignature, AiCraftingRecipe> updated = new LinkedHashMap<>(recipes);
-		AiCraftingRecipe installed = new AiCraftingRecipe(signature, outputName, outputCount);
+		AiCraftingRecipe installed = new AiCraftingRecipe(signature, outputName, outputCount, ingredientUses);
 		updated.put(signature, installed);
 		saveRecipes(updated, smeltingRecipes);
 		recipes.clear();
@@ -1321,7 +1322,27 @@ public final class AiCraftingManager {
 					if (visualDigest != null && !visualDigest.equals(signature.visualReferenceDigest())) {
 						recipesNeedRewrite = true;
 					}
-					recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount));
+					List<CraftingIngredientUse> ingredientUses = List.of();
+					if (format >= 7) {
+						JsonArray encodedUses = encoded.getAsJsonArray("ingredientUses");
+						if (encodedUses == null || encodedUses.size() != ingredients.size()) {
+							throw new IOException("Invalid AI crafting ingredient uses");
+						}
+						List<CraftingIngredientUse> decodedUses = new ArrayList<>(encodedUses.size());
+						for (JsonElement use : encodedUses) {
+							try {
+								decodedUses.add(CraftingIngredientUse.parse(use.getAsString()));
+							} catch (RuntimeException invalid) {
+								throw new IOException("Invalid AI crafting ingredient use", invalid);
+							}
+						}
+						ingredientUses = List.copyOf(decodedUses);
+					}
+					try {
+						recipes.put(signature, new AiCraftingRecipe(signature, output, outputCount, ingredientUses));
+					} catch (IllegalArgumentException invalid) {
+						throw new IOException("Invalid AI crafting ingredient uses", invalid);
+					}
 				}
 				case "smelting" -> {
 					JsonElement encodedIngredient = encoded.get("ingredient");
@@ -1621,6 +1642,11 @@ public final class AiCraftingManager {
 				ingredients.add(ItemStack.OPTIONAL_CODEC.encodeStart(ops, ingredient).getOrThrow(IOException::new));
 			}
 			encoded.add("ingredients", ingredients);
+			JsonArray ingredientUses = new JsonArray();
+			for (CraftingIngredientUse use : recipe.ingredientUses()) {
+				ingredientUses.add(use.serializedName());
+			}
+			encoded.add("ingredientUses", ingredientUses);
 			encoded.addProperty("output", recipe.outputName());
 			encoded.addProperty("outputCount", recipe.outputCount());
 			encodedRecipes.add(encoded);

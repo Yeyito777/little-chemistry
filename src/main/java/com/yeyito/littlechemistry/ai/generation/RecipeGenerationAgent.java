@@ -5,9 +5,11 @@ import com.yeyito.littlechemistry.ai.OpenAiClient;
 import com.yeyito.littlechemistry.content.DynamicArmorSlot;
 import com.yeyito.littlechemistry.content.DynamicContentType;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
+import com.yeyito.littlechemistry.crafting.CraftingIngredientUse;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 
 import java.io.IOException;
+import java.util.List;
 
 /** Generates recipe choice, process data, content source, visuals, and behavior in one generalist workspace pass. */
 public final class RecipeGenerationAgent {
@@ -38,34 +40,41 @@ public final class RecipeGenerationAgent {
 			WorkspaceGenerationVerifier.VerifiedGeneration generated = new ContentGenerationAgent(openAi)
 					.generateRecipe(recipeContext, workstationPolicy, recipeDataSchema, conversationExporter);
 			return new GeneratedRecipe(generated.type(), generated.armorSlot(), generated.displayName(),
-					generated.outputCount(), generated.recipeData(), generated.content());
+					generated.outputCount(), generated.ingredientUses(), generated.recipeData(), generated.content());
 		} catch (RecipeRejectedException rejected) {
 			return GeneratedRecipe.rejected(rejected.rejection());
 		}
 	}
 
 	public record GeneratedRecipe(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
-			int outputCount, JsonObject recipeData, GeneratedContentSpec content,
+			int outputCount, List<CraftingIngredientUse> ingredientUses, JsonObject recipeData, GeneratedContentSpec content,
 			WorkstationRecipeRejection rejection) {
 		public GeneratedRecipe(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
 				int outputCount, JsonObject recipeData, GeneratedContentSpec content) {
-			this(type, armorSlot, displayName, outputCount, recipeData, content, null);
+			this(type, armorSlot, displayName, outputCount, List.of(), recipeData, content, null);
+		}
+
+		public GeneratedRecipe(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
+				int outputCount, List<CraftingIngredientUse> ingredientUses, JsonObject recipeData,
+				GeneratedContentSpec content) {
+			this(type, armorSlot, displayName, outputCount, ingredientUses, recipeData, content, null);
 		}
 
 		public GeneratedRecipe {
+			ingredientUses = ingredientUses == null ? List.of() : List.copyOf(ingredientUses);
 			recipeData = recipeData == null ? new JsonObject() : recipeData.deepCopy();
 			if (rejection == null) {
 				if (type == null || displayName == null || content == null || outputCount < 1) {
 					throw new IllegalArgumentException("Successful generated recipe is incomplete");
 				}
 			} else if (type != null || armorSlot != null || displayName != null || content != null || outputCount != 0
-					|| !recipeData.isEmpty()) {
+					|| !ingredientUses.isEmpty() || !recipeData.isEmpty()) {
 				throw new IllegalArgumentException("Rejected recipe cannot also contain generated content");
 			}
 		}
 
 		static GeneratedRecipe rejected(WorkstationRecipeRejection rejection) {
-			return new GeneratedRecipe(null, null, null, 0, new JsonObject(), null, rejection);
+			return new GeneratedRecipe(null, null, null, 0, List.of(), new JsonObject(), null, rejection);
 		}
 
 		public boolean isRejected() {

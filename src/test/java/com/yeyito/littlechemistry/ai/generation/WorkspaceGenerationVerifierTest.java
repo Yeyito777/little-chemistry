@@ -16,6 +16,7 @@ import com.yeyito.littlechemistry.content.DynamicWorkstationSlot;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlotRole;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSpec;
 import com.yeyito.littlechemistry.content.DynamicWorkstationUi;
+import com.yeyito.littlechemistry.crafting.CraftingIngredientUse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -93,6 +94,49 @@ final class WorkspaceGenerationVerifierTest {
 
 			assertTrue(failure.getMessage().contains("output capacity 8"));
 		}
+	}
+
+	@Test
+	void craftingResultCarriesSparseUtilityUsesIntoTheInstalledRecipe() throws Exception {
+		try (GenerationWorkspace workspace = itemWorkspace(64)) {
+			Files.writeString(workspace.root().resolve(".littlechemistry/result.json"), """
+					{"kind":"item","capability":"ordinary","displayName":"Prismatic Dust","outputCount":1,
+					 "ingredientUses":{"0":"damage","1":"keep"}}
+					""");
+			var context = JsonParser.parseString("""
+					{"recipeType":"crafting","width":2,"height":1,"grid":[
+					 {"slot":0,"itemId":"minecraft:shears","damageable":true,"defaultIngredientUse":"consume"},
+					 {"slot":1,"itemId":"minecraft:string","damageable":false,"defaultIngredientUse":"consume"}]}
+					""").getAsJsonObject();
+
+			var verified = WorkspaceGenerationVerifier.verify(
+					workspace, GenerationRequest.recipe(context, null, null));
+
+			assertEquals(List.of(CraftingIngredientUse.DAMAGE, CraftingIngredientUse.KEEP),
+					verified.ingredientUses());
+		}
+	}
+
+	@Test
+	void craftingSelectionRequiresUseMapAndRejectsDamageForNonDamageableIngredients() {
+		var context = JsonParser.parseString("""
+				{"recipeType":"crafting","width":1,"height":1,"grid":[
+				 {"slot":0,"itemId":"minecraft:string","damageable":false,"defaultIngredientUse":"consume"}]}
+				""").getAsJsonObject();
+		GenerationRequest request = GenerationRequest.recipe(context, null, null);
+
+		IllegalArgumentException missing = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateContractSelection(request,
+						"{\"kind\":\"item\",\"capability\":\"ordinary\","
+								+ "\"displayName\":\"Thread Charm\",\"outputCount\":1}"));
+		assertTrue(missing.getMessage().contains("requires object ingredientUses"));
+
+		IllegalArgumentException invalid = assertThrows(IllegalArgumentException.class,
+				() -> WorkspaceGenerationVerifier.validateContractSelection(request,
+						"{\"kind\":\"item\",\"capability\":\"ordinary\","
+								+ "\"displayName\":\"Thread Charm\",\"outputCount\":1,"
+								+ "\"ingredientUses\":{\"0\":\"damage\"}}"));
+		assertTrue(invalid.getMessage().contains("not damageable"));
 	}
 
 	@Test

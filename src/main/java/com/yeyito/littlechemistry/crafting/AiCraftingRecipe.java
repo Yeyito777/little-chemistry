@@ -3,7 +3,6 @@ package com.yeyito.littlechemistry.crafting;
 import com.yeyito.littlechemistry.content.DynamicContentCatalog;
 import com.yeyito.littlechemistry.content.DynamicContentDefinition;
 import com.yeyito.littlechemistry.content.DynamicContentObjects;
-import com.yeyito.littlechemistry.content.DynamicCraftingUse;
 import net.fabricmc.fabric.api.recipe.v1.ingredient.DefaultCustomIngredients;
 import net.minecraft.core.NonNullList;
 import net.minecraft.world.item.ItemStack;
@@ -29,15 +28,44 @@ final class AiCraftingRecipe implements CraftingRecipe {
 	private final RecipeSignature signature;
 	private final String outputName;
 	private final int outputCount;
+	private final List<CraftingIngredientUse> ingredientUses;
 	private final PlacementInfo placementInfo;
 
 	AiCraftingRecipe(RecipeSignature signature, String outputName, int outputCount) {
+		this(signature, outputName, outputCount, List.of());
+	}
+
+	AiCraftingRecipe(RecipeSignature signature, String outputName, int outputCount,
+			List<CraftingIngredientUse> ingredientUses) {
 		if (outputCount < 1 || outputCount > 64) {
 			throw new IllegalArgumentException("AI recipe output count must be between 1 and 64");
 		}
 		this.signature = signature;
 		this.outputName = outputName;
 		this.outputCount = outputCount;
+		List<ItemStack> signatureIngredients = signature.ingredients();
+		if (ingredientUses == null || ingredientUses.isEmpty()) {
+			this.ingredientUses = CraftingIngredientUse.resolvedDefaults(signatureIngredients);
+		} else {
+			if (ingredientUses.size() != signatureIngredients.size()) {
+				throw new IllegalArgumentException("Crafting ingredient uses must match the recipe grid");
+			}
+			List<CraftingIngredientUse> resolved = new ArrayList<>(ingredientUses.size());
+			for (int slot = 0; slot < ingredientUses.size(); slot++) {
+				CraftingIngredientUse use = ingredientUses.get(slot);
+				if (use == null) throw new IllegalArgumentException("Crafting ingredient use is required");
+				ItemStack ingredient = signatureIngredients.get(slot);
+				if (ingredient.isEmpty() && use != CraftingIngredientUse.DEFAULT) {
+					throw new IllegalArgumentException("Empty crafting slots cannot declare an ingredient use");
+				}
+				if (use == CraftingIngredientUse.DAMAGE && !ingredient.isDamageableItem()) {
+					throw new IllegalArgumentException("Only damageable crafting ingredients may lose durability");
+				}
+				resolved.add(use == CraftingIngredientUse.DEFAULT
+						? CraftingIngredientUse.defaultFor(ingredient) : use);
+			}
+			this.ingredientUses = List.copyOf(resolved);
+		}
 		List<Optional<Ingredient>> ingredients = new ArrayList<>(signature.ingredients().size());
 		for (ItemStack ingredient : signature.ingredients()) {
 			ingredients.add(ingredient.isEmpty() ? Optional.empty() : Optional.of(exactIngredient(ingredient)));
@@ -57,6 +85,10 @@ final class AiCraftingRecipe implements CraftingRecipe {
 		return outputCount;
 	}
 
+	List<CraftingIngredientUse> ingredientUses() {
+		return ingredientUses;
+	}
+
 	boolean outputAvailable() {
 		return !outputStack().isEmpty();
 	}
@@ -74,18 +106,23 @@ final class AiCraftingRecipe implements CraftingRecipe {
 	@Override
 	public NonNullList<ItemStack> getRemainingItems(CraftingInput input) {
 		NonNullList<ItemStack> remainders = CraftingRecipe.defaultCraftingReminder(input);
+		if (input.isEmpty()) return remainders;
+		List<CraftingIngredientUse> uses = signature.matchesDirect(input)
+				? ingredientUses : mirroredUses();
 		for (int slot = 0; slot < input.size(); slot++) {
 			ItemStack ingredient = input.getItem(slot);
-			DynamicContentDefinition definition = DynamicContentObjects.definition(ingredient);
-			if (definition != null && definition.item() != null) {
-				remainders.set(slot, craftingRemainder(ingredient, definition.item().craftingUse()));
+			CraftingIngredientUse use = uses.get(slot);
+			if (use != CraftingIngredientUse.DEFAULT) {
+				remainders.set(slot, craftingRemainder(ingredient, use));
 			}
 		}
 		return remainders;
 	}
 
-	static ItemStack craftingRemainder(ItemStack ingredient, DynamicCraftingUse craftingUse) {
+	static ItemStack craftingRemainder(ItemStack ingredient, CraftingIngredientUse craftingUse) {
 		return switch (craftingUse) {
+			case DEFAULT -> ingredient.getItem().getCraftingRemainder() == null ? ItemStack.EMPTY
+					: ingredient.getItem().getCraftingRemainder().create();
 			case CONSUME -> ItemStack.EMPTY;
 			case KEEP -> ingredient.copyWithCount(1);
 			case DAMAGE -> {
@@ -95,6 +132,16 @@ final class AiCraftingRecipe implements CraftingRecipe {
 				yield remainder;
 			}
 		};
+	}
+
+	private List<CraftingIngredientUse> mirroredUses() {
+		List<CraftingIngredientUse> mirrored = new ArrayList<>(ingredientUses.size());
+		for (int y = 0; y < signature.height(); y++) {
+			for (int x = 0; x < signature.width(); x++) {
+				mirrored.add(ingredientUses.get(signature.width() - x - 1 + y * signature.width()));
+			}
+		}
+		return mirrored;
 	}
 
 	ItemStack outputStack() {

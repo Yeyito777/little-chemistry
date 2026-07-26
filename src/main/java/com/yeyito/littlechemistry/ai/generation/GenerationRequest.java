@@ -115,12 +115,23 @@ record GenerationRequest(
 								+ "be represented in the deterministic canonical `cacheDiscriminator`. Never make a result depend on "
 								+ "descriptive context absent from that discriminator.\n\n");
 			} else {
+				boolean ordinaryCrafting = displayedRecipe.has("recipeType")
+						&& "crafting".equals(displayedRecipe.get("recipeType").getAsString());
 				prompt.append("Before creating source, choose the result and write exactly this shape to "
 						+ "`.littlechemistry/result.json`:\n")
 						.append("`{\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\","
 								+ "\"capability\":\"ordinary|storage|projectile_weapon|workstation|armor|entity\","
-								+ "\"displayName\":\"...\",\"outputCount\":<natural integer>}`\n")
+								+ "\"displayName\":\"...\",\"outputCount\":<natural integer>"
+								+ (ordinaryCrafting ? ",\"ingredientUses\":{\"<slot>\":\"consume|keep|damage\"}" : "")
+								+ "}`\n")
 						.append("Do not include `recipeData` for ordinary crafting or smelting.\n\n");
+				if (ordinaryCrafting) {
+					prompt.append("For `ingredientUses`, include only occupied slots whose role intentionally differs from the "
+							+ "shown `defaultIngredientUse`; use `{}` when the defaults fit. Use `damage` only when the ingredient "
+							+ "serves as a reusable utility implement in this craft, such as wire cutters, shears, a file, hammer, wrench, "
+							+ "or similar tool. Ingredients serving as material or as the object being transformed are consumed whole; "
+							+ "use `keep` only for a genuine unchanged catalyst, mold, or template.\n\n");
+				}
 			}
 			prompt.append("For an accepted result, choose the natural output count from 1 to 64 based on the recipe and "
 					+ "result. Armor output count is always 1, and every count must fit both the destination and the "
@@ -170,11 +181,12 @@ record GenerationRequest(
 						.append("`{\"kind\":\"workstation\",\"capability\":\"workstation\"}` to ")
 						.append("`.littlechemistry/result.json`. Use workstation for a functional machine or crafting/processing ")
 						.append("bench. The observing tool returns only that focused contract; follow it before authoring source.\n\n");
-			} else {
-				GenerationContracts.Contract contract = GenerationContracts.fixedContract(this);
-				prompt.append("The already selected focused implementation contract follows; do not read unrelated contracts:\n\n")
-						.append(contract.content()).append('\n');
-			}
+				} else {
+					GenerationContracts.Contract contract = GenerationContracts.fixedContract(this);
+					prompt.append("The already selected focused implementation contract follows; do not read unrelated contracts:\n\n")
+							.append(contract.content()).append("\n\n")
+							.append(GenerationContracts.OPTIONAL_PARTICLES_DIRECTION).append('\n');
+				}
 		}
 		prompt.append(TEXTURE_DIRECTION);
 		if (visualReferenceSection != null && !visualReferenceSection.isBlank()) {

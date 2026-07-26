@@ -18,6 +18,9 @@ import java.util.Set;
 
 /** Exact-stack recipe ingredient helpers shared by crafting and smelting. */
 public final class RecipeIngredient {
+	private static final Identifier PORTABLE_CRAFTING_TABLE_ID =
+			Identifier.fromNamespaceAndPath(LittleChemistry.MOD_ID, "crafting_table_on_a_stick");
+
 	private RecipeIngredient() {
 	}
 
@@ -25,7 +28,7 @@ public final class RecipeIngredient {
 		if (stack.isEmpty()) return ItemStack.EMPTY;
 		ItemStack normalized = stack.copyWithCount(1);
 		if (normalized.has(DataComponents.DAMAGE)) normalized.setDamageValue(0);
-		if (normalized.getItem() == LittleChemistry.CRAFTING_TABLE_ON_A_STICK) {
+		if (PORTABLE_CRAFTING_TABLE_ID.equals(BuiltInRegistries.ITEM.getKey(normalized.getItem()))) {
 			normalized.remove(PortableCraftingComponents.TABLE_ID);
 			normalized.remove(PortableCraftingComponents.STATE);
 			normalized.remove(DataComponents.CONTAINER);

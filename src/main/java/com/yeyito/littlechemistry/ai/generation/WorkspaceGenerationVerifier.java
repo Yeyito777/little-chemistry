@@ -1,5 +1,7 @@
 package com.yeyito.littlechemistry.ai.generation;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.yeyito.littlechemistry.behavior.DynamicBehaviorCapability;
@@ -22,6 +24,7 @@ import com.yeyito.littlechemistry.content.DynamicTextureSpec;
 import com.yeyito.littlechemistry.content.DynamicWorkstationRecipeDataSchema;
 import com.yeyito.littlechemistry.content.DynamicWorkstationSlotIcon;
 import com.yeyito.littlechemistry.content.GeneratedContentSpec;
+import com.yeyito.littlechemistry.crafting.CraftingIngredientUse;
 import com.yeyito.littlechemistry.crafting.WorkstationRecipeRejection;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -33,6 +36,7 @@ import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -61,8 +65,8 @@ final class WorkspaceGenerationVerifier {
 		else if (request.fixedType() == DynamicContentType.ITEM) selection = readFixedItemSelection(workspace, request);
 		else if (request.fixedType() == DynamicContentType.BLOCK) selection = readFixedBlockSelection(workspace, request);
 		else selection = new Selection(request.fixedType(), request.fixedArmorSlot(),
-				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
-				null, request.fixedType() == DynamicContentType.ARMOR ? "armor" : "entity", new JsonObject());
+					DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
+					null, request.fixedType() == DynamicContentType.ARMOR ? "armor" : "entity", new JsonObject(), List.of());
 		if (selection.type() == DynamicContentType.ARMOR && selection.outputCount() != 1) {
 			throw new IllegalArgumentException("Armor recipe outputCount must be 1");
 		}
@@ -109,7 +113,7 @@ final class WorkspaceGenerationVerifier {
 				throw new IllegalArgumentException("Generated source changed while verification was running");
 			}
 			return new VerifiedGeneration(selection.type(), selection.armorSlot(), selection.displayName(),
-					selection.outputCount(), selection.recipeData(), generated, compiledBehavior,
+					selection.outputCount(), selection.recipeData(), selection.ingredientUses(), generated, compiledBehavior,
 					snapshot, digestAfterCompilation);
 		} catch (Exception | Error failure) {
 			workspace.deleteSnapshot(snapshot);
@@ -157,7 +161,7 @@ final class WorkspaceGenerationVerifier {
 		validateKindCapability(kind, capability);
 		return new Selection(DynamicContentType.BLOCK, null,
 				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
-				kind, capability, new JsonObject());
+				kind, capability, new JsonObject(), List.of());
 	}
 
 	private static Selection readFixedItemSelection(GenerationWorkspace workspace, GenerationRequest request)
@@ -176,7 +180,7 @@ final class WorkspaceGenerationVerifier {
 		validateKindCapability(kind, capability);
 		return new Selection(DynamicContentType.ITEM, null,
 				DynamicContentManager.normalizeDisplayName(request.fixedDisplayName()), request.fixedOutputCount(),
-				kind, capability, new JsonObject());
+				kind, capability, new JsonObject(), List.of());
 	}
 
 	private static Selection readSelection(GenerationWorkspace workspace, GenerationRequest request) throws IOException {
@@ -184,9 +188,12 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	private static Selection parseSelection(JsonObject result, GenerationRequest request) {
-		Set<String> allowed = request.recipeDataSchema() == null
-				? Set.of("kind", "capability", "displayName", "outputCount")
-				: Set.of("kind", "capability", "displayName", "outputCount", "recipeData");
+		boolean ordinaryCrafting = isOrdinaryCraftingRequest(request);
+		Set<String> allowed = request.recipeDataSchema() != null
+				? Set.of("kind", "capability", "displayName", "outputCount", "recipeData")
+				: ordinaryCrafting
+				? Set.of("kind", "capability", "displayName", "outputCount", "ingredientUses")
+				: Set.of("kind", "capability", "displayName", "outputCount");
 		for (String key : result.keySet()) {
 			if (!allowed.contains(key)) throw new IllegalArgumentException("Unknown result field: " + key);
 		}
@@ -235,7 +242,81 @@ final class WorkspaceGenerationVerifier {
 			}
 			new DynamicWorkstationRecipeDataSchema(request.recipeDataSchema()).validateValue(recipeData);
 		}
-		return new Selection(type, slot, displayName, count, kind, capability, recipeData);
+		List<CraftingIngredientUse> ingredientUses = ordinaryCrafting
+				? parseCraftingIngredientUses(result, request.recipeContext()) : List.of();
+		return new Selection(type, slot, displayName, count, kind, capability, recipeData, ingredientUses);
+	}
+
+	private static boolean isOrdinaryCraftingRequest(GenerationRequest request) {
+		JsonObject context = request.recipeContext();
+		return request.recipeDataSchema() == null && context != null && context.has("recipeType")
+				&& "crafting".equals(context.get("recipeType").getAsString());
+	}
+
+	private static List<CraftingIngredientUse> parseCraftingIngredientUses(JsonObject result, JsonObject context) {
+		JsonObject overrides;
+		try {
+			overrides = result.getAsJsonObject("ingredientUses");
+		} catch (RuntimeException missing) {
+			throw new IllegalArgumentException("Crafting result requires object ingredientUses; use {} when defaults fit", missing);
+		}
+		if (overrides == null) {
+			throw new IllegalArgumentException("Crafting result requires object ingredientUses; use {} when defaults fit");
+		}
+		int width;
+		int height;
+		JsonArray grid;
+		try {
+			width = context.get("width").getAsInt();
+			height = context.get("height").getAsInt();
+			grid = context.getAsJsonArray("grid");
+		} catch (RuntimeException invalid) {
+			throw new IllegalArgumentException("Crafting context has invalid dimensions or grid", invalid);
+		}
+		if (width < 1 || width > 3 || height < 1 || height > 3 || grid == null || grid.size() != width * height) {
+			throw new IllegalArgumentException("Crafting context has invalid dimensions or grid");
+		}
+		List<CraftingIngredientUse> uses = new java.util.ArrayList<>(java.util.Collections.nCopies(
+				grid.size(), CraftingIngredientUse.DEFAULT));
+		for (Map.Entry<String, JsonElement> entry : overrides.entrySet()) {
+			String key = entry.getKey();
+			if (!key.matches("0|[1-9][0-9]*")) {
+				throw new IllegalArgumentException("ingredientUses keys must be canonical zero-based slot numbers");
+			}
+			int slot;
+			try {
+				slot = Integer.parseInt(key);
+			} catch (NumberFormatException invalid) {
+				throw new IllegalArgumentException("ingredientUses slot is out of range: " + key, invalid);
+			}
+			if (slot < 0 || slot >= grid.size()) {
+				throw new IllegalArgumentException("ingredientUses slot is out of range: " + key);
+			}
+			JsonObject cell;
+			try {
+				cell = grid.get(slot).getAsJsonObject();
+			} catch (RuntimeException invalid) {
+				throw new IllegalArgumentException("Crafting grid slot " + slot + " is invalid", invalid);
+			}
+			if (cell.has("empty") && cell.get("empty").getAsBoolean()) {
+				throw new IllegalArgumentException("Empty crafting slot " + slot + " cannot declare an ingredient use");
+			}
+			CraftingIngredientUse use;
+			try {
+				use = CraftingIngredientUse.parse(entry.getValue().getAsString());
+			} catch (RuntimeException invalid) {
+				throw new IllegalArgumentException("ingredientUses values must be consume, keep, or damage", invalid);
+			}
+			if (use == CraftingIngredientUse.DEFAULT) {
+				throw new IllegalArgumentException("Omit default ingredientUses entries instead of writing default");
+			}
+			if (use == CraftingIngredientUse.DAMAGE
+					&& (!cell.has("damageable") || !cell.get("damageable").getAsBoolean())) {
+				throw new IllegalArgumentException("Crafting slot " + slot + " is not damageable and cannot use damage");
+			}
+			uses.set(slot, use);
+		}
+		return List.copyOf(uses);
 	}
 
 	/** Uses the exact final result schema before source mutation is unlocked and a focused contract is delivered. */
@@ -695,19 +776,22 @@ final class WorkspaceGenerationVerifier {
 	}
 
 	private record Selection(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
-			int outputCount, String resultKind, String capability, JsonObject recipeData) {
+			int outputCount, String resultKind, String capability, JsonObject recipeData,
+			List<CraftingIngredientUse> ingredientUses) {
 		private Selection {
 			recipeData = recipeData == null ? new JsonObject() : recipeData.deepCopy();
+			ingredientUses = ingredientUses == null ? List.of() : List.copyOf(ingredientUses);
 		}
 
 		@Override public JsonObject recipeData() { return recipeData.deepCopy(); }
 	}
 
 	record VerifiedGeneration(DynamicContentType type, DynamicArmorSlot armorSlot, String displayName,
-			int outputCount, JsonObject recipeData, GeneratedContentSpec content,
+			int outputCount, JsonObject recipeData, List<CraftingIngredientUse> ingredientUses, GeneratedContentSpec content,
 			DynamicBehaviorCompiler.Compiled compiledBehavior, Path sourceSnapshot, String sourceDigest) {
 		VerifiedGeneration {
 			recipeData = recipeData == null ? new JsonObject() : recipeData.deepCopy();
+			ingredientUses = ingredientUses == null ? List.of() : List.copyOf(ingredientUses);
 			if (compiledBehavior == null || !compiledBehavior.source().equals(content.behaviorSource())) {
 				throw new IllegalArgumentException("Verified behavior artifact does not match generated content");
 			}

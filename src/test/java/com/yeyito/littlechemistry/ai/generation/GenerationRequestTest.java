@@ -39,6 +39,7 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("already selected focused implementation contract follows"));
 		assertTrue(prompt.contains("x=40..47,y=0..7"));
 		assertTrue(prompt.contains("DynamicArmorGeometryPart"));
+		assertTrue(prompt.contains("reference/contracts/particles.md"));
 		assertFalse(prompt.contains("DynamicWorkstationParticles"));
 		assertFalse(prompt.contains("context.firework"));
 		assertFalse(prompt.contains("inspect_generated_textures"));
@@ -61,6 +62,10 @@ final class GenerationRequestTest {
 		assertTrue(prompt.contains("\"kind\":\"item|block|workstation|helmet|chestplate|leggings|boots|entity\""));
 		assertTrue(prompt.contains("\"capability\":\"ordinary|storage|projectile_weapon|workstation|armor|entity\""));
 		assertTrue(prompt.contains("\"outputCount\":<natural integer>"));
+		assertTrue(prompt.contains("\"ingredientUses\":{\"<slot>\":\"consume|keep|damage\"}"));
+		assertTrue(prompt.contains("reusable utility implement"));
+		assertTrue(prompt.contains("object being transformed are consumed whole"));
+		assertTrue(prompt.contains("genuine unchanged catalyst, mold, or template"));
 		assertTrue(prompt.contains("choose the natural output count from 1 to 64"));
 		assertTrue(prompt.contains("Armor output count is always 1"));
 		assertTrue(prompt.contains("`displayName` is the player-facing title"));
@@ -118,6 +123,10 @@ final class GenerationRequestTest {
 		assertTrue(contract("reference/contracts/workstation.md").contains("AI Workstation"));
 		assertTrue(contract("reference/contracts/projectile-weapon.md").contains("context.firework"));
 		assertTrue(contract("reference/contracts/storage.md").contains("new DynamicStorageSpec(rows, true)"));
+		assertTrue(contract("reference/contracts/particles.md").contains("GeneratedContentBuilder.particles"));
+		assertTrue(contract("reference/contracts/particles.md").contains("DynamicParticles.spawn"));
+		assertTrue(contract("reference/contracts/particles.md").contains("Prefer an appropriate\nvanilla particle"));
+		assertTrue(index.contains("`particles.md` is an optional cross-cutting contract"));
 		assertTrue(contract("reference/contracts/workstation.md").contains("aiContext"));
 		assertTrue(contract("reference/contracts/workstation.md").contains("cacheDiscriminator"));
 		assertTrue(contract("reference/contracts/workstation.md").contains("visualReferenceDigest"));
@@ -186,6 +195,21 @@ final class GenerationRequestTest {
 		assertFalse(system.contains("view_image"));
 		assertFalse(system.contains("input_image"));
 		assertFalse(system.contains("inspect_generated_textures"));
+		assertFalse(system.contains("ingredientUses"));
+		assertFalse(system.contains("DynamicParticleDefinition"));
+		assertFalse(system.contains("particles.md"));
+	}
+
+	@Test
+	void ingredientUseChoiceIsScopedToOrdinaryCraftingQueries() {
+		var smelting = JsonParser.parseString("""
+				{"recipeType":"smelting","ingredient":{"itemId":"minecraft:iron_ore"}}
+				""").getAsJsonObject();
+
+		String prompt = GenerationRequest.recipe(smelting, null, null).userPrompt();
+
+		assertFalse(prompt.contains("ingredientUses"));
+		assertFalse(prompt.contains("reusable utility implement"));
 	}
 
 	@Test

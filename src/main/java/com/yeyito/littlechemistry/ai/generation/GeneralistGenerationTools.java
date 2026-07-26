@@ -135,8 +135,13 @@ final class GeneralistGenerationTools {
 				if (contract.path().equals("reference/contracts/entity.md") && !entityReferenceSection.isBlank()) {
 					result.output().addProperty("selectedEntityReferences", entityReferenceSection);
 				}
-			result.output().addProperty("nextStep", "Follow only the selected contract before authoring source; read "
-					+ "reference/API.md and exact class source only as that contract requires.");
+			String nextStep = "Follow only the selected contract before authoring source; read reference/API.md and exact class "
+					+ "source only as that contract requires.";
+			if (!contract.path().equals("reference/contracts/rejection.md")) {
+				result.output().addProperty("optionalParticleContractPath", "reference/contracts/particles.md");
+				nextStep += " " + GenerationContracts.OPTIONAL_PARTICLES_DIRECTION;
+			}
+			result.output().addProperty("nextStep", nextStep);
 		} catch (IllegalArgumentException invalid) {
 			result.output().addProperty("selectionContractError", invalid.getMessage());
 		}

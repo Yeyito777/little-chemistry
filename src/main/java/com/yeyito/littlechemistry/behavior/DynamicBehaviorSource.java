@@ -119,7 +119,7 @@ public final class DynamicBehaviorSource {
 					source.substring(particleId.start(), particleId.end()).strip());
 			if (!literal.matches()) {
 				throw new IllegalArgumentException(
-						"DynamicParticles.spawn particle ID must be a literal local ID declared by set_custom_particles");
+						"DynamicParticles.spawn particle ID must be a literal local ID declared in GeneratedContentSpec.customParticles");
 			}
 			ids.add(literal.group(1));
 		}

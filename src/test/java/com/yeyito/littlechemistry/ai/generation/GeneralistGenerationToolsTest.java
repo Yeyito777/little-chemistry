@@ -321,6 +321,10 @@ final class GeneralistGenerationToolsTest {
 
 			assertTrue(selected.has("selectedContract"), selected.toString());
 			assertEquals("reference/contracts/item.md", selected.get("selectedContractPath").getAsString());
+			assertEquals("reference/contracts/particles.md",
+					selected.get("optionalParticleContractPath").getAsString());
+			assertTrue(selected.get("nextStep").getAsString().contains("genuinely warrants distinct particle artwork"));
+			assertFalse(selected.get("selectedContract").getAsString().contains("DynamicParticleDefinition"));
 			assertFalse(Files.exists(job.resolve(".littlechemistry/Early.java")));
 			assertFalse(Files.exists(job.resolve("items/premature.txt")));
 			JsonObject afterContract = new JsonObject();
@@ -401,6 +405,8 @@ final class GeneralistGenerationToolsTest {
 
 			JsonObject selected = tools.execute("write", selection).output();
 			assertEquals("reference/contracts/rejection.md", selected.get("selectedContractPath").getAsString());
+			assertFalse(selected.has("optionalParticleContractPath"));
+			assertFalse(selected.get("nextStep").getAsString().contains("particles.md"));
 			JsonObject source = new JsonObject();
 			source.addProperty("path", "items/forbidden/source.txt");
 			source.addProperty("content", "must not exist");
